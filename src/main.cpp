@@ -33,14 +33,141 @@ constexpr size_t kSsidMaxLen = 32;
 constexpr size_t kPasswordMaxLen = 64;
 constexpr size_t kHostnameMaxLen = 32;
 
+constexpr size_t kTemplateGpioCount = 36;
+constexpr size_t kTemplateNameMaxLen = 32;
+constexpr size_t kTemplateJsonMaxLen = 800;
+constexpr size_t kTemplateJsonDocCapacity = 2048;
+
+constexpr uint8_t kInvalidPin = 0xff;
+constexpr uint8_t kEsp32C3MaxGpio = 21;
+constexpr uint8_t kEsp32C3FlashFirst = 11;
+constexpr uint8_t kEsp32C3FlashLast = 17;
+
+constexpr uint8_t kMaxRelays = 4;
+constexpr uint8_t kMaxButtons = 4;
+constexpr uint8_t kMaxLeds = 4;
+constexpr uint8_t kMaxLedOutputs = kMaxLeds + 1;
+
+constexpr uint16_t kButtonHoldDefaultMs = 500;
+constexpr uint16_t kButtonHoldMinMs = 100;
+constexpr uint16_t kButtonHoldMaxMs = 60000;
+constexpr uint16_t kButtonDebounceDefaultMs = 50;
+constexpr uint16_t kButtonDebounceMinMs = 5;
+constexpr uint16_t kButtonDebounceMaxMs = 200;
+constexpr uint32_t kLedUpdateMs = 50;
+
+constexpr uint8_t kInputModeButton = 0;
+constexpr uint8_t kInputModeSwitch = 1;
+constexpr uint8_t kInputModeUnset = 255;
+constexpr uint8_t kInputOnLevelLow = 0;
+constexpr uint8_t kInputOnLevelHigh = 1;
+constexpr uint8_t kInputOnLevelUnset = 255;
+constexpr uint8_t kInputKindButton = 0;
+constexpr uint8_t kInputKindSwitch = 1;
+constexpr uint8_t kInputRelayUnset = 255;
+
+constexpr uint8_t kLedAttachNone = 0;
+constexpr uint8_t kLedAttachRelayBase = 1;
+constexpr uint8_t kLedAttachButtonBase = 33;
+
+constexpr uint16_t kTplNone = 0;
+constexpr uint16_t kTplUser = 1;
+constexpr uint16_t kTplKey1 = 32;
+constexpr uint16_t kTplKey1Np = 64;
+constexpr uint16_t kTplKey1Inv = 96;
+constexpr uint16_t kTplKey1InvNp = 128;
+constexpr uint16_t kTplSwt1 = 160;
+constexpr uint16_t kTplSwt1Np = 192;
+constexpr uint16_t kTplRel1 = 224;
+constexpr uint16_t kTplRel1Inv = 256;
+constexpr uint16_t kTplLed1 = 288;
+constexpr uint16_t kTplLed1Inv = 320;
+constexpr uint16_t kTplLedLnk = 544;
+constexpr uint16_t kTplLedLnkInv = 576;
+constexpr uint16_t kTplI2cScl = 608;
+constexpr uint16_t kTplI2cSda = 640;
+constexpr uint16_t kTplNrgSel = 2592;
+constexpr uint16_t kTplNrgSelInv = 2624;
+constexpr uint16_t kTplNrgCf1 = 2656;
+constexpr uint16_t kTplHlwCf = 2688;
+constexpr uint16_t kTplHjlCf = 2720;
+constexpr uint16_t kTplAdcInput = 4704;
+constexpr uint16_t kTplAdcTemp = 4736;
+constexpr uint16_t kTplSentinelEnd = 65504;
+
+const char kTemplateShellyPlusPlugSJson[] PROGMEM =
+  "{\"NAME\":\"Shelly Plus Plug S\",\"GPIO\":[0,0,0,0,224,0,32,2720,0,0,0,0,0,0,0,2624,0,0,2656,0,0,288,289,0,0,0,0,0,0,4736,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
+const char kTemplateGenericC3RelayJson[] PROGMEM =
+  "{\"NAME\":\"Generic C3 Relay\",\"GPIO\":[32,0,0,0,224,288,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
+
+struct PinAssignment {
+  uint8_t pin;
+  bool inverted;
+  bool no_pullup;
+};
+
+struct ButtonState {
+  bool raw_pressed;
+  bool stable_pressed;
+  bool hold_emitted;
+  uint32_t changed_at;
+  uint32_t pressed_at;
+};
+
+struct RuntimeTemplate {
+  bool enabled;
+  char name[kTemplateNameMaxLen + 1];
+  uint16_t base;
+  uint32_t flag;
+  PinAssignment relays[kMaxRelays];
+  PinAssignment buttons[kMaxButtons];
+  uint8_t input_kind[kMaxButtons];
+  PinAssignment leds[kMaxLeds];
+  PinAssignment link_led;
+  uint8_t relay_count;
+  uint8_t button_count;
+  uint8_t led_count;
+  uint8_t i2c_scl_pin;
+  uint8_t i2c_sda_pin;
+  uint8_t energy_cf_pin;
+  uint8_t energy_cf1_pin;
+  uint8_t energy_sel_pin;
+  bool energy_sel_inverted;
+  bool energy_hjl;
+  bool adc_temp;
+  uint8_t unsupported_count;
+  uint8_t unsupported_pin[12];
+  uint16_t unsupported_code[12];
+};
+
 struct StoredConfig {
   char ssid[kSsidMaxLen + 1];
   char password[kPasswordMaxLen + 1];
   char hostname[kHostnameMaxLen + 1];
   uint8_t phy_mode;
+
+  uint8_t template_enabled;
+  uint16_t template_base;
+  uint32_t template_flag;
+  char template_name[kTemplateNameMaxLen + 1];
+  uint16_t template_gpio[kTemplateGpioCount];
+
+  uint8_t input_mode[kMaxButtons];
+  uint8_t input_relay[kMaxButtons];
+  uint8_t input_on_level[kMaxButtons];
+
+  uint16_t button_hold_ms;
+  uint16_t button_debounce_ms;
+
+  uint8_t led_attach[kMaxLedOutputs];
 };
 
 StoredConfig config{};
+RuntimeTemplate runtime_template{};
+bool relay_state[kMaxRelays] = {false};
+ButtonState button_state[kMaxButtons] = {};
+uint32_t last_led_update = 0;
+
 bool config_ok = false;
 bool ap_started = false;
 bool sta_connected_once = false;
@@ -188,6 +315,436 @@ String ipToString(IPAddress ip) {
   return ip.toString();
 }
 
+String pinName(uint8_t pin) {
+  if (pin == kInvalidPin) return F("-");
+  return String(F("GPIO")) + String(pin);
+}
+
+bool digitalPinSupported(uint8_t pin) {
+  if (pin == kInvalidPin) return false;
+  if (pin > kEsp32C3MaxGpio) return false;
+  if (pin >= kEsp32C3FlashFirst && pin <= kEsp32C3FlashLast) return false;
+  return true;
+}
+
+void resetPinAssignment(PinAssignment &assignment) {
+  assignment.pin = kInvalidPin;
+  assignment.inverted = false;
+  assignment.no_pullup = false;
+}
+
+bool hasPin(const PinAssignment &assignment) {
+  return assignment.pin != kInvalidPin;
+}
+
+void writeAssignedPin(const PinAssignment &assignment, bool on) {
+  if (!digitalPinSupported(assignment.pin)) return;
+  digitalWrite(assignment.pin, (on ^ assignment.inverted) ? HIGH : LOW);
+}
+
+bool isSwitchInput(uint8_t input) {
+  return input < kMaxButtons && runtime_template.input_kind[input] == kInputKindSwitch;
+}
+
+uint8_t defaultInputMode(uint8_t input) {
+  return isSwitchInput(input) ? kInputModeSwitch : kInputModeButton;
+}
+
+uint8_t effectiveInputMode(uint8_t input) {
+  if (input >= kMaxButtons) return kInputModeButton;
+  if (config.input_mode[input] == kInputModeButton || config.input_mode[input] == kInputModeSwitch) {
+    return config.input_mode[input];
+  }
+  return defaultInputMode(input);
+}
+
+uint8_t defaultInputOnLevel(uint8_t input) {
+  if (input >= kMaxButtons || !hasPin(runtime_template.buttons[input])) return kInputOnLevelLow;
+  if (isSwitchInput(input)) return kInputOnLevelHigh;
+  return runtime_template.buttons[input].inverted ? kInputOnLevelHigh : kInputOnLevelLow;
+}
+
+uint8_t effectiveInputOnLevel(uint8_t input) {
+  if (input >= kMaxButtons) return kInputOnLevelLow;
+  if (config.input_on_level[input] == kInputOnLevelLow || config.input_on_level[input] == kInputOnLevelHigh) {
+    return config.input_on_level[input];
+  }
+  return defaultInputOnLevel(input);
+}
+
+bool readInputActive(uint8_t input) {
+  if (input >= kMaxButtons || !digitalPinSupported(runtime_template.buttons[input].pin)) return false;
+  const bool high = digitalRead(runtime_template.buttons[input].pin) == HIGH;
+  return high == (effectiveInputOnLevel(input) == kInputOnLevelHigh);
+}
+
+bool relayAvailable(uint8_t relay) {
+  return relay < runtime_template.relay_count && hasPin(runtime_template.relays[relay]);
+}
+
+bool defaultInputRelayTarget(uint8_t input, uint8_t &relay) {
+  if (input < runtime_template.relay_count && hasPin(runtime_template.relays[input])) {
+    relay = input;
+    return true;
+  }
+  for (uint8_t i = 0; i < runtime_template.relay_count; i++) {
+    if (hasPin(runtime_template.relays[i])) {
+      relay = i;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool inputRelayTarget(uint8_t input, uint8_t &relay) {
+  if (input >= kMaxButtons) return false;
+  const uint8_t configured = config.input_relay[input];
+  if (configured < runtime_template.relay_count && hasPin(runtime_template.relays[configured])) {
+    relay = configured;
+    return true;
+  }
+  return defaultInputRelayTarget(input, relay);
+}
+
+const PinAssignment *ledOutputAssignment(uint8_t led) {
+  if (led < kMaxLeds) return &runtime_template.leds[led];
+  if (led == kMaxLeds) return &runtime_template.link_led;
+  return nullptr;
+}
+
+bool hasLedOutput(uint8_t led) {
+  const PinAssignment *assignment = ledOutputAssignment(led);
+  if (!assignment || !hasPin(*assignment)) return false;
+  return led >= kMaxLeds || led < runtime_template.led_count;
+}
+
+String ledOutputName(uint8_t led) {
+  if (led < kMaxLeds) return String(F("LED ")) + String(led + 1);
+  return F("Link LED");
+}
+
+bool isLedAttachmentEncoding(uint8_t value) {
+  if (value == kLedAttachNone) return true;
+  if (value >= kLedAttachRelayBase && value < kLedAttachRelayBase + kMaxRelays) return true;
+  if (value >= kLedAttachButtonBase && value < kLedAttachButtonBase + kMaxButtons) return true;
+  return false;
+}
+
+bool ledAttachmentRelayIndex(uint8_t value, uint8_t &index) {
+  if (value < kLedAttachRelayBase || value >= kLedAttachRelayBase + kMaxRelays) return false;
+  index = value - kLedAttachRelayBase;
+  return true;
+}
+
+bool ledAttachmentButtonIndex(uint8_t value, uint8_t &index) {
+  if (value < kLedAttachButtonBase || value >= kLedAttachButtonBase + kMaxButtons) return false;
+  index = value - kLedAttachButtonBase;
+  return true;
+}
+
+bool ledAttachmentAvailable(uint8_t value) {
+  uint8_t index = 0;
+  if (value == kLedAttachNone) return true;
+  if (ledAttachmentRelayIndex(value, index)) {
+    return index < runtime_template.relay_count && hasPin(runtime_template.relays[index]);
+  }
+  if (ledAttachmentButtonIndex(value, index)) {
+    return index < runtime_template.button_count && hasPin(runtime_template.buttons[index]);
+  }
+  return false;
+}
+
+uint8_t defaultLedAttachment(uint8_t led) {
+  if (led < runtime_template.relay_count && hasPin(runtime_template.relays[led])) {
+    return kLedAttachRelayBase + led;
+  }
+  return kLedAttachNone;
+}
+
+bool ledOutputOn(uint8_t led) {
+  if (!hasLedOutput(led) || led >= kMaxLedOutputs) return false;
+  const uint8_t attachment = config.led_attach[led];
+  uint8_t index = 0;
+  if (ledAttachmentRelayIndex(attachment, index)) {
+    return index < runtime_template.relay_count && hasPin(runtime_template.relays[index]) && relay_state[index];
+  }
+  if (ledAttachmentButtonIndex(attachment, index)) {
+    return index < runtime_template.button_count && hasPin(runtime_template.buttons[index]) && button_state[index].stable_pressed;
+  }
+  return false;
+}
+
+bool hasConfigurableLedOutputs() {
+  for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
+    if (hasLedOutput(i)) return true;
+  }
+  return false;
+}
+
+bool hasConfigurableRelays() {
+  for (uint8_t i = 0; i < runtime_template.relay_count; i++) {
+    if (relayAvailable(i)) return true;
+  }
+  return false;
+}
+
+bool hasConfigurableButtons() {
+  for (uint8_t i = 0; i < runtime_template.button_count; i++) {
+    if (hasPin(runtime_template.buttons[i])) return true;
+  }
+  return false;
+}
+
+void addUnsupportedTemplatePin(RuntimeTemplate &target, uint8_t pin, uint16_t code) {
+  const uint8_t cap = sizeof(target.unsupported_code) / sizeof(target.unsupported_code[0]);
+  if (target.unsupported_count >= cap) return;
+  const uint8_t index = target.unsupported_count++;
+  target.unsupported_pin[index] = pin;
+  target.unsupported_code[index] = code;
+}
+
+void parseTemplateFunction(RuntimeTemplate &target, uint8_t pin, uint16_t code) {
+  if (code == kTplNone || code == kTplUser || code == kTplSentinelEnd) return;
+
+  const uint16_t base = code & 0xffe0U;
+  const uint8_t index = code & 0x1fU;
+
+  if (!digitalPinSupported(pin)) {
+    addUnsupportedTemplatePin(target, pin, code);
+    return;
+  }
+
+  if (base == kTplKey1 || base == kTplKey1Np || base == kTplKey1Inv || base == kTplKey1InvNp) {
+    if (index >= kMaxButtons) {
+      addUnsupportedTemplatePin(target, pin, code);
+      return;
+    }
+    target.buttons[index] = {
+      pin,
+      base == kTplKey1Inv || base == kTplKey1InvNp,
+      base == kTplKey1Np || base == kTplKey1InvNp
+    };
+    target.input_kind[index] = kInputKindButton;
+    if (target.button_count <= index) target.button_count = index + 1;
+    return;
+  }
+
+  if (base == kTplSwt1 || base == kTplSwt1Np) {
+    if (index >= kMaxButtons) {
+      addUnsupportedTemplatePin(target, pin, code);
+      return;
+    }
+    target.buttons[index] = {pin, false, base == kTplSwt1Np};
+    target.input_kind[index] = kInputKindSwitch;
+    if (target.button_count <= index) target.button_count = index + 1;
+    return;
+  }
+
+  if (base == kTplRel1 || base == kTplRel1Inv) {
+    if (index >= kMaxRelays) {
+      addUnsupportedTemplatePin(target, pin, code);
+      return;
+    }
+    target.relays[index] = {pin, base == kTplRel1Inv, false};
+    if (target.relay_count <= index) target.relay_count = index + 1;
+    return;
+  }
+
+  if (base == kTplLed1 || base == kTplLed1Inv) {
+    if (index >= kMaxLeds) {
+      addUnsupportedTemplatePin(target, pin, code);
+      return;
+    }
+    target.leds[index] = {pin, base == kTplLed1Inv, false};
+    if (target.led_count <= index) target.led_count = index + 1;
+    return;
+  }
+
+  if (code == kTplLedLnk || code == kTplLedLnkInv) {
+    target.link_led = {pin, code == kTplLedLnkInv, false};
+    return;
+  }
+
+  if (code == kTplI2cScl) { target.i2c_scl_pin = pin; return; }
+  if (code == kTplI2cSda) { target.i2c_sda_pin = pin; return; }
+
+  if (code == kTplNrgSel || code == kTplNrgSelInv) {
+    target.energy_sel_pin = pin;
+    target.energy_sel_inverted = code == kTplNrgSelInv;
+    addUnsupportedTemplatePin(target, pin, code);
+    return;
+  }
+  if (code == kTplNrgCf1) {
+    target.energy_cf1_pin = pin;
+    addUnsupportedTemplatePin(target, pin, code);
+    return;
+  }
+  if (code == kTplHlwCf || code == kTplHjlCf) {
+    target.energy_cf_pin = pin;
+    target.energy_hjl = code == kTplHjlCf;
+    addUnsupportedTemplatePin(target, pin, code);
+    return;
+  }
+  if (code == kTplAdcTemp || code == kTplAdcInput) {
+    target.adc_temp = code == kTplAdcTemp;
+    addUnsupportedTemplatePin(target, pin, code);
+    return;
+  }
+
+  addUnsupportedTemplatePin(target, pin, code);
+}
+
+void resetRuntimeTemplate(RuntimeTemplate &target) {
+  memset(&target, 0, sizeof(target));
+  for (uint8_t i = 0; i < kMaxRelays; i++) resetPinAssignment(target.relays[i]);
+  for (uint8_t i = 0; i < kMaxButtons; i++) resetPinAssignment(target.buttons[i]);
+  for (uint8_t i = 0; i < kMaxLeds; i++) resetPinAssignment(target.leds[i]);
+  resetPinAssignment(target.link_led);
+  target.i2c_scl_pin = kInvalidPin;
+  target.i2c_sda_pin = kInvalidPin;
+  target.energy_cf_pin = kInvalidPin;
+  target.energy_cf1_pin = kInvalidPin;
+  target.energy_sel_pin = kInvalidPin;
+}
+
+void decodeTemplateConfigInto(const StoredConfig &source, RuntimeTemplate &target) {
+  resetRuntimeTemplate(target);
+  if (!source.template_enabled) return;
+  target.enabled = true;
+  strlcpy(target.name, source.template_name, sizeof(target.name));
+  target.base = source.template_base;
+  target.flag = source.template_flag;
+  for (uint8_t i = 0; i < kTemplateGpioCount; i++) {
+    parseTemplateFunction(target, i, source.template_gpio[i]);
+  }
+}
+
+void decodeTemplateConfig() {
+  decodeTemplateConfigInto(config, runtime_template);
+}
+
+bool isJsonSpace(char c) {
+  return c == ' ' || c == '\n' || c == '\r' || c == '\t';
+}
+
+bool templateJsonHasSingleRootObject(const String &json) {
+  const char *p = json.c_str();
+  while (isJsonSpace(*p)) p++;
+  if (*p != '{') return false;
+
+  uint16_t depth = 0;
+  bool in_string = false;
+  bool escaped = false;
+  for (; *p; p++) {
+    const char c = *p;
+    if (in_string) {
+      if (escaped) escaped = false;
+      else if (c == '\\') escaped = true;
+      else if (c == '"') in_string = false;
+      continue;
+    }
+    if (c == '"') in_string = true;
+    else if (c == '{' || c == '[') depth++;
+    else if (c == '}' || c == ']') {
+      if (depth == 0) return false;
+      depth--;
+      if (depth == 0) {
+        p++;
+        break;
+      }
+    }
+  }
+  if (depth != 0 || in_string || escaped) return false;
+  while (isJsonSpace(*p)) p++;
+  return *p == '\0';
+}
+
+bool parseTemplateJson(const String &json, StoredConfig &target, String &error) {
+  if (json.length() < 9 || json.length() > kTemplateJsonMaxLen) {
+    error = F("Template JSON length is invalid");
+    return false;
+  }
+  if (!templateJsonHasSingleRootObject(json)) {
+    error = F("Template must be one complete JSON object");
+    return false;
+  }
+
+  DynamicJsonDocument doc(kTemplateJsonDocCapacity);
+  const DeserializationError json_error = deserializeJson(doc, json);
+  if (json_error) {
+    error = F("Template JSON parse failed: ");
+    error += json_error.c_str();
+    return false;
+  }
+  if (!doc.is<JsonObject>()) {
+    error = F("Template must be a JSON object");
+    return false;
+  }
+
+  const char *name = doc["NAME"] | "";
+  if (name[0] == '\0') {
+    error = F("Template NAME is empty");
+    return false;
+  }
+  if (strlen(name) >= sizeof(target.template_name)) {
+    error = F("Template NAME is too long");
+    return false;
+  }
+
+  JsonArray gpio_values = doc["GPIO"].as<JsonArray>();
+  if (gpio_values.isNull() || gpio_values.size() != kTemplateGpioCount) {
+    error = F("GPIO must contain exactly 36 ESP32 entries");
+    return false;
+  }
+
+  uint16_t gpio[kTemplateGpioCount]{};
+  for (uint8_t i = 0; i < kTemplateGpioCount; i++) {
+    JsonVariant value = gpio_values[i];
+    if (!value.is<uint16_t>()) {
+      error = F("Invalid GPIO value");
+      return false;
+    }
+    gpio[i] = value.as<uint16_t>();
+  }
+
+  JsonVariant base_value = doc["BASE"];
+  if (!base_value.is<uint16_t>() || base_value.as<uint16_t>() == 0) {
+    error = F("Template BASE is invalid");
+    return false;
+  }
+  JsonVariant flag_value = doc["FLAG"];
+  if (!flag_value.isNull() && !flag_value.is<uint32_t>()) {
+    error = F("Template FLAG is invalid");
+    return false;
+  }
+
+  target.template_enabled = 1;
+  target.template_base = base_value.as<uint16_t>();
+  target.template_flag = flag_value.isNull() ? 0 : flag_value.as<uint32_t>();
+  strlcpy(target.template_name, name, sizeof(target.template_name));
+  memcpy(target.template_gpio, gpio, sizeof(target.template_gpio));
+  return true;
+}
+
+String currentTemplateJson() {
+  if (!config.template_enabled) return String();
+  String out;
+  out.reserve(kTemplateJsonMaxLen);
+  out += F("{\"NAME\":\"");
+  out += jsonEscape(config.template_name);
+  out += F("\",\"GPIO\":[");
+  for (uint8_t i = 0; i < kTemplateGpioCount; i++) {
+    if (i) out += ',';
+    out += String(config.template_gpio[i]);
+  }
+  out += F("],\"FLAG\":");
+  out += String(config.template_flag);
+  out += F(",\"BASE\":");
+  out += String(config.template_base);
+  out += F("}");
+  return out;
+}
+
 void scheduleRestart(uint32_t delay_ms) {
   restart_due_ms = millis() + delay_ms;
   restart_scheduled_ms = millis();
@@ -197,10 +754,49 @@ bool restartDue() {
   return restart_due_ms != 0 && (int32_t)(millis() - restart_due_ms) >= 0;
 }
 
+void clearTemplateConfig(StoredConfig &target) {
+  target.template_enabled = 0;
+  target.template_base = 0;
+  target.template_flag = 0;
+  memset(target.template_name, 0, sizeof(target.template_name));
+  memset(target.template_gpio, 0, sizeof(target.template_gpio));
+}
+
 void setDefaultConfig() {
   memset(&config, 0, sizeof(config));
   strlcpy(config.hostname, defaultHostname().c_str(), sizeof(config.hostname));
   config.phy_mode = kPhyModeAuto;
+  config.button_hold_ms = kButtonHoldDefaultMs;
+  config.button_debounce_ms = kButtonDebounceDefaultMs;
+  for (uint8_t i = 0; i < kMaxButtons; i++) {
+    config.input_mode[i] = kInputModeUnset;
+    config.input_relay[i] = kInputRelayUnset;
+    config.input_on_level[i] = kInputOnLevelUnset;
+  }
+  for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
+    config.led_attach[i] = kLedAttachNone;
+  }
+}
+
+template <size_t N>
+void readByteArray(Preferences &p, const char *key, uint8_t (&out)[N], uint8_t fill) {
+  uint8_t buf[N];
+  memset(buf, fill, sizeof(buf));
+  size_t got = p.getBytesLength(key);
+  if (got == sizeof(buf)) {
+    p.getBytes(key, buf, sizeof(buf));
+  }
+  memcpy(out, buf, sizeof(out));
+}
+
+void readGpioArray(Preferences &p, const char *key, uint16_t (&out)[kTemplateGpioCount]) {
+  uint16_t buf[kTemplateGpioCount];
+  memset(buf, 0, sizeof(buf));
+  size_t got = p.getBytesLength(key);
+  if (got == sizeof(buf)) {
+    p.getBytes(key, buf, sizeof(buf));
+  }
+  memcpy(out, buf, sizeof(out));
 }
 
 bool loadConfig() {
@@ -213,6 +809,26 @@ bool loadConfig() {
   String password = prefs.getString("password", "");
   String hostname = prefs.getString("hostname", "");
   uint8_t phy = prefs.getUChar("phy", kPhyModeAuto);
+
+  uint8_t tpl_en = prefs.getUChar("tpl_en", 0);
+  uint16_t tpl_base = prefs.getUShort("tpl_base", 0);
+  uint32_t tpl_flag = prefs.getUInt("tpl_flag", 0);
+  String tpl_name = prefs.getString("tpl_name", "");
+  uint16_t tpl_gpio[kTemplateGpioCount];
+  readGpioArray(prefs, "tpl_gpio", tpl_gpio);
+
+  uint8_t in_mode[kMaxButtons];
+  uint8_t in_relay[kMaxButtons];
+  uint8_t in_level[kMaxButtons];
+  readByteArray(prefs, "in_mode", in_mode, kInputModeUnset);
+  readByteArray(prefs, "in_relay", in_relay, kInputRelayUnset);
+  readByteArray(prefs, "in_level", in_level, kInputOnLevelUnset);
+
+  uint16_t btn_hold = prefs.getUShort("btn_hold", kButtonHoldDefaultMs);
+  uint16_t btn_db = prefs.getUShort("btn_db", kButtonDebounceDefaultMs);
+
+  uint8_t leds[kMaxLedOutputs];
+  readByteArray(prefs, "leds", leds, kLedAttachNone);
   prefs.end();
 
   strlcpy(config.ssid, ssid.c_str(), sizeof(config.ssid));
@@ -221,6 +837,26 @@ bool loadConfig() {
     strlcpy(config.hostname, hostname.c_str(), sizeof(config.hostname));
   }
   config.phy_mode = sanitizePhyMode(phy);
+
+  config.template_enabled = tpl_en ? 1 : 0;
+  config.template_base = tpl_base;
+  config.template_flag = tpl_flag;
+  strlcpy(config.template_name, tpl_name.c_str(), sizeof(config.template_name));
+  memcpy(config.template_gpio, tpl_gpio, sizeof(config.template_gpio));
+
+  memcpy(config.input_mode, in_mode, sizeof(config.input_mode));
+  memcpy(config.input_relay, in_relay, sizeof(config.input_relay));
+  memcpy(config.input_on_level, in_level, sizeof(config.input_on_level));
+
+  if (btn_hold < kButtonHoldMinMs || btn_hold > kButtonHoldMaxMs) btn_hold = kButtonHoldDefaultMs;
+  if (btn_db < kButtonDebounceMinMs || btn_db > kButtonDebounceMaxMs) btn_db = kButtonDebounceDefaultMs;
+  config.button_hold_ms = btn_hold;
+  config.button_debounce_ms = btn_db;
+
+  for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
+    config.led_attach[i] = isLedAttachmentEncoding(leds[i]) ? leds[i] : kLedAttachNone;
+  }
+
   config_ok = config.ssid[0] != '\0';
   return config_ok;
 }
@@ -229,12 +865,41 @@ bool saveWifiConfig(const char *ssid, const char *password, const char *hostname
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putString("ssid", ssid);
   prefs.putString("password", password);
-  if (hostname && hostname[0]) {
-    prefs.putString("hostname", hostname);
-  } else {
-    prefs.putString("hostname", defaultHostname());
-  }
+  if (hostname && hostname[0]) prefs.putString("hostname", hostname);
+  else prefs.putString("hostname", defaultHostname());
   prefs.putUChar("phy", sanitizePhyMode(phy_mode));
+  prefs.end();
+  return loadConfig();
+}
+
+bool saveTemplateConfig(const StoredConfig &source) {
+  if (!prefs.begin("mymota32", false)) return false;
+  prefs.putUChar("tpl_en", source.template_enabled);
+  prefs.putUShort("tpl_base", source.template_base);
+  prefs.putUInt("tpl_flag", source.template_flag);
+  prefs.putString("tpl_name", source.template_name);
+  prefs.putBytes("tpl_gpio", source.template_gpio, sizeof(source.template_gpio));
+  prefs.end();
+  return loadConfig();
+}
+
+bool saveLedAttachments(const uint8_t (&leds)[kMaxLedOutputs]) {
+  if (!prefs.begin("mymota32", false)) return false;
+  prefs.putBytes("leds", leds, sizeof(leds));
+  prefs.end();
+  return loadConfig();
+}
+
+bool saveInputConfig(uint16_t hold_ms, uint16_t debounce_ms,
+                     const uint8_t (&mode)[kMaxButtons],
+                     const uint8_t (&relay)[kMaxButtons],
+                     const uint8_t (&level)[kMaxButtons]) {
+  if (!prefs.begin("mymota32", false)) return false;
+  prefs.putUShort("btn_hold", hold_ms);
+  prefs.putUShort("btn_db", debounce_ms);
+  prefs.putBytes("in_mode", mode, sizeof(mode));
+  prefs.putBytes("in_relay", relay, sizeof(relay));
+  prefs.putBytes("in_level", level, sizeof(level));
   prefs.end();
   return loadConfig();
 }
@@ -400,6 +1065,94 @@ void maintainWifi() {
   }
 }
 
+void updateDeviceLeds(bool force = false) {
+  const uint32_t now = millis();
+  if (!force && now - last_led_update < kLedUpdateMs) return;
+  last_led_update = now;
+  for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
+    const PinAssignment *assignment = ledOutputAssignment(i);
+    if (!assignment || !hasLedOutput(i)) continue;
+    writeAssignedPin(*assignment, ledOutputOn(i));
+  }
+}
+
+void setRelay(uint8_t relay, bool on) {
+  if (relay >= kMaxRelays || !hasPin(runtime_template.relays[relay])) return;
+  const bool changed = relay_state[relay] != on;
+  relay_state[relay] = on;
+  writeAssignedPin(runtime_template.relays[relay], on);
+  if (changed) updateDeviceLeds(true);
+}
+
+void toggleRelay(uint8_t relay) {
+  if (relay >= kMaxRelays) return;
+  setRelay(relay, !relay_state[relay]);
+}
+
+void setupDevicePins() {
+  for (uint8_t i = 0; i < kMaxRelays; i++) {
+    relay_state[i] = false;
+    if (!hasPin(runtime_template.relays[i])) continue;
+    writeAssignedPin(runtime_template.relays[i], false);
+    pinMode(runtime_template.relays[i].pin, OUTPUT);
+    writeAssignedPin(runtime_template.relays[i], false);
+  }
+  for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
+    const PinAssignment *assignment = ledOutputAssignment(i);
+    if (!assignment || !hasLedOutput(i)) continue;
+    writeAssignedPin(*assignment, false);
+    pinMode(assignment->pin, OUTPUT);
+    writeAssignedPin(*assignment, false);
+  }
+  for (uint8_t i = 0; i < kMaxButtons; i++) {
+    if (!hasPin(runtime_template.buttons[i])) continue;
+    pinMode(runtime_template.buttons[i].pin, runtime_template.buttons[i].no_pullup ? INPUT : INPUT_PULLUP);
+    const bool active = readInputActive(i);
+    button_state[i] = {active, active, false, millis(), millis()};
+    if (effectiveInputMode(i) == kInputModeSwitch) {
+      uint8_t relay = 0;
+      if (inputRelayTarget(i, relay)) setRelay(relay, active);
+    }
+  }
+  updateDeviceLeds(true);
+}
+
+void maintainButtons() {
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < runtime_template.button_count; i++) {
+    if (!hasPin(runtime_template.buttons[i])) continue;
+    const bool raw = readInputActive(i);
+    if (raw != button_state[i].raw_pressed) {
+      button_state[i].raw_pressed = raw;
+      button_state[i].changed_at = now;
+    }
+    if ((now - button_state[i].changed_at) >= config.button_debounce_ms && raw != button_state[i].stable_pressed) {
+      button_state[i].stable_pressed = raw;
+      if (effectiveInputMode(i) == kInputModeSwitch) {
+        uint8_t relay = 0;
+        if (inputRelayTarget(i, relay)) setRelay(relay, raw);
+        button_state[i].hold_emitted = false;
+      } else if (raw) {
+        button_state[i].pressed_at = now;
+        button_state[i].hold_emitted = false;
+      } else if (!button_state[i].hold_emitted) {
+        uint8_t relay = 0;
+        if (inputRelayTarget(i, relay)) toggleRelay(relay);
+      }
+    }
+    if (effectiveInputMode(i) == kInputModeButton && button_state[i].stable_pressed && !button_state[i].hold_emitted) {
+      if ((now - button_state[i].pressed_at) >= config.button_hold_ms) {
+        button_state[i].hold_emitted = true;
+      }
+    }
+  }
+}
+
+void maintainDevice() {
+  maintainButtons();
+  updateDeviceLeds();
+}
+
 const __FlashStringHelper *updateErrorName(uint8_t err) {
   switch (err) {
     case UPDATE_ERROR_OK: return F("ok");
@@ -434,17 +1187,15 @@ void appendHeader(String &page, const __FlashStringHelper *title, bool show_spin
   page += F(".spin{width:13px;height:13px;border:2px solid rgba(255,255,255,.35);border-top-color:#7dd3aa;border-radius:50%;opacity:.55}.spin.active{opacity:1;animation:rot .7s linear infinite}@keyframes rot{to{transform:rotate(360deg)}}main{max-width:1080px;margin:18px auto 28px;padding:0 14px}");
   page += F(".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}.wide{grid-column:1/-1}");
   page += F(".panel h2{font-size:17px;margin:0 0 12px}.kv{display:grid;grid-template-columns:minmax(110px,42%) 1fr;gap:8px 12px}.kv span,.hint{color:var(--muted)}.kv div{min-width:0}");
-  page += F("code{background:#eef2f6;border:1px solid #dce3ea;border-radius:4px;padding:1px 4px;word-break:break-word}.pill{display:inline-block;border-radius:999px;padding:2px 8px;background:#eef2f6;color:#364152}.pill.ok{background:var(--ok);color:#fff}.pill.bad{background:var(--bad);color:#fff}.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}");
-  page += F("form{margin:0}.row{margin:10px 0}label{display:block;font-weight:600;color:#344054}input,button,select,textarea{font:inherit}input,select,textarea{width:100%;margin-top:4px;padding:9px;border:1px solid #b9c4d0;border-radius:6px;background:#fff}input[type=checkbox]{width:auto;margin:0 6px 0 0;padding:0;vertical-align:-1px}");
-  page += F("button,.btn{display:inline-block;margin:4px 4px 0 0;padding:8px 12px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff;text-decoration:none;cursor:pointer}.secondary{background:#fff;color:var(--accent2);border-color:#9eb7cf}.danger{background:#fff;color:var(--bad);border-color:#d4aaa7}.list{margin:0;padding-left:18px}@media(max-width:520px){.kv{grid-template-columns:1fr}.brand{font-size:24px}}</style></head><body>");
+  page += F("code{background:#eef2f6;border:1px solid #dce3ea;border-radius:4px;padding:1px 4px;word-break:break-word}.pill{display:inline-block;border-radius:999px;padding:2px 8px;background:#eef2f6;color:#364152}.pill.ok{background:var(--ok);color:#fff}.pill.bad{background:var(--bad);color:#fff}.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}.button-block{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}.mode-extra{display:none}.mode-extra.show{display:block}");
+  page += F("form{margin:0}.row{margin:10px 0}label{display:block;font-weight:600;color:#344054}input,button,select,textarea{font:inherit}input,select,textarea{width:100%;margin-top:4px;padding:9px;border:1px solid #b9c4d0;border-radius:6px;background:#fff}input[type=checkbox]{width:auto;margin:0 6px 0 0;padding:0;vertical-align:-1px}textarea{min-height:92px;resize:vertical}");
+  page += F("button,.btn{display:inline-block;margin:4px 4px 0 0;padding:8px 12px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff;text-decoration:none;cursor:pointer}.secondary{background:#fff;color:var(--accent2);border-color:#9eb7cf}.danger{background:#fff;color:var(--bad);border-color:#d4aaa7}.inline{display:inline}.actions{display:flex;flex-wrap:wrap;gap:6px}.inline button{margin:0 4px 0 0}.list{margin:0;padding-left:18px}@media(max-width:520px){.kv{grid-template-columns:1fr}.brand{font-size:24px}}</style></head><body>");
   page += F("<header class='top'><div class='topin'><div><a class='brand' href='/'>my<span>Mota32</span></a><div class='sub'>ESP32 firmware</div></div><div class='sub meta'><span>");
   page += F(MYMOTA32_VERSION);
   page += F(" / ");
   page += F(MYMOTA32_TARGET);
   page += F("</span>");
-  if (show_spinner) {
-    page += F("<span id='poll-spin' class='spin active'></span>");
-  }
+  if (show_spinner) page += F("<span id='poll-spin' class='spin active'></span>");
   page += F("</div></div></header><main>");
 }
 
@@ -459,10 +1210,17 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',Number(d.perf.loop_max_us/1000).toFixed(1)+' ms');}");
   page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);");
   page += F("p('live-wifi',d.wifi?'connected':'disconnected',d.wifi?'pill ok':'pill bad');t('live-ssid',d.wifi_ssid||'n/a');t('live-ip',d.ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');");
+  page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!=null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
+  page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state,d.buttons[b].pressed?'pill ok':'pill bad');}}");
+  page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
   page += F("}).catch(function(){});}");
-  if (live_poll) {
-    page += F("setInterval(live,1000);setInterval(ck,1000);live();");
-  }
+  page += F("function im(s){var k=s.getAttribute('data-input'),v=s.value,b=document.getElementById('input-button-'+k),w=document.getElementById('input-switch-'+k);if(b)b.className=v=='0'?'mode-extra show':'mode-extra';if(w)w.className=v=='1'?'mode-extra show':'mode-extra';}");
+  page += F("function ts(){var s=document.getElementById('known-template'),t=document.getElementById('template-json');if(!s||!t)return;var v=t.value.trim(),m=0;for(var i=1;i<s.options.length;i++){if(s.options[i].getAttribute('data-json')==v){m=i;break;}}s.selectedIndex=m;}");
+  page += F("function tp(s){var o=s.options[s.selectedIndex],t=document.getElementById('template-json');if(o&&t&&o.getAttribute('data-json')){t.value=o.getAttribute('data-json');ts();}}");
+  page += F("function bi(){var m=document.querySelectorAll('.input-mode');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ts();}bi();");
+  page += F("document.addEventListener('click',function(e){var b=e.target;while(b&&b.tagName!='BUTTON'&&b.tagName!='INPUT')b=b.parentNode;if(!b||!b.form)return;var t=(b.type||'').toLowerCase();if(t=='submit'||t=='image')b.form._s=b;},true);");
+  page += F("document.addEventListener('submit',function(e){var f=e.target;if(!f||f.getAttribute('data-inline')!='1')return;e.preventDefault();var fd=new FormData(f),b=e.submitter||f._s;if(b&&b.name)fd.append(b.name,b.value);fd.append('_inline','1');fetch(f.getAttribute('action')||location.pathname,{method:(f.method||'POST').toUpperCase(),body:fd,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});live();}).catch(function(x){alert(x.message||x);});},true);");
+  if (live_poll) page += F("setInterval(live,1000);setInterval(ck,1000);live();");
   if (reboot_wait) {
     page += F("var rb=");
     page += String(boot_id);
@@ -520,9 +1278,7 @@ void appendStatusBlock(String &page) {
   page += F("</code> clears after <code>");
   page += String(kBootRecoveryStableMs / 1000);
   page += F("s</code>");
-  if (boot_recovery_factory_reset) {
-    page += F(" <span class='pill bad'>factory reset</span>");
-  }
+  if (boot_recovery_factory_reset) page += F(" <span class='pill bad'>factory reset</span>");
   page += F("</div><span>Wi-Fi</span><div><span id='live-wifi' class='pill");
   page += (WiFi.status() == WL_CONNECTED) ? F(" ok'>connected") : F(" bad'>disconnected");
   page += F("</span></div><span>SSID</span><div><code id='live-ssid'>");
@@ -545,35 +1301,254 @@ void appendStatusBlock(String &page) {
   page += F("</div></section>");
 }
 
-void appendPhyModeOption(String &page, uint8_t mode) {
-  page += F("<option value='");
-  page += String(mode);
-  page += F("'");
-  if (config.phy_mode == mode) {
-    page += F(" selected");
+void appendTemplateStatus(String &page) {
+  page += F("<section class='panel'><h2>Template</h2>");
+  if (!runtime_template.enabled) {
+    page += F("<p class='muted'>No template configured.</p>");
+  } else {
+    page += F("<div class='kv'><span>Name</span><div><code>");
+    page += htmlEscape(runtime_template.name);
+    page += F("</code></div><span>Base</span><div><code>");
+    page += String(runtime_template.base);
+    page += F("</code> flag <code>");
+    page += String(runtime_template.flag);
+    page += F("</code></div><span>GPIO roles</span><div><code>");
+    page += String(runtime_template.relay_count);
+    page += F("</code> relays <code>");
+    page += String(runtime_template.button_count);
+    page += F("</code> inputs <code>");
+    page += String(runtime_template.led_count);
+    page += F("</code> LEDs</div>");
+    if (runtime_template.i2c_scl_pin != kInvalidPin || runtime_template.i2c_sda_pin != kInvalidPin) {
+      page += F("<span>I2C</span><div>SCL <code>");
+      page += pinName(runtime_template.i2c_scl_pin);
+      page += F("</code>, SDA <code>");
+      page += pinName(runtime_template.i2c_sda_pin);
+      page += F("</code></div>");
+    }
+    if (hasPin(runtime_template.link_led)) {
+      page += F("<span>Link LED</span><div><code>");
+      page += pinName(runtime_template.link_led.pin);
+      page += F("</code></div>");
+    }
+    page += F("</div>");
+    if (runtime_template.unsupported_count) {
+      page += F("<p class='bad'>Unsupported GPIO functions:");
+      for (uint8_t i = 0; i < runtime_template.unsupported_count; i++) {
+        page += F(" <code>");
+        page += pinName(runtime_template.unsupported_pin[i]);
+        page += F("=");
+        page += String(runtime_template.unsupported_code[i]);
+        page += F("</code>");
+      }
+      page += F("</p>");
+    }
   }
+  page += F("</section>");
+}
+
+void appendDeviceControls(String &page) {
+  if (!runtime_template.enabled || runtime_template.relay_count == 0) return;
+  page += F("<section class='panel'><h2>Device</h2>");
+  for (uint8_t i = 0; i < runtime_template.relay_count; i++) {
+    if (!hasPin(runtime_template.relays[i])) continue;
+    page += F("<div class='row'><strong>Relay ");
+    page += String(i + 1);
+    page += F("</strong> <span class='hint'>on</span> <code>");
+    page += pinName(runtime_template.relays[i].pin);
+    page += F("</code> ");
+    page += F("<span id='live-relay-");
+    page += String(i);
+    page += F("' class='pill ");
+    page += relay_state[i] ? F("ok'>on") : F("bad'>off");
+    page += F("</span>");
+    page += F("<form class='inline' data-inline='1' method='post' action='/power'><input type='hidden' name='relay' value='");
+    page += String(i + 1);
+    page += F("'><span class='actions'><button name='state' value='toggle'>Toggle</button><button name='state' value='on'>On</button><button class='secondary' name='state' value='off'>Off</button></span></form></div>");
+  }
+  page += F("</section>");
+}
+
+void appendLedAttachmentOption(String &page, uint8_t value, const String &label, uint8_t selected) {
+  page += F("<option value='");
+  page += String(value);
+  page += F("'");
+  if (selected == value) page += F(" selected");
   page += F(">");
-  page += phyModeName(mode);
+  page += htmlEscape(label);
   page += F("</option>");
 }
 
-void appendPhyModeSelect(String &page) {
-  page += F("<div class='row'><label>PHY mode<br><select name='phy_mode'>");
-  appendPhyModeOption(page, kPhyModeAuto);
-  appendPhyModeOption(page, kPhyModeB);
-  appendPhyModeOption(page, kPhyModeG);
-  appendPhyModeOption(page, kPhyModeN);
-  page += F("</select></label></div>");
+void appendLedSettings(String &page) {
+  if (!runtime_template.enabled || !hasConfigurableLedOutputs()) return;
+  page += F("<section class='panel'><h2>LEDs</h2><form data-inline='1' method='post' action='/leds'>");
+  for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
+    const PinAssignment *assignment = ledOutputAssignment(i);
+    if (!assignment || !hasLedOutput(i)) continue;
+    const uint8_t selected = config.led_attach[i];
+    page += F("<div class='row'><label>");
+    page += htmlEscape(ledOutputName(i));
+    page += F(" <span class='hint'>");
+    page += pinName(assignment->pin);
+    page += F("</span> <span id='live-led-");
+    page += String(i);
+    page += F("' class='pill ");
+    page += ledOutputOn(i) ? F("ok'>on") : F("bad'>off");
+    page += F("</span><br><select name='led");
+    page += String(i);
+    page += F("'>");
+    appendLedAttachmentOption(page, kLedAttachNone, F("Nothing"), selected);
+    for (uint8_t relay = 0; relay < runtime_template.relay_count; relay++) {
+      if (!hasPin(runtime_template.relays[relay])) continue;
+      appendLedAttachmentOption(page, kLedAttachRelayBase + relay, String(F("Relay ")) + String(relay + 1), selected);
+    }
+    for (uint8_t button = 0; button < runtime_template.button_count; button++) {
+      if (!hasPin(runtime_template.buttons[button])) continue;
+      appendLedAttachmentOption(page, kLedAttachButtonBase + button, String(F("Input ")) + String(button + 1), selected);
+    }
+    page += F("</select></label></div>");
+  }
+  page += F("<button type='submit'>Save LEDs</button></form></section>");
+}
+
+void appendInputModeOption(String &page, uint8_t value, const String &label, uint8_t selected) {
+  page += F("<option value='");
+  page += String(value);
+  page += F("'");
+  if (selected == value) page += F(" selected");
+  page += F(">");
+  page += htmlEscape(label);
+  page += F("</option>");
+}
+
+void appendInputRelayOption(String &page, uint8_t value, uint8_t selected) {
+  page += F("<option value='");
+  page += String(value);
+  page += F("'");
+  if (selected == value) page += F(" selected");
+  page += F(">Relay ");
+  page += String(value + 1);
+  page += F("</option>");
+}
+
+String inputDisplayName(uint8_t input) {
+  String name = isSwitchInput(input) ? F("Switch ") : F("Button ");
+  name += String(input + 1);
+  return name;
+}
+
+String inputKindName(uint8_t input) {
+  return isSwitchInput(input) ? F("switch") : F("button");
+}
+
+String inputStateName(uint8_t input, bool active) {
+  if (effectiveInputMode(input) == kInputModeSwitch) return active ? F("on") : F("off");
+  return active ? F("pressed") : F("released");
+}
+
+void appendButtonSettings(String &page) {
+  if (!runtime_template.enabled || !hasConfigurableButtons()) return;
+  page += F("<section class='panel'><h2>Inputs</h2><form data-inline='1' method='post' action='/buttons'>");
+  page += F("<div class='row'><label>Hold time ms<br><input name='hold_ms' type='number' min='");
+  page += String(kButtonHoldMinMs);
+  page += F("' max='");
+  page += String(kButtonHoldMaxMs);
+  page += F("' step='1' value='");
+  page += String(config.button_hold_ms);
+  page += F("'></label><label>Debounce ms<br><input name='debounce_ms' type='number' min='");
+  page += String(kButtonDebounceMinMs);
+  page += F("' max='");
+  page += String(kButtonDebounceMaxMs);
+  page += F("' step='1' value='");
+  page += String(config.button_debounce_ms);
+  page += F("'></label></div>");
+  for (uint8_t i = 0; i < runtime_template.button_count; i++) {
+    if (!hasPin(runtime_template.buttons[i])) continue;
+    const uint8_t mode = effectiveInputMode(i);
+    const uint8_t on_level = effectiveInputOnLevel(i);
+    uint8_t target_relay = 0;
+    inputRelayTarget(i, target_relay);
+    const bool has_relay = defaultInputRelayTarget(i, target_relay);
+    page += F("<div class='button-block'><strong>");
+    page += htmlEscape(inputDisplayName(i));
+    page += F("</strong> <span class='hint'>");
+    page += pinName(runtime_template.buttons[i].pin);
+    page += F(" ");
+    page += htmlEscape(inputKindName(i));
+    page += F("</span> <span id='live-button-");
+    page += String(i);
+    page += F("' class='pill ");
+    page += button_state[i].stable_pressed ? F("ok'>") : F("bad'>");
+    page += htmlEscape(inputStateName(i, button_state[i].stable_pressed));
+    page += F("</span>");
+    page += F("<div class='row'><label>Kind<br><select class='input-mode' data-input='");
+    page += String(i);
+    page += F("' name='mode");
+    page += String(i);
+    page += F("'>");
+    appendInputModeOption(page, kInputModeButton, F("Button (toggle on press)"), mode);
+    appendInputModeOption(page, kInputModeSwitch, F("Switch (follow level)"), mode);
+    page += F("</select></label></div>");
+    if (has_relay) {
+      page += F("<div class='row'><label>Target relay<br><select name='relay");
+      page += String(i);
+      page += F("'>");
+      for (uint8_t relay = 0; relay < runtime_template.relay_count; relay++) {
+        if (!hasPin(runtime_template.relays[relay])) continue;
+        appendInputRelayOption(page, relay, target_relay);
+      }
+      page += F("</select></label></div>");
+    } else {
+      page += F("<p class='hint'>No relays configured to target.</p>");
+    }
+    page += F("<div id='input-switch-");
+    page += String(i);
+    page += F("' class='mode-extra");
+    if (mode == kInputModeSwitch) page += F(" show");
+    page += F("'><div class='row'><label>Reverse<br><select name='reverse");
+    page += String(i);
+    page += F("'><option value='0'");
+    if (on_level == kInputOnLevelHigh) page += F(" selected");
+    page += F(">No, GPIO high is ON</option><option value='1'");
+    if (on_level == kInputOnLevelLow) page += F(" selected");
+    page += F(">Yes, GPIO low is ON</option></select></label></div></div>");
+    page += F("</div>");
+  }
+  page += F("<button type='submit'>Save inputs</button></form></section>");
+}
+
+void appendTemplateForm(String &page) {
+  page += F("<section class='panel wide'><h2>Template Selection</h2><form method='post' action='/template'>");
+  page += F("<div class='row'><label>Known template<br><select id='known-template' onchange='tp(this)'><option value=''>Select a template</option>");
+  page += F("<option data-json='");
+  page += htmlEscape(String(FPSTR(kTemplateGenericC3RelayJson)));
+  page += F("'>Generic C3 Relay</option><option data-json='");
+  page += htmlEscape(String(FPSTR(kTemplateShellyPlusPlugSJson)));
+  page += F("'>Shelly Plus Plug S</option></select></label></div>");
+  page += F("<div class='row'><label>Tasmota ESP32 template JSON<br><textarea id='template-json' name='template' rows='6' maxlength='");
+  page += String(kTemplateJsonMaxLen);
+  page += F("'>");
+  page += htmlEscape(currentTemplateJson());
+  page += F("</textarea></label></div>");
+  page += F("<button type='submit'>Save template</button> <button class='danger' type='submit' name='clear' value='1'>Clear template</button></form></section>");
 }
 
 void handleRoot() {
   String page;
-  page.reserve(5200);
+  page.reserve(6500);
   beginStreamedResponse("text/html");
   appendHeader(page, F("myMota32"), true);
   page += F("<div class='grid'>");
   flushStreamChunk(page);
   appendStatusBlock(page);
+  flushStreamChunk(page);
+  appendTemplateStatus(page);
+  flushStreamChunk(page);
+  appendDeviceControls(page);
+  flushStreamChunk(page);
+  appendButtonSettings(page);
+  flushStreamChunk(page);
+  appendLedSettings(page);
   flushStreamChunk(page);
 
   page += F("<section class='panel'><h2>Wi-Fi</h2><form method='post' action='/wifi'>");
@@ -585,9 +1560,22 @@ void handleRoot() {
   page += F("<div class='row'><label>Hostname<br><input name='hostname' maxlength='32' value='");
   page += htmlEscape(config.hostname);
   page += F("'></label></div>");
-  appendPhyModeSelect(page);
+  page += F("<div class='row'><label>PHY mode<br><select name='phy_mode'>");
+  for (uint8_t mode = 0; mode <= kPhyModeN; mode++) {
+    page += F("<option value='");
+    page += String(mode);
+    page += F("'");
+    if (config.phy_mode == mode) page += F(" selected");
+    page += F(">");
+    page += phyModeName(mode);
+    page += F("</option>");
+  }
+  page += F("</select></label></div>");
   page += F("<button type='submit'>Save Wi-Fi</button></form>");
   page += F("<p><a class='btn secondary' href='/scan'>Scan networks</a></p></section>");
+  flushStreamChunk(page);
+
+  appendTemplateForm(page);
   flushStreamChunk(page);
 
   page += F("<section class='panel'><h2>Firmware</h2><form method='post' action='/update' enctype='multipart/form-data'>");
@@ -613,7 +1601,6 @@ void handleScan() {
     WiFi.scanNetworks(true);
     count = WiFi.scanComplete();
   }
-
   if (count == WIFI_SCAN_RUNNING) {
     page += F("<p>Scanning for Wi-Fi networks...</p>");
     page += F("<p class='muted'>This page will refresh when results are ready.</p>");
@@ -623,7 +1610,6 @@ void handleScan() {
     sendHtml(page);
     return;
   }
-
   if (count <= 0) {
     page += F("<p>No networks found.</p>");
   } else {
@@ -631,7 +1617,17 @@ void handleScan() {
     page += F("<div class='row'><label>Hostname<br><input name='hostname' maxlength='32' value='");
     page += htmlEscape(config.hostname);
     page += F("'></label></div>");
-    appendPhyModeSelect(page);
+    page += F("<div class='row'><label>PHY mode<br><select name='phy_mode'>");
+    for (uint8_t mode = 0; mode <= kPhyModeN; mode++) {
+      page += F("<option value='");
+      page += String(mode);
+      page += F("'");
+      if (config.phy_mode == mode) page += F(" selected");
+      page += F(">");
+      page += phyModeName(mode);
+      page += F("</option>");
+    }
+    page += F("</select></label></div>");
     page += F("<ul class='list'>");
     for (int i = 0; i < count; i++) {
       page += F("<li><label><input type='radio' name='ssid' required value='");
@@ -675,7 +1671,6 @@ void handleWifiSave() {
     server.send(500, F("text/plain"), F("Could not save Wi-Fi settings"));
     return;
   }
-
   String page;
   page.reserve(800);
   appendHeader(page, F("myMota32 Wi-Fi"));
@@ -685,6 +1680,203 @@ void handleWifiSave() {
   appendFooter(page, false, true);
   sendHtml(page);
   scheduleRestart(1200);
+}
+
+void handleTemplateSave() {
+  if (server.hasArg("clear")) {
+    StoredConfig candidate = config;
+    clearTemplateConfig(candidate);
+    if (!saveTemplateConfig(candidate)) {
+      server.send(500, F("text/plain"), F("Could not clear template"));
+      return;
+    }
+    decodeTemplateConfig();
+    String page;
+    page.reserve(700);
+    appendHeader(page, F("myMota32 Template"));
+    page += F("<p class='ok'>Template cleared. Rebooting.</p>");
+    page += F("<p>The page will return to the dashboard when the device is reachable again.</p>");
+    appendFooter(page, false, true);
+    sendHtml(page);
+    scheduleRestart(1200);
+    return;
+  }
+
+  String template_json = server.arg("template");
+  template_json.trim();
+  if (template_json.length() == 0) {
+    server.send(400, F("text/plain"), F("Template JSON is empty"));
+    return;
+  }
+  StoredConfig candidate = config;
+  String error;
+  if (!parseTemplateJson(template_json, candidate, error)) {
+    String msg = F("Invalid template: ");
+    msg += error;
+    msg += '\n';
+    server.send(400, F("text/plain"), msg);
+    return;
+  }
+  if (!saveTemplateConfig(candidate)) {
+    server.send(500, F("text/plain"), F("Could not save template"));
+    return;
+  }
+  decodeTemplateConfig();
+
+  String page;
+  page.reserve(900);
+  appendHeader(page, F("myMota32 Template"));
+  page += F("<p class='ok'>Template saved. Rebooting.</p>");
+  if (runtime_template.unsupported_count) {
+    page += F("<p class='bad'>The template contains unsupported GPIO functions. Check the Template card after reboot.</p>");
+  }
+  page += F("<p>The page will return to the dashboard when the device is reachable again.</p>");
+  appendFooter(page, false, true);
+  sendHtml(page);
+  scheduleRestart(1200);
+}
+
+void handlePowerSave() {
+  if (!server.hasArg("relay") || !server.hasArg("state")) {
+    server.send(400, F("text/plain"), F("Missing relay or state"));
+    return;
+  }
+  const int relay = server.arg("relay").toInt();
+  const String state = server.arg("state");
+  if (relay < 1 || relay > kMaxRelays || !hasPin(runtime_template.relays[relay - 1])) {
+    server.send(400, F("text/plain"), F("Invalid relay"));
+    return;
+  }
+  if (state == "on") setRelay(relay - 1, true);
+  else if (state == "off") setRelay(relay - 1, false);
+  else if (state == "toggle") toggleRelay(relay - 1);
+  else { server.send(400, F("text/plain"), F("Invalid relay state")); return; }
+  updateDeviceLeds(true);
+  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
+  server.sendHeader(F("Location"), F("/"), true);
+  server.send(303, F("text/plain"), "");
+}
+
+void handleLedSave() {
+  if (!hasConfigurableLedOutputs()) {
+    server.send(400, F("text/plain"), F("No configurable LEDs are available"));
+    return;
+  }
+  uint8_t attachments[kMaxLedOutputs];
+  memcpy(attachments, config.led_attach, sizeof(attachments));
+  for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
+    if (!hasLedOutput(i)) continue;
+    String arg_name = F("led");
+    arg_name += String(i);
+    if (!server.hasArg(arg_name)) {
+      server.send(400, F("text/plain"), F("Missing LED setting"));
+      return;
+    }
+    const long raw_value = server.arg(arg_name).toInt();
+    if (raw_value < 0 || raw_value > 255) {
+      server.send(400, F("text/plain"), F("Invalid LED setting"));
+      return;
+    }
+    const uint8_t attachment = static_cast<uint8_t>(raw_value);
+    if (!ledAttachmentAvailable(attachment)) {
+      server.send(400, F("text/plain"), F("Invalid LED attachment"));
+      return;
+    }
+    attachments[i] = attachment;
+  }
+  if (!saveLedAttachments(attachments)) {
+    server.send(500, F("text/plain"), F("Could not save LED settings"));
+    return;
+  }
+  updateDeviceLeds(true);
+  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
+  server.sendHeader(F("Location"), F("/"), true);
+  server.send(303, F("text/plain"), "");
+}
+
+void handleButtonSave() {
+  if (!hasConfigurableButtons()) {
+    server.send(400, F("text/plain"), F("No configurable inputs are available"));
+    return;
+  }
+  const long hold_long = server.arg("hold_ms").toInt();
+  const long debounce_long = server.arg("debounce_ms").toInt();
+  if (hold_long < kButtonHoldMinMs || hold_long > kButtonHoldMaxMs) {
+    server.send(400, F("text/plain"), F("Invalid input hold time"));
+    return;
+  }
+  if (debounce_long < kButtonDebounceMinMs || debounce_long > kButtonDebounceMaxMs) {
+    server.send(400, F("text/plain"), F("Invalid input debounce time"));
+    return;
+  }
+  uint8_t mode[kMaxButtons];
+  uint8_t relay[kMaxButtons];
+  uint8_t level[kMaxButtons];
+  memcpy(mode, config.input_mode, sizeof(mode));
+  memcpy(relay, config.input_relay, sizeof(relay));
+  memcpy(level, config.input_on_level, sizeof(level));
+
+  for (uint8_t i = 0; i < runtime_template.button_count; i++) {
+    if (!hasPin(runtime_template.buttons[i])) continue;
+    String mode_arg = F("mode");
+    mode_arg += String(i);
+    if (!server.hasArg(mode_arg)) {
+      server.send(400, F("text/plain"), F("Missing input mode"));
+      return;
+    }
+    const long mode_long = server.arg(mode_arg).toInt();
+    if (mode_long != kInputModeButton && mode_long != kInputModeSwitch) {
+      server.send(400, F("text/plain"), F("Invalid input mode"));
+      return;
+    }
+    mode[i] = static_cast<uint8_t>(mode_long);
+
+    String relay_arg = F("relay");
+    relay_arg += String(i);
+    uint8_t fallback = 0;
+    const bool has_relay = defaultInputRelayTarget(i, fallback);
+    if (has_relay) {
+      if (!server.hasArg(relay_arg)) {
+        server.send(400, F("text/plain"), F("Missing target relay"));
+        return;
+      }
+      const long relay_long = server.arg(relay_arg).toInt();
+      if (relay_long < 0 || relay_long >= kMaxRelays || !hasPin(runtime_template.relays[relay_long])) {
+        server.send(400, F("text/plain"), F("Invalid target relay"));
+        return;
+      }
+      relay[i] = static_cast<uint8_t>(relay_long);
+    } else {
+      relay[i] = kInputRelayUnset;
+    }
+
+    if (mode[i] == kInputModeSwitch) {
+      String reverse_arg = F("reverse");
+      reverse_arg += String(i);
+      if (!server.hasArg(reverse_arg)) {
+        server.send(400, F("text/plain"), F("Missing switch reverse"));
+        return;
+      }
+      const long reverse_long = server.arg(reverse_arg).toInt();
+      level[i] = reverse_long ? kInputOnLevelLow : kInputOnLevelHigh;
+    } else {
+      level[i] = kInputOnLevelUnset;
+    }
+  }
+  if (!saveInputConfig(static_cast<uint16_t>(hold_long), static_cast<uint16_t>(debounce_long), mode, relay, level)) {
+    server.send(500, F("text/plain"), F("Could not save input settings"));
+    return;
+  }
+  for (uint8_t i = 0; i < runtime_template.button_count; i++) {
+    if (effectiveInputMode(i) == kInputModeSwitch && hasPin(runtime_template.buttons[i])) {
+      uint8_t target = 0;
+      if (inputRelayTarget(i, target)) setRelay(target, readInputActive(i));
+    }
+  }
+  updateDeviceLeds(true);
+  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
+  server.sendHeader(F("Location"), F("/"), true);
+  server.send(303, F("text/plain"), "");
 }
 
 void handleReboot() {
@@ -704,7 +1896,6 @@ void handleFactoryReset() {
     return;
   }
   clearBootRecoveryState();
-
   String page;
   page.reserve(900);
   appendHeader(page, F("myMota32 Factory Reset"));
@@ -717,7 +1908,7 @@ void handleFactoryReset() {
 
 void handleHealth() {
   String out;
-  out.reserve(900);
+  out.reserve(1400);
   beginStreamedResponse("application/json");
   out += F("{\"name\":\"myMota32\",\"version\":\"");
   out += F(MYMOTA32_VERSION);
@@ -744,11 +1935,8 @@ void handleHealth() {
   out += F("\",\"ip\":\"");
   out += (WiFi.status() == WL_CONNECTED ? ipToString(WiFi.localIP()) : String());
   out += F("\",\"rssi\":");
-  if (WiFi.status() == WL_CONNECTED) {
-    out += WiFi.RSSI();
-  } else {
-    out += F("null");
-  }
+  if (WiFi.status() == WL_CONNECTED) out += WiFi.RSSI();
+  else out += F("null");
   out += F(",\"ap\":");
   out += (ap_started ? F("true") : F("false"));
   out += F(",\"configured_phy_mode\":");
@@ -767,7 +1955,55 @@ void handleHealth() {
   out += kBootRecoveryStableMs / 1000;
   out += F(",\"factory_reset\":");
   out += (boot_recovery_factory_reset ? F("true") : F("false"));
-  out += F("}}");
+  out += F("},\"template\":{\"enabled\":");
+  out += (runtime_template.enabled ? F("true") : F("false"));
+  if (runtime_template.enabled) {
+    out += F(",\"name\":\"");
+    out += jsonEscape(runtime_template.name);
+    out += F("\",\"base\":");
+    out += runtime_template.base;
+    out += F(",\"flag\":");
+    out += runtime_template.flag;
+    out += F(",\"relays\":");
+    out += runtime_template.relay_count;
+    out += F(",\"buttons\":");
+    out += runtime_template.button_count;
+    out += F(",\"leds\":");
+    out += runtime_template.led_count;
+    out += F(",\"unsupported\":");
+    out += runtime_template.unsupported_count;
+  }
+  out += F("},\"power\":[");
+  for (uint8_t i = 0; i < kMaxRelays; i++) {
+    if (i) out += ',';
+    if (relayAvailable(i)) out += relay_state[i] ? F("true") : F("false");
+    else out += F("null");
+  }
+  out += F("],\"buttons\":[");
+  for (uint8_t i = 0; i < kMaxButtons; i++) {
+    if (i) out += ',';
+    if (i < runtime_template.button_count && hasPin(runtime_template.buttons[i])) {
+      out += F("{\"pressed\":");
+      out += button_state[i].stable_pressed ? F("true") : F("false");
+      out += F(",\"state\":\"");
+      out += inputStateName(i, button_state[i].stable_pressed);
+      out += F("\"}");
+    } else {
+      out += F("null");
+    }
+  }
+  out += F("],\"leds\":[");
+  for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
+    if (i) out += ',';
+    if (hasLedOutput(i)) {
+      out += F("{\"on\":");
+      out += ledOutputOn(i) ? F("true") : F("false");
+      out += F("}");
+    } else {
+      out += F("null");
+    }
+  }
+  out += F("]}");
   flushStreamChunk(out);
   server.sendContent(F(""));
 }
@@ -796,53 +2032,28 @@ void handleUpdateDone() {
 
 void handleUpdateUpload() {
   HTTPUpload &upload = server.upload();
-
   if (upload.status == UPLOAD_FILE_START) {
     update_started = false;
     update_ok = false;
     update_error = UPDATE_ERROR_OK;
-    if (upload.filename.length() == 0) {
-      update_error = UPDATE_ERROR_SIZE;
-    }
+    if (upload.filename.length() == 0) update_error = UPDATE_ERROR_SIZE;
     return;
   }
-
-  if (upload.status == UPLOAD_FILE_WRITE && update_error != UPDATE_ERROR_OK) {
-    return;
-  }
-
+  if (upload.status == UPLOAD_FILE_WRITE && update_error != UPDATE_ERROR_OK) return;
   if (upload.status == UPLOAD_FILE_WRITE) {
     if (!update_started && upload.totalSize == 0) {
-      if (upload.currentSize < 4) {
-        update_error = UPDATE_ERROR_SIZE;
-        return;
-      }
-      if (upload.buf[0] != 0xE9) {
-        update_error = UPDATE_ERROR_MAGIC_BYTE;
-        return;
-      }
-      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-        update_error = Update.getError();
-        return;
-      }
+      if (upload.currentSize < 4) { update_error = UPDATE_ERROR_SIZE; return; }
+      if (upload.buf[0] != 0xE9) { update_error = UPDATE_ERROR_MAGIC_BYTE; return; }
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { update_error = Update.getError(); return; }
       update_started = true;
     }
-    if (Update.hasError()) {
-      update_error = Update.getError();
-      return;
-    }
-    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-      update_error = Update.getError();
-    }
+    if (Update.hasError()) { update_error = Update.getError(); return; }
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) update_error = Update.getError();
     return;
   }
-
   if (upload.status == UPLOAD_FILE_END) {
     if (update_error != UPDATE_ERROR_OK) {
-      if (update_started) {
-        Update.abort();
-        update_started = false;
-      }
+      if (update_started) { Update.abort(); update_started = false; }
     } else if (!update_started) {
       update_error = UPDATE_ERROR_SIZE;
     } else if (Update.end(true)) {
@@ -854,11 +2065,8 @@ void handleUpdateUpload() {
     }
     return;
   }
-
   if (upload.status == UPLOAD_FILE_ABORTED) {
-    if (update_started) {
-      Update.abort();
-    }
+    if (update_started) Update.abort();
     update_started = false;
     update_ok = false;
     update_error = UPDATE_ERROR_STREAM;
@@ -874,6 +2082,10 @@ void setupRoutes() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/scan", HTTP_GET, handleScan);
   server.on("/wifi", HTTP_POST, handleWifiSave);
+  server.on("/template", HTTP_POST, handleTemplateSave);
+  server.on("/power", HTTP_POST, handlePowerSave);
+  server.on("/leds", HTTP_POST, handleLedSave);
+  server.on("/buttons", HTTP_POST, handleButtonSave);
   server.on("/reboot", HTTP_GET, handleReboot);
   server.on("/factory-reset", HTTP_POST, handleFactoryReset);
   server.on("/health", HTTP_GET, handleHealth);
@@ -890,7 +2102,15 @@ void setup() {
   boot_started_ms = millis();
   loadBootRecoveryState();
   loadConfig();
+  decodeTemplateConfig();
+  setupDevicePins();
   Serial.printf("myMota32 %s %s chip %s\n", MYMOTA32_VERSION, MYMOTA32_TARGET, chipIdHex().c_str());
+  if (runtime_template.enabled) {
+    Serial.printf("Template '%s' base %u relays %u buttons %u leds %u unsupported %u\n",
+                  runtime_template.name, runtime_template.base, runtime_template.relay_count,
+                  runtime_template.button_count, runtime_template.led_count,
+                  runtime_template.unsupported_count);
+  }
   connectWifi();
   boot_id = makeBootId();
   setupRoutes();
@@ -906,12 +2126,13 @@ void loop() {
   maintainBootRecovery();
   maintainWifi();
   server.handleClient();
+  maintainDevice();
+  server.handleClient();
 
   if (restartDue()) {
     delay(50);
     ESP.restart();
   }
-
   recordLoopPerf(loop_started_us, micros());
   yield();
 }
