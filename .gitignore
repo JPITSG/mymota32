@@ -1,4 +1,8 @@
 .cache/
 .pio/
+.dummy/
+managed_components/
+sdkconfig.defaults
+sdkconfig.mymota32-*
 firmware.map
 mymotaUpgrade.sh

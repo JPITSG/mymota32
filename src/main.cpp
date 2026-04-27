@@ -160,9 +160,11 @@ constexpr uint16_t kTplNrgSelInv = 2624;
 constexpr uint16_t kTplNrgCf1 = 2656;
 constexpr uint16_t kTplHlwCf = 2688;
 constexpr uint16_t kTplHjlCf = 2720;
+constexpr uint16_t kTplTxd = 3200;
 constexpr uint16_t kTplAde7953Irq = 3456;
 constexpr uint16_t kTplAdcInput = 4704;
 constexpr uint16_t kTplAdcTemp = 4736;
+constexpr uint16_t kTplBl0939Rx = 8128;
 constexpr uint16_t kTplOptionA = 9472;
 constexpr uint16_t kTplSentinelEnd = 65504;
 constexpr uint8_t kTplOptionACount = 9;
@@ -187,6 +189,8 @@ const char kTemplateShellyPlus2PmPcb019Json[] PROGMEM =
   "{\"NAME\":\"Shelly Plus 2PM PCB v0.1.9\",\"GPIO\":[320,0,0,0,34,192,0,0,225,224,0,0,0,0,193,0,0,0,0,0,0,608,640,3458,0,0,0,0,0,9472,0,4736,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateNousA8tJson[] PROGMEM =
   "{\"NAME\":\"NOUS A8T\",\"GPIO\":[1,1,320,1,32,1,1,1,1,224,2624,1,1,1,1,1,0,1,1,1,0,1,2656,2720,0,0,0,0,1,1,1,1,1,0,0,1],\"FLAG\":0,\"BASE\":1}";
+const char kTemplateNousB3tJson[] PROGMEM =
+  "{\"NAME\":\"NOUS B3T\",\"GPIO\":[544,3200,1,8128,32,160,1,1,224,225,0,1,1,1,161,1,0,1,1,1,0,1,1,1,0,0,0,0,1,1,1,0,1,0,0,1],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateGenericC3RelayJson[] PROGMEM =
   "{\"NAME\":\"Generic C3 Relay\",\"GPIO\":[32,0,0,0,224,288,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 
@@ -718,6 +722,9 @@ void parseTemplateFunction(RuntimeTemplate &target, uint8_t pin, uint16_t code) 
   }
   if (code == kTplAdcTemp || code == kTplAdcInput) {
     if (digitalPinSupported(pin)) target.adc_temp = code == kTplAdcTemp;
+    return;
+  }
+  if (code == kTplTxd || code == kTplBl0939Rx) {
     return;
   }
   if (base == kTplAde7953Irq) {
@@ -2381,6 +2388,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("function fh(){return fetch('/health',{cache:'no-store'}).then(function(r){if(!r.ok)throw Error();return r.json();}).then(function(d){ok();return d;});}");
   page += F("function t(i,v){var e=document.getElementById(i);if(e)e.textContent=v;}");
   page += F("function p(i,v,c){var e=document.getElementById(i);if(e){e.textContent=v;e.className=c;}}");
+  page += F("function sd(e,d){if(!e)return;var q=e.querySelectorAll('input,select,textarea,button');for(var i=0;i<q.length;i++)q[i].disabled=d;}");
   page += F("function live(){fh().then(function(d){");
   page += F("t('live-heap',d.heap+' bytes');t('live-uptime',d.uptime+'s');t('live-active-phy',d.active_phy);");
   page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',Number(d.perf.loop_max_us/1000).toFixed(1)+' ms');}");
@@ -2392,13 +2400,13 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
   page += F("}).catch(function(){});}");
-  page += F("function ba(s){var k=s.getAttribute('data-key'),v=s.value,b=document.getElementById('extra-'+k);if(!b)return;var t=b.querySelector('.target-input'),p=b.querySelector('.payload-input'),rr=b.querySelector('.relay-row'),tr=b.querySelector('.target-row'),pr=b.querySelector('.payload-row'),tl=b.querySelector('.target-label'),h=b.querySelector('.action-hint');b.className=(v=='1'||v=='2'||v=='3')?'action-extra show':'action-extra';if(rr)rr.className=v=='1'?'row relay-row':'row relay-row hidden';if(tr)tr.className=(v=='2'||v=='3')?'row target-row':'row target-row hidden';if(pr)pr.className=(v=='2')?'row payload-row':'row payload-row hidden';if(v=='1'){if(h)h.textContent='Toggles the configured relay.';}else if(v=='2'){if(t&&(!t.value||t.value.indexOf('http://')==0))t.value=t.getAttribute('data-default-topic');if(p&&!p.value)p.value=p.getAttribute('data-default-payload');if(tl)tl.textContent='MQTT topic';if(h)h.textContent='Publishes this topic and payload through the configured MQTT broker.';}else if(v=='3'){if(tl)tl.textContent='Webhook URL';if(h)h.textContent='Executes an HTTP GET request; only http:// URLs are supported.';}}");
-  page += F("function im(s){var k=s.getAttribute('data-input'),v=s.value,b=document.getElementById('input-button-'+k),w=document.getElementById('input-switch-'+k);if(b)b.className=v=='0'?'mode-extra show':'mode-extra';if(w)w.className=v=='1'?'mode-extra show':'mode-extra';}");
+  page += F("function ba(s){var k=s.getAttribute('data-key'),v=s.value,b=document.getElementById('extra-'+k);if(!b)return;var t=b.querySelector('.target-input'),p=b.querySelector('.payload-input'),rr=b.querySelector('.relay-row'),tr=b.querySelector('.target-row'),pr=b.querySelector('.payload-row'),tl=b.querySelector('.target-label'),h=b.querySelector('.action-hint'),off=s.disabled;b.className=(v=='1'||v=='2'||v=='3')?'action-extra show':'action-extra';if(rr)rr.className=v=='1'?'row relay-row':'row relay-row hidden';if(tr)tr.className=(v=='2'||v=='3')?'row target-row':'row target-row hidden';if(pr)pr.className=(v=='2')?'row payload-row':'row payload-row hidden';sd(rr,off||v!='1');sd(tr,off||!(v=='2'||v=='3'));sd(pr,off||v!='2');if(v=='1'){if(h)h.textContent='Toggles the configured relay.';}else if(v=='2'){if(t&&(!t.value||t.value.indexOf('http://')==0))t.value=t.getAttribute('data-default-topic');if(p&&!p.value)p.value=p.getAttribute('data-default-payload');if(tl)tl.textContent='MQTT topic';if(h)h.textContent='Publishes this topic and payload through the configured MQTT broker.';}else if(v=='3'){if(tl)tl.textContent='Webhook URL';if(h)h.textContent='Executes an HTTP GET request; only http:// URLs are supported.';}}");
+  page += F("function im(s){var k=s.getAttribute('data-input'),v=s.value,b=document.getElementById('input-button-'+k),w=document.getElementById('input-switch-'+k);if(b)b.className=v=='0'?'mode-extra show':'mode-extra';if(w)w.className=v=='1'?'mode-extra show':'mode-extra';sd(b,v!='0');sd(w,v!='1');if(b){var a=b.querySelectorAll('.button-action');for(var i=0;i<a.length;i++)ba(a[i]);}}");
   page += F("function ts(){var s=document.getElementById('known-template'),t=document.getElementById('template-json');if(!s||!t)return;var v=t.value.trim(),m=0;for(var i=1;i<s.options.length;i++){if(s.options[i].getAttribute('data-json')==v){m=i;break;}}s.selectedIndex=m;}");
   page += F("function tp(s){var o=s.options[s.selectedIndex],t=document.getElementById('template-json');if(o&&t&&o.getAttribute('data-json')){t.value=o.getAttribute('data-json');ts();}}");
   page += F("function bi(){var a=document.querySelectorAll('.button-action');for(var i=0;i<a.length;i++){a[i].onchange=function(){ba(this)};ba(a[i]);}var m=document.querySelectorAll('.input-mode');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ts();}bi();");
   page += F("document.addEventListener('click',function(e){var b=e.target;while(b&&b.tagName!='BUTTON'&&b.tagName!='INPUT')b=b.parentNode;if(!b||!b.form)return;var t=(b.type||'').toLowerCase();if(t=='submit'||t=='image')b.form._s=b;},true);");
-  page += F("document.addEventListener('submit',function(e){var f=e.target;if(!f||f.getAttribute('data-inline')!='1')return;e.preventDefault();var fd=new FormData(f),b=e.submitter||f._s;if(b&&b.name)fd.append(b.name,b.value);fd.append('_inline','1');fetch(f.getAttribute('action')||location.pathname,{method:(f.method||'POST').toUpperCase(),body:fd,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});live();}).catch(function(x){alert(x.message||x);});},true);");
+  page += F("document.addEventListener('submit',function(e){var f=e.target;if(!f||f.getAttribute('data-inline')!='1')return;e.preventDefault();var fd=new FormData(f),b=e.submitter||f._s;if(b&&b.name)fd.append(b.name,b.value);fd.append('_inline','1');var body=new URLSearchParams();fd.forEach(function(v,k){body.append(k,v);});fetch(f.getAttribute('action')||location.pathname,{method:(f.method||'POST').toUpperCase(),body:body,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});live();}).catch(function(x){alert(x.message||x);});},true);");
   if (live_poll) page += F("setInterval(live,1000);setInterval(ck,1000);live();");
   if (reboot_wait) {
     page += F("var rb=");
@@ -2850,6 +2858,8 @@ void appendTemplateForm(String &page) {
   page += F("'>Generic C3 Relay</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateNousA8tJson)));
   page += F("'>NOUS A8T</option><option data-json='");
+  page += htmlEscape(String(FPSTR(kTemplateNousB3tJson)));
+  page += F("'>NOUS B3T</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateShellyPlus2PmPcb019Json)));
   page += F("'>Shelly Plus 2PM PCB v0.1.9</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateShellyPlusPlugSJson)));
