@@ -2016,6 +2016,48 @@ void appendStatusBlock(String &page) {
     page += ipToString(WiFi.softAPIP());
     page += F("</code></div>");
   }
+
+  page += F("<span>MQTT</span><div>");
+  if (config.mqtt_host[0] == '\0') {
+    page += F("<span id='live-mqtt' class='pill'>not configured</span>");
+  } else if (mqtt_client.connected()) {
+    page += F("<span id='live-mqtt' class='pill ok'>connected</span>");
+  } else {
+    page += F("<span id='live-mqtt' class='pill bad'>disconnected</span>");
+  }
+  page += F("</div><span>MQTT broker</span><div>");
+  if (config.mqtt_host[0] == '\0') {
+    page += F("<span class='muted'>not configured</span>");
+  } else {
+    page += F("<code>");
+    page += htmlEscape(config.mqtt_host);
+    page += F(":");
+    page += String(config.mqtt_port);
+    page += F("</code>");
+  }
+  page += F("</div><span>MQTT topic</span><div><code>");
+  page += htmlEscape(config.mqtt_topic);
+  page += F("</code></div><span>MQTT keepalive</span><div><code>");
+  if (config.mqtt_keepalive == 0) {
+    page += F("disabled");
+  } else {
+    page += String(config.mqtt_keepalive);
+    page += F("s");
+  }
+  page += F("</code></div><span>MQTT pending</span><div><code id='live-mqtt-pending'>");
+  page += String(mqtt_pending_relay_mask);
+  page += F("</code></div><span>MQTT last connect</span><div><code id='live-mqtt-result'>");
+  page += mqttConnectResultName(last_mqtt_connect_result);
+  page += F("</code> in <code id='live-mqtt-connect-ms'>");
+  page += String(last_mqtt_connect_duration);
+  page += F(" ms</code></div><span>MQTT last attempt</span><div><code id='live-mqtt-attempt'>");
+  if (last_mqtt_connect_attempt == 0) {
+    page += F("n/a");
+  } else {
+    page += String(millis() - last_mqtt_connect_attempt);
+    page += F(" ms ago");
+  }
+  page += F("</code></div>");
   page += F("</div></section>");
 }
 
@@ -2252,38 +2294,22 @@ void appendTemplateForm(String &page) {
 }
 
 void appendMqttForm(String &page) {
-  page += F("<section class='panel'><h2>MQTT</h2>");
-  page += F("<p class='hint'>State: <strong>");
-  if (mqtt_client.connected()) {
-    page += F("connected");
-  } else if (!mqttConfigured()) {
-    page += F("not configured");
-  } else {
-    page += F("disconnected (");
-    page += mqttConnectResultName(last_mqtt_connect_result);
-    page += F(")");
-  }
-  page += F("</strong></p>");
-  page += F("<form data-inline='1' method='post' action='/mqtt'>");
+  page += F("<section class='panel'><h2>MQTT Settings</h2><form data-inline='1' method='post' action='/mqtt'>");
   page += F("<div class='row'><label>Host<br><input name='host' maxlength='");
   page += String(kMqttHostMaxLen);
   page += F("' value='");
   page += htmlEscape(config.mqtt_host);
-  page += F("'></label></div>");
-  page += F("<div class='row'><label>Port<br><input name='port' type='number' min='1' max='65535' value='");
+  page += F("'></label></div><div class='row'><label>Port<br><input name='port' type='number' min='1' max='65535' value='");
   page += String(config.mqtt_port);
-  page += F("'></label></div>");
-  page += F("<div class='row'><label>Topic<br><input name='topic' maxlength='");
+  page += F("'></label></div><div class='row'><label>Topic<br><input name='topic' maxlength='");
   page += String(kMqttTopicMaxLen);
   page += F("' required value='");
   page += htmlEscape(config.mqtt_topic);
-  page += F("'></label></div>");
-  page += F("<div class='row'><label>State keepalive seconds<br><input name='keepalive' type='number' min='0' max='");
+  page += F("'></label></div><div class='row'><label>State keepalive seconds<br><input name='keepalive' type='number' min='0' max='");
   page += String(kMqttKeepaliveMax);
   page += F("' value='");
   page += String(config.mqtt_keepalive);
-  page += F("'></label></div>");
-  page += F("<button type='submit'>Save MQTT</button></form></section>");
+  page += F("'></label></div><button type='submit'>Save MQTT</button></form></section>");
 }
 
 void handleRoot() {
