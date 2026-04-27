@@ -70,6 +70,45 @@ constexpr uint8_t kLedAttachNone = 0;
 constexpr uint8_t kLedAttachRelayBase = 1;
 constexpr uint8_t kLedAttachButtonBase = 33;
 
+constexpr size_t kMqttHostMaxLen = 64;
+constexpr size_t kMqttTopicMaxLen = 32;
+constexpr uint16_t kMqttDefaultPort = 1883;
+constexpr uint16_t kMqttKeepaliveMax = 65535U;
+constexpr uint16_t kMqttProtocolKeepaliveSec = 30;
+constexpr uint32_t kMqttReconnectMs = 5000;
+constexpr uint32_t kMqttConnectTimeoutMs = 650;
+constexpr uint32_t kMqttConnackTimeoutMs = 250;
+constexpr uint32_t kMqttIoTimeoutMs = 250;
+constexpr uint32_t kMqttInboundReadTimeoutMs = 20;
+constexpr uint32_t kMqttBrokerSilenceTimeoutMs = static_cast<uint32_t>(kMqttProtocolKeepaliveSec) * 2000UL;
+constexpr uint32_t kMqttConnackMaxRemainingLength = 2;
+constexpr uint32_t kMqttSubackMaxRemainingLength = 16;
+constexpr uint32_t kMqttInboundMaxRemainingLength = 512;
+constexpr uint8_t kMqttInboundPacketLimit = 4;
+constexpr uint16_t kMqttCommandPacketId = 1;
+constexpr size_t kMqttCommandTopicMaxLen = 5 + kMqttTopicMaxLen + 2;
+constexpr size_t kMqttInboundTopicMaxLen = kMqttCommandTopicMaxLen + 32;
+constexpr size_t kMqttInboundPayloadMaxLen = 96;
+constexpr uint8_t kMqttPacketConnack = 0x20;
+constexpr uint8_t kMqttPacketPublish = 0x30;
+constexpr uint8_t kMqttPacketPuback = 0x40;
+constexpr uint8_t kMqttPacketSubscribe = 0x82;
+constexpr uint8_t kMqttPacketSuback = 0x90;
+constexpr uint8_t kMqttPacketPingreq = 0xc0;
+constexpr uint8_t kMqttPacketPingresp = 0xd0;
+
+constexpr uint8_t kMqttConnectIdle = 0;
+constexpr uint8_t kMqttConnectOk = 1;
+constexpr uint8_t kMqttConnectTcpFailed = 2;
+constexpr uint8_t kMqttConnectWriteFailed = 3;
+constexpr uint8_t kMqttConnectConnackTimeout = 4;
+constexpr uint8_t kMqttConnectConnackRejected = 5;
+constexpr uint8_t kMqttConnectSubscribeFailed = 6;
+
+constexpr uint8_t kPowerStateOff = 0;
+constexpr uint8_t kPowerStateOn = 1;
+constexpr uint8_t kPowerStateToggle = 2;
+
 constexpr uint16_t kTplNone = 0;
 constexpr uint16_t kTplUser = 1;
 constexpr uint16_t kTplKey1 = 32;
@@ -160,6 +199,11 @@ struct StoredConfig {
   uint16_t button_debounce_ms;
 
   uint8_t led_attach[kMaxLedOutputs];
+
+  char mqtt_host[kMqttHostMaxLen + 1];
+  uint16_t mqtt_port;
+  char mqtt_topic[kMqttTopicMaxLen + 1];
+  uint16_t mqtt_keepalive;
 };
 
 StoredConfig config{};
@@ -200,6 +244,18 @@ uint32_t perf_last_loop_max_us = 0;
 
 WebServer server(80);
 Preferences prefs;
+
+WiFiClient mqtt_client;
+uint32_t next_mqtt_reconnect = 0;
+uint32_t last_mqtt_io = 0;
+uint32_t last_mqtt_rx = 0;
+uint32_t last_mqtt_ping = 0;
+uint32_t last_mqtt_state_publish = 0;
+uint32_t last_mqtt_connect_attempt = 0;
+uint32_t last_mqtt_connect_duration = 0;
+uint8_t last_mqtt_connect_result = kMqttConnectIdle;
+uint8_t mqtt_pending_relay_mask = 0;
+bool mqtt_ping_pending = false;
 
 void recordLoopPerf(uint32_t started_us, uint32_t ended_us) {
   const uint32_t now_ms = millis();
@@ -762,6 +818,10 @@ void clearTemplateConfig(StoredConfig &target) {
   memset(target.template_gpio, 0, sizeof(target.template_gpio));
 }
 
+String defaultMqttTopic() {
+  return "tasmota_" + chipIdHex();
+}
+
 void setDefaultConfig() {
   memset(&config, 0, sizeof(config));
   strlcpy(config.hostname, defaultHostname().c_str(), sizeof(config.hostname));
@@ -776,6 +836,9 @@ void setDefaultConfig() {
   for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
     config.led_attach[i] = kLedAttachNone;
   }
+  config.mqtt_port = kMqttDefaultPort;
+  strlcpy(config.mqtt_topic, defaultMqttTopic().c_str(), sizeof(config.mqtt_topic));
+  config.mqtt_keepalive = 0;
 }
 
 template <size_t N>
@@ -829,6 +892,11 @@ bool loadConfig() {
 
   uint8_t leds[kMaxLedOutputs];
   readByteArray(prefs, "leds", leds, kLedAttachNone);
+
+  String mqtt_host = prefs.getString("mqtt_host", "");
+  uint16_t mqtt_port = prefs.getUShort("mqtt_port", kMqttDefaultPort);
+  String mqtt_topic = prefs.getString("mqtt_topic", "");
+  uint16_t mqtt_keepalive = prefs.getUShort("mqtt_keep", 0);
   prefs.end();
 
   strlcpy(config.ssid, ssid.c_str(), sizeof(config.ssid));
@@ -856,6 +924,15 @@ bool loadConfig() {
   for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
     config.led_attach[i] = isLedAttachmentEncoding(leds[i]) ? leds[i] : kLedAttachNone;
   }
+
+  strlcpy(config.mqtt_host, mqtt_host.c_str(), sizeof(config.mqtt_host));
+  config.mqtt_port = mqtt_port == 0 ? kMqttDefaultPort : mqtt_port;
+  if (mqtt_topic.length() == 0) {
+    strlcpy(config.mqtt_topic, defaultMqttTopic().c_str(), sizeof(config.mqtt_topic));
+  } else {
+    strlcpy(config.mqtt_topic, mqtt_topic.c_str(), sizeof(config.mqtt_topic));
+  }
+  config.mqtt_keepalive = mqtt_keepalive;
 
   config_ok = config.ssid[0] != '\0';
   return config_ok;
@@ -887,6 +964,31 @@ bool saveLedAttachments(const uint8_t (&leds)[kMaxLedOutputs]) {
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putBytes("leds", leds, sizeof(leds));
   prefs.end();
+  return loadConfig();
+}
+
+void resetMqttRuntimeState() {
+  next_mqtt_reconnect = 0;
+  last_mqtt_io = 0;
+  last_mqtt_rx = 0;
+  last_mqtt_ping = 0;
+  last_mqtt_state_publish = 0;
+  last_mqtt_connect_attempt = 0;
+  last_mqtt_connect_duration = 0;
+  last_mqtt_connect_result = kMqttConnectIdle;
+  mqtt_pending_relay_mask = 0;
+  mqtt_ping_pending = false;
+}
+
+bool saveMqttConfig(const char *host, uint16_t port, const char *topic, uint16_t keepalive) {
+  if (!prefs.begin("mymota32", false)) return false;
+  prefs.putString("mqtt_host", host ? host : "");
+  prefs.putUShort("mqtt_port", port);
+  prefs.putString("mqtt_topic", topic ? topic : "");
+  prefs.putUShort("mqtt_keep", keepalive);
+  prefs.end();
+  resetMqttRuntimeState();
+  if (mqtt_client.connected()) mqtt_client.stop();
   return loadConfig();
 }
 
@@ -1076,12 +1178,17 @@ void updateDeviceLeds(bool force = false) {
   }
 }
 
+void scheduleMqttRelayPublish(uint8_t relay);
+
 void setRelay(uint8_t relay, bool on) {
   if (relay >= kMaxRelays || !hasPin(runtime_template.relays[relay])) return;
   const bool changed = relay_state[relay] != on;
   relay_state[relay] = on;
   writeAssignedPin(runtime_template.relays[relay], on);
-  if (changed) updateDeviceLeds(true);
+  if (changed) {
+    updateDeviceLeds(true);
+    scheduleMqttRelayPublish(relay);
+  }
 }
 
 void toggleRelay(uint8_t relay) {
@@ -1151,6 +1258,617 @@ void maintainButtons() {
 void maintainDevice() {
   maintainButtons();
   updateDeviceLeds();
+}
+
+bool parseUint16Input(const String &input, uint16_t min_value, uint16_t max_value, uint16_t &out) {
+  if (input.length() == 0) return false;
+  for (size_t i = 0; i < input.length(); i++) {
+    if (input[i] < '0' || input[i] > '9') return false;
+  }
+  long parsed = input.toInt();
+  if (parsed < min_value || parsed > max_value) return false;
+  out = static_cast<uint16_t>(parsed);
+  return true;
+}
+
+bool isValidMqttHost(const String &host) {
+  if (host.length() > kMqttHostMaxLen) return false;
+  for (size_t i = 0; i < host.length(); i++) {
+    const char c = host[i];
+    if (c <= ' ' || c == '/' || c == '\\') return false;
+  }
+  return true;
+}
+
+bool isValidMqttTopic(const String &topic) {
+  if (topic.length() == 0 || topic.length() > kMqttTopicMaxLen) return false;
+  for (size_t i = 0; i < topic.length(); i++) {
+    const uint8_t c = static_cast<uint8_t>(topic[i]);
+    if (c < 0x20 || c == 0x7f) return false;
+  }
+  return true;
+}
+
+bool mqttConfigured() {
+  return config.mqtt_host[0] != '\0' && config.mqtt_topic[0] != '\0' && config.mqtt_port != 0;
+}
+
+const __FlashStringHelper *mqttConnectResultName(uint8_t result) {
+  switch (result) {
+    case kMqttConnectOk: return F("ok");
+    case kMqttConnectTcpFailed: return F("tcp_failed");
+    case kMqttConnectWriteFailed: return F("connect_write_failed");
+    case kMqttConnectConnackTimeout: return F("connack_timeout");
+    case kMqttConnectConnackRejected: return F("connack_rejected");
+    case kMqttConnectSubscribeFailed: return F("subscribe_failed");
+    default: return F("idle");
+  }
+}
+
+bool parsePowerCommand(const char *p, size_t len, uint8_t &relay, char *response_key, size_t key_size) {
+  if (len < 5 || strncasecmp(p, "power", 5) != 0) return false;
+  if (len == 5) {
+    relay = 0;
+    strlcpy(response_key, "POWER", key_size);
+    return true;
+  }
+  uint16_t relay_number = 0;
+  for (size_t i = 5; i < len; i++) {
+    const char c = p[i];
+    if (c < '0' || c > '9') return false;
+    relay_number = (relay_number * 10U) + static_cast<uint16_t>(c - '0');
+    if (relay_number > kMaxRelays) return false;
+  }
+  if (relay_number == 0) return false;
+  relay = static_cast<uint8_t>(relay_number - 1);
+  if (relay_number == 1 && runtime_template.relay_count <= 1) {
+    strlcpy(response_key, "POWER", key_size);
+    return true;
+  }
+  if (snprintf(response_key, key_size, "POWER%u", static_cast<unsigned>(relay_number)) >= static_cast<int>(key_size)) {
+    return false;
+  }
+  return true;
+}
+
+bool parsePowerState(const char *p, size_t len, uint8_t &state) {
+  if (len == 1 && p[0] == '0') { state = kPowerStateOff; return true; }
+  if (len == 1 && p[0] == '1') { state = kPowerStateOn; return true; }
+  if (len == 1 && p[0] == '2') { state = kPowerStateToggle; return true; }
+  if (len == 2 && (p[0] | 0x20) == 'o' && (p[1] | 0x20) == 'n') {
+    state = kPowerStateOn;
+    return true;
+  }
+  if (len == 3 && (p[0] | 0x20) == 'o' && (p[1] | 0x20) == 'f' && (p[2] | 0x20) == 'f') {
+    state = kPowerStateOff;
+    return true;
+  }
+  if (len == 6 &&
+      (p[0] | 0x20) == 't' &&
+      (p[1] | 0x20) == 'o' &&
+      (p[2] | 0x20) == 'g' &&
+      (p[3] | 0x20) == 'g' &&
+      (p[4] | 0x20) == 'l' &&
+      (p[5] | 0x20) == 'e') {
+    state = kPowerStateToggle;
+    return true;
+  }
+  return false;
+}
+
+void recordMqttConnectResult(uint8_t result, uint32_t started) {
+  last_mqtt_connect_result = result;
+  last_mqtt_connect_duration = millis() - started;
+}
+
+bool mqttReadByteUntil(uint8_t &value, uint32_t deadline_ms) {
+  while (!mqtt_client.available()) {
+    if (!mqtt_client.connected() || static_cast<int32_t>(millis() - deadline_ms) >= 0) {
+      return false;
+    }
+    delay(1);
+  }
+  const int read_value = mqtt_client.read();
+  if (read_value < 0) return false;
+  value = static_cast<uint8_t>(read_value);
+  last_mqtt_rx = millis();
+  return true;
+}
+
+bool mqttReadBytesUntil(uint8_t *buffer, uint32_t length, uint32_t deadline_ms) {
+  for (uint32_t i = 0; i < length; i++) {
+    if (!mqttReadByteUntil(buffer[i], deadline_ms)) return false;
+  }
+  return true;
+}
+
+bool mqttSkipBytesUntil(uint32_t length, uint32_t deadline_ms) {
+  uint8_t ignored = 0;
+  for (uint32_t i = 0; i < length; i++) {
+    if (!mqttReadByteUntil(ignored, deadline_ms)) return false;
+  }
+  return true;
+}
+
+bool mqttReadRemainingLengthUntil(uint32_t &length, uint32_t max_length, uint32_t deadline_ms) {
+  length = 0;
+  uint32_t multiplier = 1;
+  for (uint8_t i = 0; i < 4; i++) {
+    uint8_t encoded = 0;
+    if (!mqttReadByteUntil(encoded, deadline_ms)) return false;
+    length += static_cast<uint32_t>(encoded & 0x7fU) * multiplier;
+    if (length > max_length) return true;
+    if ((encoded & 0x80U) == 0) return true;
+    multiplier *= 128U;
+  }
+  return false;
+}
+
+bool mqttWriteByte(uint8_t value) {
+  return mqtt_client.write(&value, 1) == 1;
+}
+
+bool mqttWriteRemainingLength(uint32_t length) {
+  do {
+    uint8_t encoded = length % 128U;
+    length /= 128U;
+    if (length) encoded |= 0x80U;
+    if (!mqttWriteByte(encoded)) return false;
+  } while (length);
+  return true;
+}
+
+bool mqttWriteString(const char *value) {
+  const uint16_t len = value ? strlen(value) : 0;
+  uint8_t header[2] = {
+    static_cast<uint8_t>(len >> 8),
+    static_cast<uint8_t>(len & 0xffU)
+  };
+  if (mqtt_client.write(header, sizeof(header)) != sizeof(header)) return false;
+  return len == 0 || mqtt_client.write(reinterpret_cast<const uint8_t *>(value), len) == len;
+}
+
+String mqttClientId() {
+  return "mymota32_" + chipIdHex();
+}
+
+String mqttCommandTopicFilter() {
+  String topic;
+  topic.reserve(strlen(config.mqtt_topic) + 8);
+  topic += F("cmnd/");
+  topic += config.mqtt_topic;
+  topic += F("/#");
+  return topic;
+}
+
+void mqttStop() {
+  mqtt_client.stop();
+  last_mqtt_io = 0;
+  last_mqtt_rx = 0;
+  last_mqtt_ping = 0;
+  mqtt_ping_pending = false;
+}
+
+void queueMqttConnectHeal() {
+  for (uint8_t i = 0; i < runtime_template.relay_count; i++) {
+    if (hasPin(runtime_template.relays[i])) {
+      mqtt_pending_relay_mask |= (1U << i);
+    }
+  }
+}
+
+bool mqttReadSuback(uint16_t packet_id, uint32_t deadline_ms) {
+  uint8_t packet_type = 0;
+  uint32_t remaining = 0;
+  if (!mqttReadByteUntil(packet_type, deadline_ms)) return false;
+  if (packet_type != kMqttPacketSuback) return false;
+  if (!mqttReadRemainingLengthUntil(remaining, kMqttSubackMaxRemainingLength, deadline_ms)) return false;
+  if (remaining < 3) return false;
+
+  uint8_t id_bytes[2];
+  if (!mqttReadBytesUntil(id_bytes, sizeof(id_bytes), deadline_ms)) return false;
+  remaining -= sizeof(id_bytes);
+  const uint16_t received_id = (static_cast<uint16_t>(id_bytes[0]) << 8) | id_bytes[1];
+  if (received_id != packet_id) {
+    if (remaining) mqttSkipBytesUntil(remaining, deadline_ms);
+    return false;
+  }
+
+  uint8_t return_code = 0x80;
+  if (!mqttReadByteUntil(return_code, deadline_ms)) return false;
+  remaining--;
+  if (remaining && !mqttSkipBytesUntil(remaining, deadline_ms)) return false;
+  return return_code != 0x80;
+}
+
+bool mqttSubscribeCommandTopic() {
+  const String filter = mqttCommandTopicFilter();
+  if (filter.length() == 0 || filter.length() > kMqttCommandTopicMaxLen) return false;
+
+  const uint32_t remaining_length = 2U + 2U + filter.length() + 1U;
+  const bool ok = mqttWriteByte(kMqttPacketSubscribe) &&
+                  mqttWriteRemainingLength(remaining_length) &&
+                  mqttWriteByte(static_cast<uint8_t>(kMqttCommandPacketId >> 8)) &&
+                  mqttWriteByte(static_cast<uint8_t>(kMqttCommandPacketId & 0xffU)) &&
+                  mqttWriteString(filter.c_str()) &&
+                  mqttWriteByte(0x00);
+  if (!ok) return false;
+  last_mqtt_io = millis();
+  return mqttReadSuback(kMqttCommandPacketId, millis() + kMqttConnackTimeoutMs);
+}
+
+bool mqttConnect() {
+  if (!mqttConfigured() || WiFi.status() != WL_CONNECTED) return false;
+
+  const uint32_t started = millis();
+  last_mqtt_connect_attempt = started;
+  mqttStop();
+  mqtt_client.setTimeout(kMqttConnectTimeoutMs);
+  if (!mqtt_client.connect(config.mqtt_host, config.mqtt_port)) {
+    recordMqttConnectResult(kMqttConnectTcpFailed, started);
+    return false;
+  }
+  mqtt_client.setTimeout(kMqttIoTimeoutMs);
+
+  const String client_id = mqttClientId();
+  const uint32_t remaining_length = 10U + 2U + client_id.length();
+  bool ok = mqttWriteByte(0x10) &&
+            mqttWriteRemainingLength(remaining_length) &&
+            mqttWriteString("MQTT") &&
+            mqttWriteByte(0x04) &&
+            mqttWriteByte(0x02) &&
+            mqttWriteByte(static_cast<uint8_t>(kMqttProtocolKeepaliveSec >> 8)) &&
+            mqttWriteByte(static_cast<uint8_t>(kMqttProtocolKeepaliveSec & 0xffU)) &&
+            mqttWriteString(client_id.c_str());
+  if (!ok) {
+    mqttStop();
+    recordMqttConnectResult(kMqttConnectWriteFailed, started);
+    return false;
+  }
+  last_mqtt_io = millis();
+
+  uint8_t packet_type = 0;
+  uint32_t remaining = 0;
+  uint8_t flags = 0;
+  uint8_t return_code = 0;
+  const uint32_t connack_deadline = millis() + kMqttConnackTimeoutMs;
+  ok = mqttReadByteUntil(packet_type, connack_deadline);
+  if (!ok) {
+    mqttStop();
+    recordMqttConnectResult(kMqttConnectConnackTimeout, started);
+    return false;
+  }
+  if (packet_type != kMqttPacketConnack) {
+    mqttStop();
+    recordMqttConnectResult(kMqttConnectConnackRejected, started);
+    return false;
+  }
+  ok = mqttReadRemainingLengthUntil(remaining, kMqttConnackMaxRemainingLength, connack_deadline);
+  if (!ok || remaining != 0x02) {
+    mqttStop();
+    recordMqttConnectResult(kMqttConnectConnackTimeout, started);
+    return false;
+  }
+  ok = mqttReadByteUntil(flags, connack_deadline) &&
+       mqttReadByteUntil(return_code, connack_deadline);
+  if (!ok) {
+    mqttStop();
+    recordMqttConnectResult(kMqttConnectConnackTimeout, started);
+    return false;
+  }
+  if (flags != 0x00 || return_code != 0x00) {
+    mqttStop();
+    recordMqttConnectResult(kMqttConnectConnackRejected, started);
+    return false;
+  }
+  last_mqtt_io = millis();
+  last_mqtt_rx = last_mqtt_io;
+  last_mqtt_ping = 0;
+  mqtt_ping_pending = false;
+  if (!mqttSubscribeCommandTopic()) {
+    mqttStop();
+    recordMqttConnectResult(kMqttConnectSubscribeFailed, started);
+    return false;
+  }
+  recordMqttConnectResult(kMqttConnectOk, started);
+  queueMqttConnectHeal();
+  return true;
+}
+
+bool mqttEnsureConnected() {
+  if (mqtt_client.connected()) return true;
+  const uint32_t now = millis();
+  if (next_mqtt_reconnect && now - next_mqtt_reconnect < kMqttReconnectMs) {
+    return false;
+  }
+  next_mqtt_reconnect = now;
+  return mqttConnect();
+}
+
+bool mqttPublish(const char *topic, const char *payload) {
+  if (!mqttEnsureConnected()) return false;
+
+  const uint16_t topic_len = topic ? strlen(topic) : 0;
+  const uint16_t payload_len = payload ? strlen(payload) : 0;
+  if (topic_len == 0) return false;
+
+  const uint32_t remaining_length = 2U + topic_len + payload_len;
+  const bool ok = mqttWriteByte(0x30) &&
+                  mqttWriteRemainingLength(remaining_length) &&
+                  mqttWriteString(topic) &&
+                  (payload_len == 0 || mqtt_client.write(reinterpret_cast<const uint8_t *>(payload), payload_len) == payload_len);
+  if (!ok) {
+    mqttStop();
+    return false;
+  }
+  last_mqtt_io = millis();
+  return true;
+}
+
+bool mqttPublishCommandResult(const String &payload) {
+  if (payload.length() == 0) return true;
+  String topic;
+  topic.reserve(strlen(config.mqtt_topic) + 14);
+  topic += F("stat/");
+  topic += config.mqtt_topic;
+  topic += F("/RESULT");
+  return mqttPublish(topic.c_str(), payload.c_str());
+}
+
+String mqttRelayTopic(uint8_t relay) {
+  String topic;
+  topic.reserve(strlen(config.mqtt_topic) + 16);
+  topic += F("stat/");
+  topic += config.mqtt_topic;
+  topic += F("/");
+  if (runtime_template.relay_count <= 1) {
+    topic += F("POWER");
+  } else {
+    topic += F("POWER");
+    topic += String(relay + 1);
+  }
+  return topic;
+}
+
+void scheduleMqttRelayPublish(uint8_t relay) {
+  if (!mqttConfigured()) return;
+  if (relay >= kMaxRelays) return;
+  mqtt_pending_relay_mask |= (1U << relay);
+}
+
+bool mqttPublishRelayState(uint8_t relay) {
+  if (relay >= runtime_template.relay_count || !hasPin(runtime_template.relays[relay])) return true;
+  const String topic = mqttRelayTopic(relay);
+  const bool ok = mqttPublish(topic.c_str(), relay_state[relay] ? "ON" : "OFF");
+  if (ok) {
+    last_mqtt_state_publish = millis();
+  }
+  return ok;
+}
+
+bool mqttPublishAllRelayStates() {
+  bool ok = true;
+  bool published = false;
+  for (uint8_t i = 0; i < runtime_template.relay_count; i++) {
+    if (!hasPin(runtime_template.relays[i])) continue;
+    published = true;
+    if (!mqttPublishRelayState(i)) {
+      ok = false;
+      break;
+    }
+  }
+  if (ok && published) {
+    last_mqtt_state_publish = millis();
+  }
+  return ok;
+}
+
+bool mqttCommandFromTopic(const char *topic, size_t topic_len, const char *&command, size_t &command_len) {
+  constexpr size_t prefix_len = 5;
+  if (!topic || topic_len <= prefix_len) return false;
+  if (strncmp(topic, "cmnd/", prefix_len) != 0) return false;
+
+  const size_t configured_len = strlen(config.mqtt_topic);
+  if (configured_len == 0) return false;
+  if (topic_len <= prefix_len + configured_len + 1) return false;
+  if (memcmp(topic + prefix_len, config.mqtt_topic, configured_len) != 0) return false;
+  if (topic[prefix_len + configured_len] != '/') return false;
+
+  command = topic + prefix_len + configured_len + 1;
+  command_len = topic_len - prefix_len - configured_len - 1;
+  return command_len > 0;
+}
+
+bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size_t arg_len, String &out, String &error) {
+  if (!raw || !arg || cmd_len == 0) {
+    error = F("Invalid cmnd");
+    return false;
+  }
+
+  while (arg_len > 0) {
+    const char c = arg[0];
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+    arg++;
+    arg_len--;
+  }
+  while (arg_len > 0) {
+    const char c = arg[arg_len - 1];
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+    arg_len--;
+  }
+
+  uint8_t relay = 0;
+  char response_key[12];
+  if (parsePowerCommand(raw, cmd_len, relay, response_key, sizeof(response_key))) {
+    if (relay >= kMaxRelays || !hasPin(runtime_template.relays[relay])) {
+      error = F("Invalid relay");
+      return false;
+    }
+    bool on = relay_state[relay];
+    if (arg_len > 0) {
+      uint8_t state = kPowerStateOff;
+      if (!parsePowerState(arg, arg_len, state)) {
+        error = F("Invalid power state");
+        return false;
+      }
+      on = state == kPowerStateToggle ? !relay_state[relay] : state == kPowerStateOn;
+      setRelay(relay, on);
+      updateDeviceLeds(true);
+    }
+    out.reserve(24);
+    out += F("{\"");
+    out += response_key;
+    out += F("\":\"");
+    out += (on ? F("ON") : F("OFF"));
+    out += F("\"}");
+    return true;
+  }
+
+  error = F("Unsupported command");
+  return false;
+}
+
+bool mqttSendPuback(uint16_t packet_id) {
+  const bool ok = mqttWriteByte(kMqttPacketPuback) &&
+                  mqttWriteByte(0x02) &&
+                  mqttWriteByte(static_cast<uint8_t>(packet_id >> 8)) &&
+                  mqttWriteByte(static_cast<uint8_t>(packet_id & 0xffU));
+  if (ok) {
+    last_mqtt_io = millis();
+  }
+  return ok;
+}
+
+bool mqttProcessPublish(uint8_t packet_type, uint32_t remaining, uint32_t deadline) {
+  const uint8_t qos = (packet_type >> 1) & 0x03U;
+  if (qos == 3 || remaining < 2) return false;
+  if (remaining > kMqttInboundMaxRemainingLength) {
+    return mqttSkipBytesUntil(remaining, deadline);
+  }
+
+  uint8_t topic_len_bytes[2];
+  if (!mqttReadBytesUntil(topic_len_bytes, sizeof(topic_len_bytes), deadline)) return false;
+  remaining -= sizeof(topic_len_bytes);
+  const uint16_t topic_len = (static_cast<uint16_t>(topic_len_bytes[0]) << 8) | topic_len_bytes[1];
+  if (topic_len == 0 || topic_len > remaining) return false;
+  if (topic_len > kMqttInboundTopicMaxLen) {
+    return mqttSkipBytesUntil(remaining, deadline);
+  }
+
+  char topic[kMqttInboundTopicMaxLen + 1];
+  if (!mqttReadBytesUntil(reinterpret_cast<uint8_t *>(topic), topic_len, deadline)) return false;
+  topic[topic_len] = '\0';
+  remaining -= topic_len;
+
+  uint16_t packet_id = 0;
+  if (qos > 0) {
+    if (remaining < 2) return false;
+    uint8_t id_bytes[2];
+    if (!mqttReadBytesUntil(id_bytes, sizeof(id_bytes), deadline)) return false;
+    remaining -= sizeof(id_bytes);
+    packet_id = (static_cast<uint16_t>(id_bytes[0]) << 8) | id_bytes[1];
+  }
+
+  if (qos > 1 || remaining > kMqttInboundPayloadMaxLen) {
+    if (!mqttSkipBytesUntil(remaining, deadline)) return false;
+    if (qos == 1 && !mqttSendPuback(packet_id)) return false;
+    return true;
+  }
+
+  char payload[kMqttInboundPayloadMaxLen + 1];
+  if (remaining && !mqttReadBytesUntil(reinterpret_cast<uint8_t *>(payload), remaining, deadline)) return false;
+  payload[remaining] = '\0';
+
+  if (qos == 1 && !mqttSendPuback(packet_id)) return false;
+
+  const char *command = nullptr;
+  size_t command_len = 0;
+  if (!mqttCommandFromTopic(topic, topic_len, command, command_len)) return true;
+
+  String response;
+  String error;
+  if (!executeDeviceCommand(command, command_len, payload, remaining, response, error)) {
+    return true;
+  }
+  return mqttPublishCommandResult(response);
+}
+
+bool mqttProcessInboundPacket() {
+  uint8_t packet_type = 0;
+  uint32_t remaining = 0;
+  const uint32_t deadline = millis() + kMqttInboundReadTimeoutMs;
+
+  if (!mqttReadByteUntil(packet_type, deadline)) return false;
+  if (!mqttReadRemainingLengthUntil(remaining, kMqttInboundMaxRemainingLength, deadline)) return false;
+
+  if (packet_type == kMqttPacketPingresp) {
+    if (remaining != 0) return false;
+    last_mqtt_ping = 0;
+    mqtt_ping_pending = false;
+    return true;
+  }
+
+  if ((packet_type & 0xf0U) == kMqttPacketPublish) {
+    return mqttProcessPublish(packet_type, remaining, deadline);
+  }
+
+  return mqttSkipBytesUntil(remaining, deadline);
+}
+
+bool mqttProcessInbound() {
+  uint8_t packet_count = 0;
+  while (mqtt_client.available() && packet_count < kMqttInboundPacketLimit) {
+    if (!mqttProcessInboundPacket()) {
+      mqttStop();
+      return false;
+    }
+    packet_count++;
+  }
+  return true;
+}
+
+void maintainMqtt() {
+  if (!mqttConfigured() || WiFi.status() != WL_CONNECTED) {
+    if (mqtt_client.connected()) mqttStop();
+    return;
+  }
+
+  if (!mqttEnsureConnected()) return;
+
+  if (!mqttProcessInbound()) return;
+
+  uint32_t now = millis();
+  if ((last_mqtt_rx && now - last_mqtt_rx >= kMqttBrokerSilenceTimeoutMs) ||
+      (mqtt_ping_pending && last_mqtt_ping && now - last_mqtt_ping >= kMqttBrokerSilenceTimeoutMs)) {
+    mqttStop();
+    return;
+  }
+
+  if (now - last_mqtt_io >= (static_cast<uint32_t>(kMqttProtocolKeepaliveSec) * 1000UL)) {
+    if (mqttWriteByte(kMqttPacketPingreq) && mqttWriteByte(0x00)) {
+      last_mqtt_io = now;
+      last_mqtt_ping = now;
+      mqtt_ping_pending = true;
+    } else {
+      mqttStop();
+      return;
+    }
+  }
+
+  for (uint8_t i = 0; i < runtime_template.relay_count; i++) {
+    const uint8_t mask = 1U << i;
+    if (!(mqtt_pending_relay_mask & mask)) continue;
+    if (!mqttPublishRelayState(i)) return;
+    mqtt_pending_relay_mask &= ~mask;
+  }
+
+  now = millis();
+  if (config.mqtt_keepalive > 0 && runtime_template.relay_count > 0) {
+    const uint32_t interval_ms = static_cast<uint32_t>(config.mqtt_keepalive) * 1000UL;
+    if (now - last_mqtt_state_publish >= interval_ms) {
+      mqttPublishAllRelayStates();
+    }
+  }
 }
 
 const __FlashStringHelper *updateErrorName(uint8_t err) {
@@ -1533,6 +2251,41 @@ void appendTemplateForm(String &page) {
   page += F("<button type='submit'>Save template</button> <button class='danger' type='submit' name='clear' value='1'>Clear template</button></form></section>");
 }
 
+void appendMqttForm(String &page) {
+  page += F("<section class='panel'><h2>MQTT</h2>");
+  page += F("<p class='hint'>State: <strong>");
+  if (mqtt_client.connected()) {
+    page += F("connected");
+  } else if (!mqttConfigured()) {
+    page += F("not configured");
+  } else {
+    page += F("disconnected (");
+    page += mqttConnectResultName(last_mqtt_connect_result);
+    page += F(")");
+  }
+  page += F("</strong></p>");
+  page += F("<form data-inline='1' method='post' action='/mqtt'>");
+  page += F("<div class='row'><label>Host<br><input name='host' maxlength='");
+  page += String(kMqttHostMaxLen);
+  page += F("' value='");
+  page += htmlEscape(config.mqtt_host);
+  page += F("'></label></div>");
+  page += F("<div class='row'><label>Port<br><input name='port' type='number' min='1' max='65535' value='");
+  page += String(config.mqtt_port);
+  page += F("'></label></div>");
+  page += F("<div class='row'><label>Topic<br><input name='topic' maxlength='");
+  page += String(kMqttTopicMaxLen);
+  page += F("' required value='");
+  page += htmlEscape(config.mqtt_topic);
+  page += F("'></label></div>");
+  page += F("<div class='row'><label>State keepalive seconds<br><input name='keepalive' type='number' min='0' max='");
+  page += String(kMqttKeepaliveMax);
+  page += F("' value='");
+  page += String(config.mqtt_keepalive);
+  page += F("'></label></div>");
+  page += F("<button type='submit'>Save MQTT</button></form></section>");
+}
+
 void handleRoot() {
   String page;
   page.reserve(6500);
@@ -1549,6 +2302,8 @@ void handleRoot() {
   appendButtonSettings(page);
   flushStreamChunk(page);
   appendLedSettings(page);
+  flushStreamChunk(page);
+  appendMqttForm(page);
   flushStreamChunk(page);
 
   page += F("<section class='panel'><h2>Wi-Fi</h2><form method='post' action='/wifi'>");
@@ -1879,6 +2634,50 @@ void handleButtonSave() {
   server.send(303, F("text/plain"), "");
 }
 
+void handleMqttSave() {
+  String host = server.arg("host");
+  String port_arg = server.arg("port");
+  String topic = server.arg("topic");
+  String keepalive_arg = server.arg("keepalive");
+  host.trim();
+  port_arg.trim();
+  topic.trim();
+  keepalive_arg.trim();
+
+  uint16_t port = kMqttDefaultPort;
+  uint16_t keepalive = 0;
+  if (!isValidMqttHost(host)) {
+    server.send(400, F("text/plain"), F("Invalid MQTT host"));
+    return;
+  }
+  if (!parseUint16Input(port_arg, 1, 65535U, port)) {
+    server.send(400, F("text/plain"), F("Invalid MQTT port"));
+    return;
+  }
+  if (!isValidMqttTopic(topic)) {
+    server.send(400, F("text/plain"), F("Invalid MQTT topic"));
+    return;
+  }
+  if (!parseUint16Input(keepalive_arg, 0, kMqttKeepaliveMax, keepalive)) {
+    server.send(400, F("text/plain"), F("Invalid MQTT keepalive"));
+    return;
+  }
+
+  if (!saveMqttConfig(host.c_str(), port, topic.c_str(), keepalive)) {
+    server.send(500, F("text/plain"), F("Could not save MQTT settings"));
+    return;
+  }
+
+  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
+  String page;
+  page.reserve(700);
+  appendHeader(page, F("myMota32 MQTT"));
+  page += F("<p class='ok'>MQTT settings saved.</p>");
+  page += F("<p><a href='/'>Back</a></p>");
+  appendFooter(page);
+  sendHtml(page);
+}
+
 void handleReboot() {
   String page;
   page.reserve(700);
@@ -2003,7 +2802,21 @@ void handleHealth() {
       out += F("null");
     }
   }
-  out += F("]}");
+  out += F("],\"mqtt\":{\"configured\":");
+  out += (mqttConfigured() ? F("true") : F("false"));
+  out += F(",\"connected\":");
+  out += (mqtt_client.connected() ? F("true") : F("false"));
+  out += F(",\"host\":\"");
+  out += jsonEscape(config.mqtt_host);
+  out += F("\",\"port\":");
+  out += config.mqtt_port;
+  out += F(",\"topic\":\"");
+  out += jsonEscape(config.mqtt_topic);
+  out += F("\",\"keepalive\":");
+  out += config.mqtt_keepalive;
+  out += F(",\"last_result\":\"");
+  out += mqttConnectResultName(last_mqtt_connect_result);
+  out += F("\"}}");
   flushStreamChunk(out);
   server.sendContent(F(""));
 }
@@ -2086,6 +2899,7 @@ void setupRoutes() {
   server.on("/power", HTTP_POST, handlePowerSave);
   server.on("/leds", HTTP_POST, handleLedSave);
   server.on("/buttons", HTTP_POST, handleButtonSave);
+  server.on("/mqtt", HTTP_POST, handleMqttSave);
   server.on("/reboot", HTTP_GET, handleReboot);
   server.on("/factory-reset", HTTP_POST, handleFactoryReset);
   server.on("/health", HTTP_GET, handleHealth);
@@ -2127,6 +2941,8 @@ void loop() {
   maintainWifi();
   server.handleClient();
   maintainDevice();
+  server.handleClient();
+  maintainMqtt();
   server.handleClient();
 
   if (restartDue()) {
