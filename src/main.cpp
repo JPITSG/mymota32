@@ -565,7 +565,7 @@ bool ibeacon_scanning = false;
 char ibeacon_status[24] = "idle";
 uint32_t ibeacon_mqtt_rate_window_start = 0;
 uint16_t ibeacon_mqtt_rate_window_count = 0;
-uint16_t ibeacon_mqtt_reports_per_second = 0;
+uint16_t ibeacon_mqtt_reports_per_minute = 0;
 
 #if MYMOTA32_IBEACON_SUPPORTED
 IBeaconObservation ibeacon_queue[kIBeaconQueueDepth]{};
@@ -3343,8 +3343,8 @@ void updateIBeaconMqttReportRate(uint32_t now) {
     return;
   }
   const uint32_t elapsed = now - ibeacon_mqtt_rate_window_start;
-  if (elapsed < 1000UL) return;
-  ibeacon_mqtt_reports_per_second = elapsed < 2000UL ? ibeacon_mqtt_rate_window_count : 0;
+  if (elapsed < 60000UL) return;
+  ibeacon_mqtt_reports_per_minute = elapsed < 120000UL ? ibeacon_mqtt_rate_window_count : 0;
   ibeacon_mqtt_rate_window_count = 0;
   ibeacon_mqtt_rate_window_start = now;
 }
@@ -3684,7 +3684,7 @@ void resetIBeaconRuntimeState() {
   last_ibeacon_prune = 0;
   ibeacon_mqtt_rate_window_start = millis();
   ibeacon_mqtt_rate_window_count = 0;
-  ibeacon_mqtt_reports_per_second = 0;
+  ibeacon_mqtt_reports_per_minute = 0;
 #if MYMOTA32_IBEACON_SUPPORTED
   resetIBeaconObservationQueue();
 #endif
@@ -4270,7 +4270,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("p('live-wifi',d.wifi?'connected':'disconnected',d.wifi?'pill ok':'pill bad');t('live-ssid',d.wifi_ssid||'n/a');t('live-ip',d.ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');");
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
   page += F("if(d.mqtt){t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',d.mqtt.last_attempt_ms_ago==null?'n/a':d.mqtt.last_attempt_ms_ago+' ms ago');}");
-  page += F("if(d.ibeacon){t('live-ibeacon-mqtt-rps',d.ibeacon.mqtt_reports_per_second+'/s');}");
+  page += F("if(d.ibeacon){t('live-ibeacon-mqtt-rpm',d.ibeacon.mqtt_reports_per_minute+'/min');}");
   page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!==null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
@@ -4385,9 +4385,9 @@ void appendStatusBlock(String &page) {
   } else {
     page += F("<span id='live-mqtt' class='pill bad'>disconnected</span>");
   }
-  page += F("</div><span>MQTT iBeacon Reports / second</span><div><code id='live-ibeacon-mqtt-rps'>");
-  page += String(ibeacon_mqtt_reports_per_second);
-  page += F("/s</code></div><span>MQTT broker</span><div>");
+  page += F("</div><span>MQTT iBeacon Reports / minute</span><div><code id='live-ibeacon-mqtt-rpm'>");
+  page += String(ibeacon_mqtt_reports_per_minute);
+  page += F("/min</code></div><span>MQTT broker</span><div>");
   if (config.mqtt_host[0] == '\0') {
     page += F("<span class='muted'>not configured</span>");
   } else {
@@ -6183,8 +6183,8 @@ void handleHealth() {
   out += ibeacon_scanning ? F("true") : F("false");
   out += F(",\"status\":\"");
   out += jsonEscape(ibeacon_status);
-  out += F("\",\"mqtt_reports_per_second\":");
-  out += ibeacon_mqtt_reports_per_second;
+  out += F("\",\"mqtt_reports_per_minute\":");
+  out += ibeacon_mqtt_reports_per_minute;
   out += F("}");
   out += F(",\"mqtt\":{\"enabled\":");
   out += (mqttConfigured() ? F("true") : F("false"));
