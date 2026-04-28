@@ -4752,13 +4752,11 @@ void handleRoot() {
   flushStreamChunk(page);
   appendDeviceControls(page);
   flushStreamChunk(page);
-  appendRelayEnforcementSettings(page);
-  flushStreamChunk(page);
   appendButtonSettings(page);
   flushStreamChunk(page);
   appendLedSettings(page);
   flushStreamChunk(page);
-  appendMqttForm(page);
+  appendRelayEnforcementSettings(page);
   flushStreamChunk(page);
   appendIBeaconForm(page);
   flushStreamChunk(page);
@@ -4785,6 +4783,9 @@ void handleRoot() {
   page += F("</select></label></div>");
   page += F("<button type='submit'>Save Wi-Fi</button></form>");
   page += F("<p><a class='btn secondary' href='/scan'>Scan networks</a></p></section>");
+  flushStreamChunk(page);
+
+  appendMqttForm(page);
   flushStreamChunk(page);
 
   page += F("<section class='panel'><h2>Firmware</h2><form class='firmware-upload' method='post' action='/update' enctype='multipart/form-data' data-target='");
