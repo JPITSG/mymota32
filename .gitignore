@@ -6,3 +6,4 @@ sdkconfig.defaults
 sdkconfig.mymota32-*
 firmware.map
 mymotaUpgrade.sh
+mymota32Upgrade.sh

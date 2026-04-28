@@ -1784,6 +1784,7 @@ void scheduleMqttRelayOffEnergyReport(uint8_t relay);
 bool persistEnergyTotal(bool force);
 bool mqttConfigured();
 bool parseUint16Input(const String &input, uint16_t min_value, uint16_t max_value, uint16_t &out);
+bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size_t arg_len, String &out, String &error);
 
 void setRelay(uint8_t relay, bool on) {
   if (relay >= kMaxRelays || !hasPin(runtime_template.relays[relay])) return;
@@ -2029,6 +2030,123 @@ bool parseHttpUrl(const String &url, String &host, uint16_t &port, String &path)
   return true;
 }
 
+uint8_t hexNibble(char c) {
+  if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+  if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
+  if (c >= 'A' && c <= 'F') return static_cast<uint8_t>(c - 'A' + 10);
+  return 0xff;
+}
+
+bool urlDecodeComponent(const String &input, String &out) {
+  out = "";
+  out.reserve(input.length());
+  for (size_t i = 0; i < input.length(); i++) {
+    const char c = input[i];
+    if (c == '+') {
+      out += ' ';
+      continue;
+    }
+    if (c != '%') {
+      out += c;
+      continue;
+    }
+    if (i + 2 >= input.length()) return false;
+    const uint8_t hi = hexNibble(input[i + 1]);
+    const uint8_t lo = hexNibble(input[i + 2]);
+    if (hi > 0x0f || lo > 0x0f) return false;
+    const char decoded = static_cast<char>((hi << 4) | lo);
+    if (decoded == '\0' || (static_cast<uint8_t>(decoded) < 0x20 && decoded != '\t')) return false;
+    out += decoded;
+    i += 2;
+  }
+  return true;
+}
+
+bool executeCmndString(const String &cmnd_str, String &out, String &error) {
+  const char *raw = cmnd_str.c_str();
+  size_t total_len = cmnd_str.length();
+
+  while (total_len > 0) {
+    const char c = raw[0];
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+    raw++;
+    total_len--;
+  }
+  while (total_len > 0) {
+    const char c = raw[total_len - 1];
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+    total_len--;
+  }
+
+  size_t cmd_len = 0;
+  while (cmd_len < total_len) {
+    const char c = raw[cmd_len];
+    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') break;
+    cmd_len++;
+  }
+  size_t arg_start = cmd_len;
+  while (arg_start < total_len) {
+    const char c = raw[arg_start];
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+    arg_start++;
+  }
+
+  if (cmd_len == 0) {
+    error = F("Invalid cmnd");
+    return false;
+  }
+
+  const size_t arg_len = arg_start < total_len ? total_len - arg_start : 0;
+  return executeDeviceCommand(raw, cmd_len, raw + arg_start, arg_len, out, error);
+}
+
+bool webhookHostIsLocal(const String &host) {
+  if (WiFi.status() == WL_CONNECTED && host == ipToString(WiFi.localIP())) return true;
+  if (host.equalsIgnoreCase(config.hostname)) return true;
+  const int dot = String(config.hostname).indexOf('.');
+  if (dot > 0 && host.equalsIgnoreCase(String(config.hostname).substring(0, dot))) return true;
+  return strcasecmp(host.c_str(), "localhost") == 0 || host == F("127.0.0.1");
+}
+
+bool runLocalCmndWebhookPath(const String &path) {
+  const int query_start = path.indexOf('?');
+  if (query_start < 0) return false;
+  if (!path.substring(0, query_start).equalsIgnoreCase(F("/cm"))) return false;
+
+  size_t start = static_cast<size_t>(query_start + 1);
+  while (start < path.length()) {
+    int next = path.indexOf('&', start);
+    if (next < 0) next = path.length();
+    const int eq = path.indexOf('=', start);
+    if (eq >= 0 && eq < next) {
+      String name;
+      if (!urlDecodeComponent(path.substring(start, eq), name)) return false;
+      if (name.equalsIgnoreCase(F("cmnd"))) {
+        String cmnd;
+        if (!urlDecodeComponent(path.substring(eq + 1, next), cmnd)) return false;
+        String out;
+        String error;
+        return executeCmndString(cmnd, out, error);
+      }
+    }
+    start = static_cast<size_t>(next + 1);
+  }
+  return false;
+}
+
+void drainWebhookResponse(WiFiClient &client) {
+  const uint32_t started = millis();
+  while (client.connected() && static_cast<uint32_t>(millis() - started) < kWebhookFlushTimeoutMs) {
+    while (client.available()) {
+      client.read();
+    }
+    delay(1);
+  }
+  while (client.available()) {
+    client.read();
+  }
+}
+
 bool runWebhookAction(uint8_t button, bool hold) {
   if (WiFi.status() != WL_CONNECTED) return false;
   const String url = expandButtonActionText(buttonActionTarget(button, hold), button, hold);
@@ -2036,6 +2154,7 @@ bool runWebhookAction(uint8_t button, bool hold) {
   uint16_t port = 80;
   String path;
   if (!parseHttpUrl(url, host, port, path)) return false;
+  if (port == 80 && webhookHostIsLocal(host)) return runLocalCmndWebhookPath(path);
   WiFiClient client;
   client.setTimeout(kWebhookConnectTimeoutMs);
   if (!client.connect(host.c_str(), port)) return false;
@@ -2052,7 +2171,7 @@ bool runWebhookAction(uint8_t button, bool hold) {
     client.stop();
     return false;
   }
-  client.flush();
+  drainWebhookResponse(client);
   client.stop();
   return true;
 }
@@ -2065,9 +2184,9 @@ bool runButtonAction(uint8_t button, uint8_t action, bool hold) {
       return true;
     }
   } else if (action == kButtonActionMqtt) {
-    mqttQueueButtonAction(button, hold);
+    return mqttQueueButtonAction(button, hold);
   } else if (action == kButtonActionWebhook) {
-    runWebhookAction(button, hold);
+    return runWebhookAction(button, hold);
   }
   return false;
 }
@@ -5188,44 +5307,9 @@ void handleCmnd() {
     return;
   }
 
-  const String cmnd_str = server.arg("cmnd");
-  const char *raw = cmnd_str.c_str();
-  size_t total_len = cmnd_str.length();
-
-  while (total_len > 0) {
-    const char c = raw[0];
-    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
-    raw++;
-    total_len--;
-  }
-  while (total_len > 0) {
-    const char c = raw[total_len - 1];
-    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
-    total_len--;
-  }
-
-  size_t cmd_len = 0;
-  while (cmd_len < total_len) {
-    const char c = raw[cmd_len];
-    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') break;
-    cmd_len++;
-  }
-  size_t arg_start = cmd_len;
-  while (arg_start < total_len) {
-    const char c = raw[arg_start];
-    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
-    arg_start++;
-  }
-
-  if (cmd_len == 0) {
-    server.send(400, F("text/plain"), F("Invalid cmnd"));
-    return;
-  }
-
-  const size_t arg_len = arg_start < total_len ? total_len - arg_start : 0;
   String out;
   String error;
-  if (!executeDeviceCommand(raw, cmd_len, raw + arg_start, arg_len, out, error)) {
+  if (!executeCmndString(server.arg("cmnd"), out, error)) {
     server.send(400, F("text/plain"), error);
     return;
   }
