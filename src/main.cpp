@@ -212,6 +212,8 @@ const char kTemplateShellyPlus2PmPcb019Json[] PROGMEM =
   "{\"NAME\":\"Shelly Plus 2PM PCB v0.1.9\",\"GPIO\":[320,0,0,0,34,192,0,0,225,224,0,0,0,0,193,0,0,0,0,0,0,608,640,3458,0,0,0,0,0,9472,0,4736,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateShellyPlus1PmJson[] PROGMEM =
   "{\"NAME\":\"Shelly Plus 1PM\",\"GPIO\":[0,0,0,0,192,2720,0,0,0,0,0,0,0,0,2656,0,0,0,0,2624,0,32,224,0,0,0,0,0,4736,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
+const char kTemplateShellyPlusI4Json[] PROGMEM =
+  "{\"NAME\":\"Shelly Plus i4\",\"GPIO\":[0,0,0,0,0,0,0,0,192,0,193,0,0,0,0,0,0,0,0,0,0,0,195,194,0,0,0,0,0,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateNousA8tJson[] PROGMEM =
   "{\"NAME\":\"NOUS A8T\",\"GPIO\":[1,1,320,1,32,1,1,1,1,224,2624,1,1,1,1,1,0,1,1,1,0,1,2656,2720,0,0,0,0,1,1,1,1,1,0,0,1],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateNousB1tJson[] PROGMEM =
@@ -611,8 +613,11 @@ uint8_t inputFunctionIndex(uint8_t input) {
   return function_index < kMaxButtons ? function_index : input;
 }
 
+bool defaultInputRelayTarget(uint8_t input, uint8_t &relay);
+
 uint8_t defaultInputMode(uint8_t input) {
-  return isSwitchInput(input) ? kInputModeSwitch : kInputModeButton;
+  uint8_t relay = 0;
+  return isSwitchInput(input) && defaultInputRelayTarget(input, relay) ? kInputModeSwitch : kInputModeButton;
 }
 
 uint8_t effectiveInputMode(uint8_t input) {
@@ -3540,6 +3545,8 @@ void appendTemplateForm(String &page) {
   page += F("'>Shelly Plus 2PM PCB v0.1.9</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateShellyPlus1PmJson)));
   page += F("'>Shelly Plus 1PM</option><option data-json='");
+  page += htmlEscape(String(FPSTR(kTemplateShellyPlusI4Json)));
+  page += F("'>Shelly Plus i4</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateShellyPlusPlugSJson)));
   page += F("'>Shelly Plus Plug S</option></select></label></div>");
   page += F("<div class='row'><label>Tasmota ESP32 template JSON<br><textarea id='template-json' name='template' rows='6' maxlength='");
