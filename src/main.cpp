@@ -267,6 +267,8 @@ const char kTemplateNousB3tJson[] PROGMEM =
   "{\"NAME\":\"NOUS B3T\",\"GPIO\":[544,3200,1,8128,32,160,1,1,224,225,0,1,1,1,161,1,0,1,1,1,0,1,1,1,0,0,0,0,1,1,1,0,1,0,0,1],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateSonoffDualR3V2Json[] PROGMEM =
   "{\"NAME\":\"Sonoff Dual R3 v2\",\"GPIO\":[32,0,0,0,0,0,0,0,0,576,225,0,0,0,0,0,0,0,0,0,0,3200,8128,224,0,0,0,0,160,161,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
+const char kTemplateSonoffMinir4Json[] PROGMEM =
+  "{\"NAME\":\"Sonoff MINIR4\",\"GPIO\":[32,0,0,0,0,0,0,0,0,0,0,0,0,0,0,576,0,0,0,0,0,0,224,160,0,0,0,0,0,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateGenericC3RelayJson[] PROGMEM =
   "{\"NAME\":\"Generic C3 Relay\",\"GPIO\":[32,0,0,0,224,288,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 
@@ -4246,7 +4248,9 @@ void appendTemplateForm(String &page) {
   page += htmlEscape(String(FPSTR(kTemplateShellyPlusPlugSJson)));
   page += F("'>Shelly Plus Plug S</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateSonoffDualR3V2Json)));
-  page += F("'>Sonoff Dual R3 v2</option></select></label></div>");
+  page += F("'>Sonoff Dual R3 v2</option><option data-json='");
+  page += htmlEscape(String(FPSTR(kTemplateSonoffMinir4Json)));
+  page += F("'>Sonoff MINIR4</option></select></label></div>");
   page += F("<div class='row'><label>Tasmota ESP32 template JSON<br><textarea id='template-json' name='template' rows='6' maxlength='");
   page += String(kTemplateJsonMaxLen);
   page += F("'>");
