@@ -284,6 +284,8 @@ const char kTemplateShellyPlus2PmPcb019Json[] PROGMEM =
   "{\"NAME\":\"Shelly Plus 2PM PCB v0.1.9\",\"GPIO\":[320,0,0,0,34,192,0,0,225,224,0,0,0,0,193,0,0,0,0,0,0,608,640,3458,0,0,0,0,0,9472,0,4736,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateShellyPlus1PmJson[] PROGMEM =
   "{\"NAME\":\"Shelly Plus 1PM\",\"GPIO\":[0,0,0,0,192,2720,0,0,0,0,0,0,0,0,2656,0,0,0,0,2624,0,32,224,0,0,0,0,0,4736,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
+const char kTemplateShellyPlus1Json[] PROGMEM =
+  "{\"NAME\":\"Shelly Plus 1 \",\"GPIO\":[288,0,0,0,192,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,32,224,0,0,0,0,0,4736,4705,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateShellyPlusI4Json[] PROGMEM =
   "{\"NAME\":\"Shelly Plus i4\",\"GPIO\":[0,0,0,0,0,0,0,0,192,0,193,0,0,0,0,0,0,0,0,0,0,0,195,194,0,0,0,0,0,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateNousA8tJson[] PROGMEM =
@@ -561,6 +563,9 @@ uint32_t next_ibeacon_start_attempt = 0;
 bool ibeacon_stack_started = false;
 bool ibeacon_scanning = false;
 char ibeacon_status[24] = "idle";
+uint32_t ibeacon_mqtt_rate_window_start = 0;
+uint16_t ibeacon_mqtt_rate_window_count = 0;
+uint16_t ibeacon_mqtt_reports_per_second = 0;
 
 #if MYMOTA32_IBEACON_SUPPORTED
 IBeaconObservation ibeacon_queue[kIBeaconQueueDepth]{};
@@ -1024,8 +1029,11 @@ void parseTemplateFunction(RuntimeTemplate &target, uint8_t pin, uint16_t code) 
     }
     return;
   }
-  if (code == kTplAdcTemp || code == kTplAdcInput) {
-    if (digitalPinSupported(pin)) target.adc_temp = code == kTplAdcTemp;
+  if (base == kTplAdcTemp) {
+    if (digitalPinSupported(pin)) target.adc_temp = true;
+    return;
+  }
+  if (base == kTplAdcInput) {
     return;
   }
   if (code == kTplTxd) {
@@ -3329,6 +3337,23 @@ void setIBeaconStatus(const char *status) {
   strlcpy(ibeacon_status, status ? status : "unknown", sizeof(ibeacon_status));
 }
 
+void updateIBeaconMqttReportRate(uint32_t now) {
+  if (ibeacon_mqtt_rate_window_start == 0) {
+    ibeacon_mqtt_rate_window_start = now;
+    return;
+  }
+  const uint32_t elapsed = now - ibeacon_mqtt_rate_window_start;
+  if (elapsed < 1000UL) return;
+  ibeacon_mqtt_reports_per_second = elapsed < 2000UL ? ibeacon_mqtt_rate_window_count : 0;
+  ibeacon_mqtt_rate_window_count = 0;
+  ibeacon_mqtt_rate_window_start = now;
+}
+
+void recordIBeaconMqttReport(uint32_t now) {
+  updateIBeaconMqttReportRate(now);
+  if (ibeacon_mqtt_rate_window_count < UINT16_MAX) ibeacon_mqtt_rate_window_count++;
+}
+
 uint32_t fnv1aUpdate(uint32_t hash, uint8_t value) {
   hash ^= value;
   return hash * 16777619UL;
@@ -3657,6 +3682,9 @@ void IBeaconScanCallbacks::onResult(const NimBLEAdvertisedDevice *device) {
 void resetIBeaconRuntimeState() {
   memset(ibeacon_cache, 0, sizeof(ibeacon_cache));
   last_ibeacon_prune = 0;
+  ibeacon_mqtt_rate_window_start = millis();
+  ibeacon_mqtt_rate_window_count = 0;
+  ibeacon_mqtt_reports_per_second = 0;
 #if MYMOTA32_IBEACON_SUPPORTED
   resetIBeaconObservationQueue();
 #endif
@@ -3731,12 +3759,14 @@ void processIBeaconObservation(const IBeaconObservation &obs) {
     return;
   }
   if (mqttPublishIBeacon(obs)) {
+    recordIBeaconMqttReport(now);
     rememberPublishedIBeacon(obs, climate, bthome, now);
   }
 }
 
 void maintainIBeacon() {
   const uint32_t now = millis();
+  updateIBeaconMqttReportRate(now);
   pruneIBeaconCache(now);
   if (!config.ibeacon_enabled) {
     if (ibeacon_scanning) stopIBeaconCapture();
@@ -4240,6 +4270,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("p('live-wifi',d.wifi?'connected':'disconnected',d.wifi?'pill ok':'pill bad');t('live-ssid',d.wifi_ssid||'n/a');t('live-ip',d.ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');");
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
   page += F("if(d.mqtt){t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',d.mqtt.last_attempt_ms_ago==null?'n/a':d.mqtt.last_attempt_ms_ago+' ms ago');}");
+  page += F("if(d.ibeacon){t('live-ibeacon-mqtt-rps',d.ibeacon.mqtt_reports_per_second+'/s');}");
   page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!==null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
@@ -4354,7 +4385,9 @@ void appendStatusBlock(String &page) {
   } else {
     page += F("<span id='live-mqtt' class='pill bad'>disconnected</span>");
   }
-  page += F("</div><span>MQTT broker</span><div>");
+  page += F("</div><span>MQTT iBeacon Reports / second</span><div><code id='live-ibeacon-mqtt-rps'>");
+  page += String(ibeacon_mqtt_reports_per_second);
+  page += F("/s</code></div><span>MQTT broker</span><div>");
   if (config.mqtt_host[0] == '\0') {
     page += F("<span class='muted'>not configured</span>");
   } else {
@@ -4862,6 +4895,8 @@ void appendTemplateForm(String &page) {
   page += F("'>Shelly Plus 2PM PCB v0.1.9</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateShellyPlus1PmJson)));
   page += F("'>Shelly Plus 1PM</option><option data-json='");
+  page += htmlEscape(String(FPSTR(kTemplateShellyPlus1Json)));
+  page += F("'>Shelly Plus 1</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateShellyPlusI4Json)));
   page += F("'>Shelly Plus i4</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateShellyPlusPlugSJson)));
@@ -5979,8 +6014,9 @@ void handleFactoryReset() {
 }
 
 void handleHealth() {
+  updateIBeaconMqttReportRate(millis());
   String out;
-  out.reserve(1750);
+  out.reserve(1900);
   beginStreamedResponse("application/json");
   out += F("{\"name\":\"myMota32\",\"version\":\"");
   out += F(MYMOTA32_VERSION);
@@ -6141,6 +6177,15 @@ void handleHealth() {
     }
     out += F("]}}");
   }
+  out += F(",\"ibeacon\":{\"enabled\":");
+  out += config.ibeacon_enabled ? F("true") : F("false");
+  out += F(",\"scanning\":");
+  out += ibeacon_scanning ? F("true") : F("false");
+  out += F(",\"status\":\"");
+  out += jsonEscape(ibeacon_status);
+  out += F("\",\"mqtt_reports_per_second\":");
+  out += ibeacon_mqtt_reports_per_second;
+  out += F("}");
   out += F(",\"mqtt\":{\"enabled\":");
   out += (mqttConfigured() ? F("true") : F("false"));
   out += F(",\"connected\":");
