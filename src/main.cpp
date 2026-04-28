@@ -74,6 +74,12 @@ constexpr uint16_t kButtonDebounceDefaultMs = 50;
 constexpr uint16_t kButtonDebounceMinMs = 5;
 constexpr uint16_t kButtonDebounceMaxMs = 200;
 constexpr uint32_t kLedUpdateMs = 50;
+constexpr uint16_t kRelayEnforcementMinSeconds = 1;
+constexpr uint16_t kRelayEnforcementMaxSeconds = 65535U;
+constexpr uint32_t kGracefulRelaySnapshotMagic = 0x4d523252UL;  // MR2R
+constexpr uint16_t kGracefulRelaySnapshotVersion = 1;
+constexpr const char *kGracefulRelayPrefsNamespace = "mymota32-rl";
+constexpr const char *kGracefulRelayPrefsKey = "snap";
 
 constexpr uint8_t kInputModeButton = 0;
 constexpr uint8_t kInputModeSwitch = 1;
@@ -292,6 +298,18 @@ struct MqttButtonPending {
   uint32_t queued_at;
 };
 
+struct GracefulRelaySnapshot {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t size;
+  uint32_t chip_id;
+  uint16_t relay_mask;
+  uint8_t relay_count;
+  uint8_t reserved;
+  uint32_t relay_signature;
+  uint32_t crc;
+};
+
 struct RuntimeTemplate {
   bool enabled;
   char name[kTemplateNameMaxLen + 1];
@@ -361,6 +379,10 @@ struct StoredConfig {
   uint16_t energy_mqtt_interval;
   uint16_t energy_mqtt_change_percent_x10;
   uint16_t energy_mqtt_change_watts;
+
+  uint8_t relay_on_boot[kMaxRelays];
+  uint8_t relay_time_enabled[kMaxRelays];
+  uint16_t relay_time_seconds[kMaxRelays];
 
   uint8_t ibeacon_enabled;
   uint16_t ibeacon_filter1_interval_sec;
@@ -432,6 +454,10 @@ StoredConfig config{};
 RuntimeTemplate runtime_template{};
 EnergyState energy{};
 bool relay_state[kMaxRelays] = {false};
+bool graceful_relay_restore_valid = false;
+uint16_t graceful_relay_restore_mask = 0;
+bool relay_enforcement_pending[kMaxRelays] = {false};
+uint32_t relay_enforcement_due[kMaxRelays] = {0};
 ButtonState button_state[kMaxButtons] = {};
 uint32_t last_led_update = 0;
 
@@ -455,6 +481,7 @@ uint8_t update_error = UPDATE_ERROR_OK;
 
 uint32_t restart_due_ms = 0;
 uint32_t restart_scheduled_ms = 0;
+bool restart_preserve_relays = false;
 
 uint32_t perf_loop_count = 0;
 uint64_t perf_busy_us = 0;
@@ -564,12 +591,17 @@ uint8_t activePhyMode() {
   return kPhyModeAuto;
 }
 
-String chipIdHex() {
+uint32_t chipIdValue() {
   const uint64_t mac = ESP.getEfuseMac();
   uint32_t id = 0;
   for (uint8_t i = 0; i < 24; i += 8) {
     id |= static_cast<uint32_t>((mac >> (40 - i)) & 0xffU) << i;
   }
+  return id;
+}
+
+String chipIdHex() {
+  const uint32_t id = chipIdValue();
   char buf[7];
   snprintf(buf, sizeof(buf), "%06X", id);
   return String(buf);
@@ -1204,9 +1236,10 @@ String currentTemplateJson() {
   return out;
 }
 
-void scheduleRestart(uint32_t delay_ms) {
+void scheduleRestart(uint32_t delay_ms, bool preserve_relays = false) {
   restart_due_ms = millis() + delay_ms;
   restart_scheduled_ms = millis();
+  restart_preserve_relays = preserve_relays;
 }
 
 bool restartDue() {
@@ -1291,6 +1324,9 @@ bool normalizeIBeaconMacList(const String &input, char *out, size_t out_size) {
   return true;
 }
 
+bool clearGracefulRelaySnapshot();
+void refreshRelayEnforcementRuntime(bool schedule_off_relays);
+
 void setDefaultConfig() {
   memset(&config, 0, sizeof(config));
   strlcpy(config.hostname, defaultHostname().c_str(), sizeof(config.hostname));
@@ -1320,6 +1356,9 @@ void setDefaultConfig() {
   config.energy_mqtt_interval = 0;
   config.energy_mqtt_change_percent_x10 = 0;
   config.energy_mqtt_change_watts = 0;
+  memset(config.relay_on_boot, 0, sizeof(config.relay_on_boot));
+  memset(config.relay_time_enabled, 0, sizeof(config.relay_time_enabled));
+  memset(config.relay_time_seconds, 0, sizeof(config.relay_time_seconds));
   config.ibeacon_enabled = 0;
   config.ibeacon_filter1_interval_sec = kIBeaconFilter1DefaultSec;
   config.ibeacon_filter2_interval_sec = kIBeaconFilter2DefaultSec;
@@ -1341,6 +1380,17 @@ void readByteArray(Preferences &p, const char *key, uint8_t (&out)[N], uint8_t f
 void readGpioArray(Preferences &p, const char *key, uint16_t (&out)[kTemplateGpioCount]) {
   uint16_t buf[kTemplateGpioCount];
   memset(buf, 0, sizeof(buf));
+  size_t got = p.getBytesLength(key);
+  if (got == sizeof(buf)) {
+    p.getBytes(key, buf, sizeof(buf));
+  }
+  memcpy(out, buf, sizeof(out));
+}
+
+template <size_t N>
+void readUShortArray(Preferences &p, const char *key, uint16_t (&out)[N], uint16_t fill) {
+  uint16_t buf[N];
+  for (uint8_t i = 0; i < N; i++) buf[i] = fill;
   size_t got = p.getBytesLength(key);
   if (got == sizeof(buf)) {
     p.getBytes(key, buf, sizeof(buf));
@@ -1410,6 +1460,14 @@ bool loadConfig() {
   uint16_t energy_mqtt_change_percent_x10 = prefs.getUShort("en_pct", 0);
   uint16_t energy_mqtt_change_watts = prefs.getUShort("en_watts", 0);
   energy_saved_ukwh = prefs.getULong64("en_total", 0);
+
+  uint8_t relay_on_boot[kMaxRelays];
+  uint8_t relay_time_enabled[kMaxRelays];
+  uint16_t relay_time_seconds[kMaxRelays];
+  readByteArray(prefs, "rel_on_boot", relay_on_boot, 0);
+  readByteArray(prefs, "rel_time_en", relay_time_enabled, 0);
+  readUShortArray(prefs, "rel_time_s", relay_time_seconds, 0);
+
   uint8_t ibeacon_enabled = prefs.getUChar("ibeacon", 0);
   uint16_t ibeacon_filter1_interval = prefs.getUShort("ib_f1_int", kIBeaconFilter1DefaultSec);
   uint16_t ibeacon_filter2_interval = prefs.getUShort("ib_f2_int", kIBeaconFilter2DefaultSec);
@@ -1485,6 +1543,17 @@ bool loadConfig() {
     energy_mqtt_change_percent_x10 > static_cast<uint16_t>(kMqttEnergyChangeMaxPercent * 10.0f) ? 0 : energy_mqtt_change_percent_x10;
   config.energy_mqtt_change_watts = energy_mqtt_change_watts;
   if (energy_saved_ukwh > kEnergyTotalMaxUkwh) energy_saved_ukwh = 0;
+  for (uint8_t i = 0; i < kMaxRelays; i++) {
+    config.relay_on_boot[i] = relay_on_boot[i] ? 1 : 0;
+    config.relay_time_enabled[i] = relay_time_enabled[i] ? 1 : 0;
+    config.relay_time_seconds[i] = relay_time_seconds[i];
+    if (config.relay_time_enabled[i] &&
+        (config.relay_time_seconds[i] < kRelayEnforcementMinSeconds ||
+         config.relay_time_seconds[i] > kRelayEnforcementMaxSeconds)) {
+      config.relay_time_enabled[i] = 0;
+      config.relay_time_seconds[i] = 0;
+    }
+  }
   config.ibeacon_enabled = ibeacon_enabled ? 1 : 0;
   config.ibeacon_filter1_interval_sec = sanitizeIBeaconFilterInterval(ibeacon_filter1_interval, kIBeaconFilter1DefaultSec);
   config.ibeacon_filter2_interval_sec = sanitizeIBeaconFilterInterval(ibeacon_filter2_interval, kIBeaconFilter2DefaultSec);
@@ -1588,6 +1657,17 @@ bool saveIBeaconConfig(bool enabled, uint16_t filter1_interval, const char *filt
   return loadConfig();
 }
 
+bool saveRelayEnforcementConfig(const uint8_t *on_boot, const uint8_t *time_enabled, const uint16_t *time_seconds) {
+  if (!prefs.begin("mymota32", false)) return false;
+  prefs.putBytes("rel_on_boot", on_boot, sizeof(config.relay_on_boot));
+  prefs.putBytes("rel_time_en", time_enabled, sizeof(config.relay_time_enabled));
+  prefs.putBytes("rel_time_s", time_seconds, sizeof(config.relay_time_seconds));
+  prefs.end();
+  if (!loadConfig()) return false;
+  refreshRelayEnforcementRuntime(true);
+  return true;
+}
+
 bool saveInputConfig(const StoredConfig &source) {
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putUShort("btn_hold", source.button_hold_ms);
@@ -1616,6 +1696,7 @@ bool factoryResetConfig() {
     boot_prefs.clear();
     boot_prefs.end();
   }
+  clearGracefulRelaySnapshot();
   setDefaultConfig();
   config_ok = false;
   return true;
@@ -1786,15 +1867,166 @@ bool mqttConfigured();
 bool parseUint16Input(const String &input, uint16_t min_value, uint16_t max_value, uint16_t &out);
 bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size_t arg_len, String &out, String &error);
 
+uint32_t relaySnapshotHashByte(uint32_t hash, uint8_t value) {
+  hash ^= value;
+  return hash * 16777619UL;
+}
+
+uint32_t relayTemplateSignature() {
+  uint32_t hash = 2166136261UL;
+  hash = relaySnapshotHashByte(hash, runtime_template.relay_count);
+  for (uint8_t i = 0; i < kMaxRelays; i++) {
+    const PinAssignment &relay = runtime_template.relays[i];
+    hash = relaySnapshotHashByte(hash, relay.pin);
+    hash = relaySnapshotHashByte(hash, relay.inverted ? 1 : 0);
+    hash = relaySnapshotHashByte(hash, relay.no_pullup ? 1 : 0);
+    hash = relaySnapshotHashByte(hash, hasPin(relay) ? 1 : 0);
+  }
+  return hash;
+}
+
+uint16_t relayStateMask() {
+  uint16_t mask = 0;
+  for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
+    if (!relayAvailable(i) || !relay_state[i]) continue;
+    mask |= (1U << i);
+  }
+  return mask;
+}
+
+uint32_t gracefulRelaySnapshotCrc(const GracefulRelaySnapshot &snapshot) {
+  const uint8_t *data = reinterpret_cast<const uint8_t *>(&snapshot);
+  const size_t crc_offset = offsetof(GracefulRelaySnapshot, crc);
+  uint32_t hash = 2166136261UL;
+  for (size_t i = 0; i < sizeof(snapshot); i++) {
+    const bool crc_byte = i >= crc_offset && i < crc_offset + sizeof(snapshot.crc);
+    hash = relaySnapshotHashByte(hash, crc_byte ? 0 : data[i]);
+  }
+  return hash;
+}
+
+bool readGracefulRelaySnapshot(GracefulRelaySnapshot &snapshot) {
+  memset(&snapshot, 0, sizeof(snapshot));
+  Preferences relay_prefs;
+  if (!relay_prefs.begin(kGracefulRelayPrefsNamespace, true)) return false;
+  const size_t got = relay_prefs.getBytesLength(kGracefulRelayPrefsKey);
+  if (got == sizeof(snapshot)) {
+    relay_prefs.getBytes(kGracefulRelayPrefsKey, &snapshot, sizeof(snapshot));
+  }
+  relay_prefs.end();
+  return got == sizeof(snapshot);
+}
+
+bool clearGracefulRelaySnapshot() {
+  Preferences relay_prefs;
+  if (!relay_prefs.begin(kGracefulRelayPrefsNamespace, false)) return false;
+  relay_prefs.remove(kGracefulRelayPrefsKey);
+  relay_prefs.end();
+  return true;
+}
+
+bool gracefulRelaySnapshotValid(const GracefulRelaySnapshot &snapshot) {
+  if (snapshot.magic != kGracefulRelaySnapshotMagic) return false;
+  if (snapshot.version != kGracefulRelaySnapshotVersion) return false;
+  if (snapshot.size != sizeof(GracefulRelaySnapshot)) return false;
+  if (snapshot.chip_id != chipIdValue()) return false;
+  if (snapshot.relay_count != runtime_template.relay_count) return false;
+  if (snapshot.relay_signature != relayTemplateSignature()) return false;
+  return snapshot.crc == gracefulRelaySnapshotCrc(snapshot);
+}
+
+void loadGracefulRelaySnapshot() {
+  graceful_relay_restore_valid = false;
+  graceful_relay_restore_mask = 0;
+
+  GracefulRelaySnapshot snapshot{};
+  if (esp_reset_reason() == ESP_RST_SW &&
+      readGracefulRelaySnapshot(snapshot) &&
+      gracefulRelaySnapshotValid(snapshot)) {
+    graceful_relay_restore_mask = snapshot.relay_mask;
+    graceful_relay_restore_valid = true;
+  }
+  clearGracefulRelaySnapshot();
+}
+
+bool saveGracefulRelaySnapshot() {
+  if (runtime_template.relay_count == 0) return clearGracefulRelaySnapshot();
+
+  GracefulRelaySnapshot snapshot{};
+  snapshot.magic = kGracefulRelaySnapshotMagic;
+  snapshot.version = kGracefulRelaySnapshotVersion;
+  snapshot.size = sizeof(GracefulRelaySnapshot);
+  snapshot.chip_id = chipIdValue();
+  snapshot.relay_mask = relayStateMask();
+  snapshot.relay_count = runtime_template.relay_count;
+  snapshot.relay_signature = relayTemplateSignature();
+  snapshot.crc = gracefulRelaySnapshotCrc(snapshot);
+
+  Preferences relay_prefs;
+  if (!relay_prefs.begin(kGracefulRelayPrefsNamespace, false)) return false;
+  const size_t written = relay_prefs.putBytes(kGracefulRelayPrefsKey, &snapshot, sizeof(snapshot));
+  relay_prefs.end();
+  return written == sizeof(snapshot);
+}
+
+bool gracefulRelayRestoreState(uint8_t relay) {
+  return graceful_relay_restore_valid &&
+         relay < kMaxRelays &&
+         relay < runtime_template.relay_count &&
+         (graceful_relay_restore_mask & (1U << relay));
+}
+
+bool relayBootState(uint8_t relay) {
+  if (graceful_relay_restore_valid) return gracefulRelayRestoreState(relay);
+  return relay < kMaxRelays && config.relay_on_boot[relay];
+}
+
+bool relayTimeEnforcementActive(uint8_t relay) {
+  return relayAvailable(relay) &&
+         config.relay_time_enabled[relay] &&
+         config.relay_time_seconds[relay] >= kRelayEnforcementMinSeconds;
+}
+
+void cancelRelayEnforcement(uint8_t relay) {
+  if (relay >= kMaxRelays) return;
+  relay_enforcement_pending[relay] = false;
+  relay_enforcement_due[relay] = 0;
+}
+
+void scheduleRelayEnforcement(uint8_t relay) {
+  if (relay >= kMaxRelays || !relayTimeEnforcementActive(relay)) {
+    cancelRelayEnforcement(relay);
+    return;
+  }
+  relay_enforcement_due[relay] = millis() + (static_cast<uint32_t>(config.relay_time_seconds[relay]) * 1000UL);
+  relay_enforcement_pending[relay] = true;
+}
+
+void refreshRelayEnforcementRuntime(bool schedule_off_relays) {
+  for (uint8_t i = 0; i < kMaxRelays; i++) {
+    if (!relayTimeEnforcementActive(i) || relay_state[i]) {
+      cancelRelayEnforcement(i);
+    } else if (schedule_off_relays) {
+      scheduleRelayEnforcement(i);
+    }
+  }
+}
+
 void setRelay(uint8_t relay, bool on) {
   if (relay >= kMaxRelays || !hasPin(runtime_template.relays[relay])) return;
   const bool changed = relay_state[relay] != on;
+  const bool was_on = relay_state[relay];
   relay_state[relay] = on;
   writeAssignedPin(runtime_template.relays[relay], on);
+  if (on) {
+    cancelRelayEnforcement(relay);
+  } else if (changed) {
+    scheduleRelayEnforcement(relay);
+  }
   if (changed) {
     updateDeviceLeds(true);
     scheduleMqttRelayPublish(relay);
-    if (!on) {
+    if (was_on && !on) {
       energy_persist_requested = true;
       scheduleMqttRelayOffEnergyReport(relay);
     }
@@ -1807,12 +2039,15 @@ void toggleRelay(uint8_t relay) {
 }
 
 void setupDevicePins() {
+  memset(relay_enforcement_pending, 0, sizeof(relay_enforcement_pending));
+  memset(relay_enforcement_due, 0, sizeof(relay_enforcement_due));
+
   for (uint8_t i = 0; i < kMaxRelays; i++) {
-    relay_state[i] = false;
+    relay_state[i] = relayBootState(i);
     if (!hasPin(runtime_template.relays[i])) continue;
-    writeAssignedPin(runtime_template.relays[i], false);
+    writeAssignedPin(runtime_template.relays[i], relay_state[i]);
     pinMode(runtime_template.relays[i].pin, OUTPUT);
-    writeAssignedPin(runtime_template.relays[i], false);
+    writeAssignedPin(runtime_template.relays[i], relay_state[i]);
   }
   for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
     const PinAssignment *assignment = ledOutputAssignment(i);
@@ -1826,11 +2061,9 @@ void setupDevicePins() {
     pinMode(runtime_template.buttons[i].pin, runtime_template.buttons[i].no_pullup ? INPUT : INPUT_PULLUP);
     const bool active = readInputActive(i);
     button_state[i] = {active, active, false, millis(), millis()};
-    if (effectiveInputMode(i) == kInputModeSwitch) {
-      uint8_t relay = 0;
-      if (inputRelayTarget(i, relay)) setRelay(relay, active);
-    }
   }
+  graceful_relay_restore_valid = false;
+  graceful_relay_restore_mask = 0;
   updateDeviceLeds(true);
 }
 
@@ -2224,8 +2457,23 @@ void maintainButtons() {
   }
 }
 
+void maintainRelayEnforcement() {
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
+    if (!relay_enforcement_pending[i]) continue;
+    if (!relayTimeEnforcementActive(i) || relay_state[i]) {
+      cancelRelayEnforcement(i);
+      continue;
+    }
+    if (static_cast<int32_t>(now - relay_enforcement_due[i]) >= 0) {
+      setRelay(i, true);
+    }
+  }
+}
+
 void maintainDevice() {
   maintainButtons();
+  maintainRelayEnforcement();
   updateDeviceLeds();
 }
 
@@ -4141,6 +4389,39 @@ void appendLedSettings(String &page) {
   page += F("<button type='submit'>Save LEDs</button></form></section>");
 }
 
+void appendRelayEnforcementSettings(String &page) {
+  if (!runtime_template.enabled || !hasConfigurableRelays()) return;
+
+  page += F("<section class='panel'><h2>Relay Enforcement</h2><form data-inline='1' method='post' action='/relay-enforcement'>");
+  for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
+    if (!relayAvailable(i)) continue;
+    page += F("<div class='button-block'><strong>Relay ");
+    page += String(i + 1);
+    page += F("</strong> <span class='hint'>");
+    page += pinName(runtime_template.relays[i].pin);
+    page += F("</span><div class='row'><label><input type='checkbox' name='relay_on_boot");
+    page += String(i);
+    page += F("' value='1'");
+    if (config.relay_on_boot[i]) page += F(" checked");
+    page += F(">Turn on at boot</label></div><div class='row'><label><input type='checkbox' name='relay_time_enabled");
+    page += String(i);
+    page += F("' value='1'");
+    if (config.relay_time_enabled[i]) page += F(" checked");
+    page += F(">Restore after OFF</label><input name='relay_time_seconds");
+    page += String(i);
+    page += F("' type='number' min='");
+    page += String(kRelayEnforcementMinSeconds);
+    page += F("' max='");
+    page += String(kRelayEnforcementMaxSeconds);
+    page += F("' step='1' placeholder='seconds' value='");
+    if (config.relay_time_seconds[i] >= kRelayEnforcementMinSeconds) {
+      page += String(config.relay_time_seconds[i]);
+    }
+    page += F("'></div></div>");
+  }
+  page += F("<button type='submit'>Save relay enforcement</button></form></section>");
+}
+
 void appendInputModeOption(String &page, uint8_t value, const String &label, uint8_t selected) {
   page += F("<option value='");
   page += String(value);
@@ -4459,7 +4740,7 @@ void appendIBeaconForm(String &page) {
 
 void handleRoot() {
   String page;
-  page.reserve(8800);
+  page.reserve(9800);
   beginStreamedResponse("text/html");
   appendHeader(page, F("myMota32"), true);
   page += F("<div class='grid'>");
@@ -4469,6 +4750,8 @@ void handleRoot() {
   appendTemplateStatus(page);
   flushStreamChunk(page);
   appendDeviceControls(page);
+  flushStreamChunk(page);
+  appendRelayEnforcementSettings(page);
   flushStreamChunk(page);
   appendButtonSettings(page);
   flushStreamChunk(page);
@@ -4508,7 +4791,7 @@ void handleRoot() {
   page += F("'>");
   page += F("<input type='file' name='firmware' accept='.bin' required><br><button type='submit'>Upload firmware</button></form>");
   page += F("<p><a class='btn secondary' href='/reboot'>Reboot</a></p>");
-  page += F("<form method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset will delete Wi-Fi settings. Continue?')\"><button class='danger' type='submit'>Factory reset</button></form></section>");
+  page += F("<form method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset will delete Wi-Fi, template, MQTT, input, LED, relay enforcement, iBeacon, and energy settings. Continue?')\"><button class='danger' type='submit'>Factory reset</button></form></section>");
   flushStreamChunk(page);
 
   appendTemplateForm(page);
@@ -4611,7 +4894,7 @@ void handleWifiSave() {
   page += F("<p class='muted'>If Wi-Fi or IP changed, reconnect to the device manually.</p>");
   appendFooter(page, false, true);
   sendHtml(page);
-  scheduleRestart(1200);
+  scheduleRestart(1200, true);
 }
 
 void handleTemplateSave() {
@@ -4724,6 +5007,66 @@ void handleLedSave() {
   if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
   server.sendHeader(F("Location"), F("/"), true);
   server.send(303, F("text/plain"), "");
+}
+
+void handleRelayEnforcementSave() {
+  if (!hasConfigurableRelays()) {
+    server.send(400, F("text/plain"), F("No configurable relays are available"));
+    return;
+  }
+
+  uint8_t on_boot[kMaxRelays];
+  uint8_t time_enabled[kMaxRelays];
+  uint16_t time_seconds[kMaxRelays];
+  memcpy(on_boot, config.relay_on_boot, sizeof(on_boot));
+  memcpy(time_enabled, config.relay_time_enabled, sizeof(time_enabled));
+  memcpy(time_seconds, config.relay_time_seconds, sizeof(time_seconds));
+
+  for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
+    if (!relayAvailable(i)) continue;
+
+    String on_boot_arg = F("relay_on_boot");
+    on_boot_arg += String(i);
+    String time_enabled_arg = F("relay_time_enabled");
+    time_enabled_arg += String(i);
+    String seconds_arg = F("relay_time_seconds");
+    seconds_arg += String(i);
+
+    on_boot[i] = server.hasArg(on_boot_arg) ? 1 : 0;
+    time_enabled[i] = server.hasArg(time_enabled_arg) ? 1 : 0;
+
+    String seconds_text = server.hasArg(seconds_arg) ? server.arg(seconds_arg) : String();
+    seconds_text.trim();
+    if (time_enabled[i]) {
+      uint16_t seconds = 0;
+      if (!parseUint16Input(seconds_text, kRelayEnforcementMinSeconds, kRelayEnforcementMaxSeconds, seconds)) {
+        server.send(400, F("text/plain"), F("Invalid relay enforcement seconds"));
+        return;
+      }
+      time_seconds[i] = seconds;
+    } else if (seconds_text.length() == 0) {
+      time_seconds[i] = 0;
+    } else {
+      uint16_t seconds = 0;
+      if (parseUint16Input(seconds_text, kRelayEnforcementMinSeconds, kRelayEnforcementMaxSeconds, seconds)) {
+        time_seconds[i] = seconds;
+      }
+    }
+  }
+
+  if (!saveRelayEnforcementConfig(on_boot, time_enabled, time_seconds)) {
+    server.send(500, F("text/plain"), F("Could not save relay enforcement settings"));
+    return;
+  }
+
+  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
+  String page;
+  page.reserve(700);
+  appendHeader(page, F("myMota32 Relay Enforcement"));
+  page += F("<p class='ok'>Relay enforcement settings saved.</p>");
+  page += F("<p><a href='/'>Back</a></p>");
+  appendFooter(page);
+  sendHtml(page);
 }
 
 bool isValidWebhookUrlTemplate(const String &url) {
@@ -5092,7 +5435,7 @@ void handleReboot() {
   page += F("<p>The page will return to the dashboard when the device is reachable again.</p>");
   appendFooter(page, false, true);
   sendHtml(page);
-  scheduleRestart(500);
+  scheduleRestart(500, true);
 }
 
 void handleFactoryReset() {
@@ -5327,7 +5670,7 @@ void handleUpdateDone() {
     page += F("<p>The page will return to the dashboard when the device is reachable again.</p>");
     appendFooter(page, false, true);
     sendHtml(page);
-    scheduleRestart(1200);
+    scheduleRestart(1200, true);
     return;
   }
   String page;
@@ -5396,6 +5739,7 @@ void setupRoutes() {
   server.on("/template", HTTP_POST, handleTemplateSave);
   server.on("/power", HTTP_POST, handlePowerSave);
   server.on("/leds", HTTP_POST, handleLedSave);
+  server.on("/relay-enforcement", HTTP_POST, handleRelayEnforcementSave);
   server.on("/buttons", HTTP_POST, handleButtonSave);
   server.on("/mqtt", HTTP_POST, handleMqttSave);
   server.on("/energy", HTTP_POST, handleEnergySave);
@@ -5417,6 +5761,7 @@ void setup() {
   loadBootRecoveryState();
   loadConfig();
   decodeTemplateConfig();
+  loadGracefulRelaySnapshot();
   const bool serial_logs_ok = !templateEnergyUsesUart0Pins();
   if (serial_logs_ok) {
     Serial.println();
@@ -5455,6 +5800,11 @@ void loop() {
   server.handleClient();
 
   if (restartDue()) {
+    if (restart_preserve_relays) {
+      saveGracefulRelaySnapshot();
+    } else {
+      clearGracefulRelaySnapshot();
+    }
     persistEnergyTotal(true);
     delay(50);
     ESP.restart();
