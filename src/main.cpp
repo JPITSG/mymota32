@@ -99,6 +99,13 @@ constexpr uint16_t kLightCtDefault = 326;
 constexpr uint8_t kLightModeWhite = 0;
 constexpr uint8_t kLightModeRgb = 1;
 constexpr uint32_t kLightPersistDelayMs = 2000;
+constexpr uint8_t kLightFadeDefault = 0;
+constexpr uint8_t kLightSpeedDefault = 1;
+constexpr uint8_t kLightSpeedMin = 1;
+constexpr uint8_t kLightSpeedMax = 40;
+constexpr uint8_t kLightChannelCount = 5;
+constexpr uint16_t kLightChannelMax = 1023;
+constexpr uint16_t kLightFadeStepMs = 25;
 constexpr uint8_t kSm2335AddrStandby = 0xc0;
 constexpr uint8_t kSm2335AddrStart5Ch = 0xd8;
 constexpr uint8_t kSm2335DelayUs = 2;
@@ -175,7 +182,9 @@ constexpr uint32_t kMqttButtonQueueMaxAgeMs = 5000;
 constexpr uint8_t kMqttLightPendingDimmer = 0x01;
 constexpr uint8_t kMqttLightPendingCt = 0x02;
 constexpr uint8_t kMqttLightPendingColor = 0x04;
-constexpr uint8_t kMqttLightPendingAll = kMqttLightPendingDimmer | kMqttLightPendingCt | kMqttLightPendingColor;
+constexpr uint8_t kMqttLightPendingFade = 0x08;
+constexpr uint8_t kMqttLightPendingSpeed = 0x10;
+constexpr uint8_t kMqttLightPendingAll = kMqttLightPendingDimmer | kMqttLightPendingCt | kMqttLightPendingColor | kMqttLightPendingFade | kMqttLightPendingSpeed;
 constexpr uint16_t kMqttEnergyIntervalMax = 65535U;
 constexpr float kMqttEnergyChangeMaxPercent = 1000.0f;
 constexpr uint16_t kMqttEnergyChangeMaxWatts = 65535U;
@@ -369,6 +378,14 @@ struct LightState {
   uint16_t ct;
   uint8_t mode;
   uint8_t rgb[3];
+  uint16_t channels[kLightChannelCount];
+  uint16_t fade_start[kLightChannelCount];
+  uint16_t fade_end[kLightChannelCount];
+  uint32_t fade_start_ms;
+  uint16_t fade_duration_ms;
+  uint32_t fade_next_ms;
+  bool fade_running;
+  bool fade_initialized;
   bool config_dirty;
   uint32_t config_save_at;
 };
@@ -460,6 +477,8 @@ struct StoredConfig {
   uint8_t light_mode;
   uint8_t light_rgb[3];
   uint8_t light_on_dimmer;
+  uint8_t light_fade;
+  uint8_t light_speed;
 
   uint8_t ibeacon_enabled;
   uint16_t ibeacon_filter1_interval_sec;
@@ -1386,6 +1405,11 @@ uint16_t sanitizeLightCtValue(uint16_t value) {
   return value;
 }
 
+uint8_t sanitizeLightSpeedValue(uint16_t value) {
+  if (value < kLightSpeedMin || value > kLightSpeedMax) return kLightSpeedDefault;
+  return static_cast<uint8_t>(value);
+}
+
 bool isIBeaconFilterInterval(uint16_t value) {
   for (uint8_t i = 0; i < sizeof(kIBeaconFilterIntervals) / sizeof(kIBeaconFilterIntervals[0]); i++) {
     if (kIBeaconFilterIntervals[i] == value) return true;
@@ -1504,6 +1528,8 @@ void setDefaultConfig() {
   config.light_mode = kLightModeWhite;
   memset(config.light_rgb, 0, sizeof(config.light_rgb));
   config.light_on_dimmer = kLightPowerOnDimmerDefault;
+  config.light_fade = kLightFadeDefault;
+  config.light_speed = kLightSpeedDefault;
   config.ibeacon_enabled = 0;
   config.ibeacon_filter1_interval_sec = kIBeaconFilter1DefaultSec;
   config.ibeacon_filter2_interval_sec = kIBeaconFilter2DefaultSec;
@@ -1626,6 +1652,8 @@ bool loadConfig() {
   uint8_t light_rgb[3];
   readByteArray(prefs, "lt_rgb", light_rgb, 0);
   uint8_t light_on_dimmer = prefs.getUChar("lt_on_dim", kLightPowerOnDimmerDefault);
+  uint8_t light_fade = prefs.getUChar("lt_fade", kLightFadeDefault);
+  uint8_t light_speed = prefs.getUChar("lt_speed", kLightSpeedDefault);
 
   uint8_t ibeacon_enabled = prefs.getUChar("ibeacon", 0);
   uint16_t ibeacon_filter1_interval = prefs.getUShort("ib_f1_int", kIBeaconFilter1DefaultSec);
@@ -1727,6 +1755,8 @@ bool loadConfig() {
   config.light_ct = sanitizeLightCtValue(light_ct);
   config.light_mode = light_mode == kLightModeRgb ? kLightModeRgb : kLightModeWhite;
   memcpy(config.light_rgb, light_rgb, sizeof(config.light_rgb));
+  config.light_fade = light_fade ? 1 : 0;
+  config.light_speed = sanitizeLightSpeedValue(light_speed);
   if (!config.light_power) {
     config.light_dimmer = kLightDimmerOff;
   } else if (light_dimmer < kLightDimmerMin) {
@@ -1870,6 +1900,8 @@ bool saveLightConfig() {
   prefs.putUChar("lt_mode", light.mode);
   prefs.putBytes("lt_rgb", light.rgb, sizeof(light.rgb));
   prefs.putUChar("lt_on_dim", config.light_on_dimmer);
+  prefs.putUChar("lt_fade", config.light_fade);
+  prefs.putUChar("lt_speed", config.light_speed);
   prefs.end();
   config.light_power = light.power ? 1 : 0;
   config.light_dimmer = light.dimmer;
@@ -3206,7 +3238,7 @@ void sm2335Stop() {
 
 void sm2335WriteChannels(const uint16_t channels[5]) {
   bool all_zero = true;
-  for (uint8_t i = 0; i < 5; i++) {
+  for (uint8_t i = 0; i < kLightChannelCount; i++) {
     if (channels[i] != 0) {
       all_zero = false;
       break;
@@ -3221,7 +3253,7 @@ void sm2335WriteChannels(const uint16_t channels[5]) {
 
   sm2335Start(kSm2335AddrStart5Ch);
   sm2335WriteByte(runtime_template.sm2335_current);
-  for (uint8_t i = 0; i < 5; i++) {
+  for (uint8_t i = 0; i < kLightChannelCount; i++) {
     sm2335WriteByte(static_cast<uint8_t>(channels[i] >> 8));
     sm2335WriteByte(static_cast<uint8_t>(channels[i] & 0xff));
   }
@@ -3251,11 +3283,92 @@ void lightSm2335Channels(uint16_t out[5]) {
   out[4] = original[3];
 }
 
+bool lightChannelsAny(const uint16_t channels[kLightChannelCount]) {
+  for (uint8_t i = 0; i < kLightChannelCount; i++) {
+    if (channels[i] != 0) return true;
+  }
+  return false;
+}
+
+bool lightChannelsEqual(const uint16_t a[kLightChannelCount], const uint16_t b[kLightChannelCount]) {
+  for (uint8_t i = 0; i < kLightChannelCount; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+void copyLightChannels(uint16_t out[kLightChannelCount], const uint16_t in[kLightChannelCount]) {
+  memcpy(out, in, sizeof(uint16_t) * kLightChannelCount);
+}
+
+void writeLightChannelsImmediate(const uint16_t channels[kLightChannelCount]) {
+  sm2335WriteChannels(channels);
+  copyLightChannels(light.channels, channels);
+  light.fade_initialized = true;
+}
+
+bool advanceLightFade(bool force) {
+  if (!light.fade_running) return false;
+  const uint32_t now = millis();
+  if (!force && static_cast<int32_t>(now - light.fade_next_ms) < 0) return true;
+
+  const uint32_t elapsed = now - light.fade_start_ms;
+  if (elapsed >= light.fade_duration_ms) {
+    light.fade_running = false;
+    writeLightChannelsImmediate(light.fade_end);
+    return true;
+  }
+
+  uint16_t channels[kLightChannelCount];
+  for (uint8_t i = 0; i < kLightChannelCount; i++) {
+    const int32_t start = light.fade_start[i];
+    const int32_t delta = static_cast<int32_t>(light.fade_end[i]) - start;
+    const int32_t value = start + ((delta * static_cast<int32_t>(elapsed)) / light.fade_duration_ms);
+    channels[i] = static_cast<uint16_t>(value < 0 ? 0 : (value > kLightChannelMax ? kLightChannelMax : value));
+  }
+  sm2335WriteChannels(channels);
+  copyLightChannels(light.channels, channels);
+  light.fade_next_ms = now + kLightFadeStepMs;
+  return true;
+}
+
+void cancelLightFade() {
+  light.fade_running = false;
+  light.fade_next_ms = 0;
+}
+
 void updateLightOutputs() {
   if (!light.present) return;
-  uint16_t channels[5];
-  lightSm2335Channels(channels);
-  sm2335WriteChannels(channels);
+  uint16_t target[kLightChannelCount];
+  lightSm2335Channels(target);
+  if (light.fade_running) advanceLightFade(true);
+
+  const bool power_off = !lightChannelsAny(target);
+  if (!config.light_fade || !light.fade_initialized || power_off) {
+    cancelLightFade();
+    writeLightChannelsImmediate(target);
+    return;
+  }
+  if (lightChannelsEqual(light.channels, target)) {
+    cancelLightFade();
+    return;
+  }
+
+  uint16_t max_delta = 0;
+  for (uint8_t i = 0; i < kLightChannelCount; i++) {
+    const uint16_t delta = light.channels[i] > target[i] ? light.channels[i] - target[i] : target[i] - light.channels[i];
+    if (delta > max_delta) max_delta = delta;
+  }
+  if (max_delta == 0) return;
+
+  copyLightChannels(light.fade_start, light.channels);
+  copyLightChannels(light.fade_end, target);
+  light.fade_start_ms = millis();
+  const uint32_t base_ms = static_cast<uint32_t>(sanitizeLightSpeedValue(config.light_speed)) * 500UL;
+  light.fade_duration_ms = static_cast<uint16_t>((static_cast<uint32_t>(max_delta) * base_ms) / kLightChannelMax + 1U);
+  light.fade_next_ms = light.fade_start_ms;
+  light.fade_running = true;
+  advanceLightFade(true);
 }
 
 void scheduleLightConfigPersist() {
@@ -3358,6 +3471,31 @@ void setLightColor(const uint8_t rgb[3], bool persist = true) {
   if (persist && changed) scheduleLightConfigPersist();
 }
 
+void setLightFadeEnabled(bool enabled, bool persist = true) {
+  if (!light.present) return;
+  const uint8_t value = enabled ? 1 : 0;
+  if (config.light_fade == value) return;
+  config.light_fade = value;
+  if (!enabled) updateLightOutputs();
+  scheduleMqttLightPublish(kMqttLightPendingFade);
+  if (persist) {
+    light.config_dirty = true;
+    light.config_save_at = millis() + kLightPersistDelayMs;
+  }
+}
+
+void setLightSpeed(uint16_t speed, bool persist = true) {
+  if (!light.present) return;
+  const uint8_t value = sanitizeLightSpeedValue(speed);
+  if (config.light_speed == value) return;
+  config.light_speed = value;
+  scheduleMqttLightPublish(kMqttLightPendingSpeed);
+  if (persist) {
+    light.config_dirty = true;
+    light.config_save_at = millis() + kLightPersistDelayMs;
+  }
+}
+
 void setupLightRuntime() {
   memset(&light, 0, sizeof(light));
   light.present = lightAvailable();
@@ -3370,6 +3508,7 @@ void setupLightRuntime() {
 }
 
 void maintainLight() {
+  advanceLightFade(false);
   persistLightConfig(false);
 }
 #else
@@ -4202,7 +4341,7 @@ bool mqttPublishLightState(uint8_t mask) {
   if (!mask) return true;
 
   String payload;
-  payload.reserve(48);
+  payload.reserve(76);
   payload += '{';
   bool comma = false;
   if (mask & kMqttLightPendingDimmer) {
@@ -4221,6 +4360,19 @@ bool mqttPublishLightState(uint8_t mask) {
     payload += F("\"Color\":\"");
     appendLightColorHex(payload);
     payload += '"';
+    comma = true;
+  }
+  if (mask & kMqttLightPendingFade) {
+    if (comma) payload += ',';
+    payload += F("\"Fade\":\"");
+    payload += config.light_fade ? F("ON") : F("OFF");
+    payload += '"';
+    comma = true;
+  }
+  if (mask & kMqttLightPendingSpeed) {
+    if (comma) payload += ',';
+    payload += F("\"Speed\":");
+    payload += config.light_speed;
   }
   payload += '}';
 
@@ -4565,6 +4717,47 @@ bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size
     out += F("\"}");
     return true;
   }
+
+  if (commandEquals(raw, cmd_len, "fade")) {
+    if (!light.present) {
+      error = F("No light output is configured");
+      return false;
+    }
+    if (arg_len > 0) {
+      uint8_t state = kPowerStateOff;
+      if (!parsePowerState(arg, arg_len, state)) {
+        error = F("Invalid fade state");
+        return false;
+      }
+      const bool enabled = state == kPowerStateToggle ? !config.light_fade : state == kPowerStateOn;
+      setLightFadeEnabled(enabled);
+    }
+    out.reserve(16);
+    out += F("{\"Fade\":\"");
+    out += config.light_fade ? F("ON") : F("OFF");
+    out += F("\"}");
+    return true;
+  }
+
+  if (commandEquals(raw, cmd_len, "speed")) {
+    if (!light.present) {
+      error = F("No light output is configured");
+      return false;
+    }
+    if (arg_len > 0) {
+      uint16_t speed = 0;
+      if (!parseUint16Token(arg, arg_len, kLightSpeedMin, kLightSpeedMax, speed)) {
+        error = F("Invalid speed");
+        return false;
+      }
+      setLightSpeed(speed);
+    }
+    out.reserve(16);
+    out += F("{\"Speed\":");
+    out += config.light_speed;
+    out += F("}");
+    return true;
+  }
 #endif
 
   error = F("Unsupported command");
@@ -4810,7 +5003,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
   page += F("if(d.mqtt){t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',d.mqtt.last_attempt_ms_ago==null?'n/a':d.mqtt.last_attempt_ms_ago+' ms ago');}");
 #if MYMOTA32_LIGHT_SUPPORTED
-  page += F("if(d.light){p('live-light-power',d.light.power?'on':'off',d.light.power?'pill ok':'pill bad');t('live-light-dimmer',d.light.dimmer+'%');t('live-light-ct',d.light.ct+' mired');t('live-light-color',d.light.color||'000000');t('live-light-on-dimmer',d.light.on_dimmer+'%');}");
+  page += F("if(d.light){p('live-light-power',d.light.power?'on':'off',d.light.power?'pill ok':'pill bad');t('live-light-dimmer',d.light.dimmer+'%');t('live-light-ct',d.light.ct+' mired');t('live-light-color',d.light.color||'000000');t('live-light-on-dimmer',d.light.on_dimmer+'%');t('live-light-fade',d.light.fade?'on':'off');t('live-light-speed',d.light.speed);}");
 #endif
   page += F("if(d.ibeacon){t('live-ibeacon-mqtt-rpm',d.ibeacon.mqtt_reports_per_minute+'/min');}");
   page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!==null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
@@ -4822,7 +5015,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("function im(s){var k=s.getAttribute('data-input'),v=s.value,b=document.getElementById('input-button-'+k),w=document.getElementById('input-switch-'+k);if(b)b.className=v=='0'?'mode-extra show':'mode-extra';if(w)w.className=v=='1'?'mode-extra show':'mode-extra';sd(b,v!='0');sd(w,v!='1');if(b){var a=b.querySelectorAll('.button-action');for(var i=0;i<a.length;i++)ba(a[i]);}}");
   page += F("function rb(s){var k=s.getAttribute('data-relay'),o=document.getElementById('relay_on_boot'+k),r=document.getElementById('relay_restore_boot'+k);if(!o||!r||!s.checked)return;if(s==r)o.checked=false;else if(s==o)r.checked=false;}");
 #if MYMOTA32_LIGHT_SUPPORTED
-  page += F("function lu(i){var e=i.getAttribute('data-live'),s=i.getAttribute('data-suffix')||'';if(e)t(e,i.value+s);}function la(i){lu(i);var body=new URLSearchParams();body.append(i.name,i.value);body.append('_inline','1');fetch('/light',{method:'POST',body:body,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});live();}).catch(function(x){alert(x.message||x);});}");
+  page += F("function lv(i){return i.type=='checkbox'?(i.checked?'1':'0'):i.value;}function lu(i){var e=i.getAttribute('data-live'),s=i.getAttribute('data-suffix')||'',v=lv(i);if(i.type=='checkbox')v=i.checked?(i.getAttribute('data-on')||'on'):(i.getAttribute('data-off')||'off');if(e)t(e,v+s);}function la(i){lu(i);var body=new URLSearchParams();body.append(i.name,lv(i));body.append('_inline','1');fetch('/light',{method:'POST',body:body,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});live();}).catch(function(x){alert(x.message||x);});}");
 #endif
   page += F("function ts(){var s=document.getElementById('known-template'),t=document.getElementById('template-json');if(!s||!t)return;var v=t.value.trim(),m=0;for(var i=1;i<s.options.length;i++){if(s.options[i].getAttribute('data-json')==v){m=i;break;}}s.selectedIndex=m;}");
   page += F("function tp(s){var o=s.options[s.selectedIndex],t=document.getElementById('template-json');if(o&&t&&o.getAttribute('data-json')){t.value=o.getAttribute('data-json');ts();}}");
@@ -5063,7 +5256,11 @@ void appendDeviceControls(String &page) {
     appendLightColorHex(page);
     page += F("</code></div><span>ON dimmer</span><div><code id='live-light-on-dimmer'>");
     page += String(config.light_on_dimmer);
-    page += F("%</code></div></div>");
+    page += F("%</code></div><span>Fade</span><div><code id='live-light-fade'>");
+    page += config.light_fade ? F("on") : F("off");
+    page += F("</code></div><span>Speed</span><div><code id='live-light-speed'>");
+    page += String(config.light_speed);
+    page += F("</code></div></div>");
     page += F("<form class='inline' data-inline='1' method='post' action='/light'><span class='actions'><button name='power' value='toggle'>Toggle</button><button name='power' value='on'>On</button><button class='secondary' name='power' value='off'>Off</button></span></form>");
     page += F("<div class='row'><label>Dimmer<br><input class='light-auto' data-live='live-light-dimmer' data-suffix='%' name='dimmer' type='range' min='0' max='100' step='1' value='");
     page += String(light.dimmer);
@@ -5077,6 +5274,14 @@ void appendDeviceControls(String &page) {
     appendLightColorHex(page);
     page += F("'></label></div><div class='row'><label>ON dimmer<br><input class='light-auto' data-live='live-light-on-dimmer' data-suffix='%' name='on_dimmer' type='number' min='1' max='100' step='1' value='");
     page += String(config.light_on_dimmer);
+    page += F("'></label></div><div class='row'><label><input class='light-auto' data-live='live-light-fade' data-on='on' data-off='off' name='fade' type='checkbox' value='1'");
+    if (config.light_fade) page += F(" checked");
+    page += F(">Fade</label></div><div class='row'><label>Speed<br><input class='light-auto' data-live='live-light-speed' name='speed' type='number' min='");
+    page += String(kLightSpeedMin);
+    page += F("' max='");
+    page += String(kLightSpeedMax);
+    page += F("' step='1' value='");
+    page += String(config.light_speed);
     page += F("'></label></div></div>");
   }
 #endif
@@ -5884,6 +6089,22 @@ void handleLightSave() {
       light.config_dirty = true;
       light.config_save_at = millis();
     }
+  }
+  if (server.hasArg("fade")) {
+    const String value = server.arg("fade");
+    if (value != "0" && value != "1") {
+      server.send(400, F("text/plain"), F("Invalid fade"));
+      return;
+    }
+    setLightFadeEnabled(value == "1");
+  }
+  if (server.hasArg("speed")) {
+    uint16_t speed = 0;
+    if (!parseUint16Input(server.arg("speed"), kLightSpeedMin, kLightSpeedMax, speed)) {
+      server.send(400, F("text/plain"), F("Invalid speed"));
+      return;
+    }
+    setLightSpeed(speed);
   }
   persistLightConfig(true);
 
@@ -6794,6 +7015,12 @@ void handleHealth() {
     appendLightColorHex(out);
     out += F("\",\"on_dimmer\":");
     out += config.light_on_dimmer;
+    out += F(",\"fade\":");
+    out += config.light_fade ? F("true") : F("false");
+    out += F(",\"speed\":");
+    out += config.light_speed;
+    out += F(",\"fading\":");
+    out += light.fade_running ? F("true") : F("false");
     out += F(",\"driver\":\"sm2335\"}");
   }
 #endif
