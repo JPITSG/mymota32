@@ -189,6 +189,8 @@ const char kTemplateShellyPlus2PmPcb019Json[] PROGMEM =
   "{\"NAME\":\"Shelly Plus 2PM PCB v0.1.9\",\"GPIO\":[320,0,0,0,34,192,0,0,225,224,0,0,0,0,193,0,0,0,0,0,0,608,640,3458,0,0,0,0,0,9472,0,4736,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateNousA8tJson[] PROGMEM =
   "{\"NAME\":\"NOUS A8T\",\"GPIO\":[1,1,320,1,32,1,1,1,1,224,2624,1,1,1,1,1,0,1,1,1,0,1,2656,2720,0,0,0,0,1,1,1,1,1,0,0,1],\"FLAG\":0,\"BASE\":1}";
+const char kTemplateNousB1tJson[] PROGMEM =
+  "{\"NAME\":\"NOUS B1T\",\"GPIO\":[544,0,1,0,32,160,1,1,224,0,0,1,1,1,0,1,0,1,1,1,0,1,1,1,0,0,0,0,1,1,1,0,1,0,0,1],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateNousB3tJson[] PROGMEM =
   "{\"NAME\":\"NOUS B3T\",\"GPIO\":[544,3200,1,8128,32,160,1,1,224,225,0,1,1,1,161,1,0,1,1,1,0,1,1,1,0,0,0,0,1,1,1,0,1,0,0,1],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateGenericC3RelayJson[] PROGMEM =
@@ -222,6 +224,8 @@ struct RuntimeTemplate {
   PinAssignment relays[kMaxRelays];
   PinAssignment buttons[kMaxButtons];
   uint8_t input_kind[kMaxButtons];
+  uint8_t input_function_index[kMaxButtons];
+  uint8_t input_default_relay[kMaxButtons];
   PinAssignment leds[kMaxLeds];
   PinAssignment link_led;
   uint8_t relay_count;
@@ -379,10 +383,13 @@ uint8_t activePhyMode() {
 }
 
 String chipIdHex() {
-  uint64_t mac = ESP.getEfuseMac();
-  uint32_t low24 = static_cast<uint32_t>(mac & 0xFFFFFFULL);
+  const uint64_t mac = ESP.getEfuseMac();
+  uint32_t id = 0;
+  for (uint8_t i = 0; i < 24; i += 8) {
+    id |= static_cast<uint32_t>((mac >> (40 - i)) & 0xffU) << i;
+  }
   char buf[7];
-  snprintf(buf, sizeof(buf), "%06X", low24);
+  snprintf(buf, sizeof(buf), "%06X", id);
   return String(buf);
 }
 
@@ -516,6 +523,12 @@ bool isSwitchInput(uint8_t input) {
   return input < kMaxButtons && runtime_template.input_kind[input] == kInputKindSwitch;
 }
 
+uint8_t inputFunctionIndex(uint8_t input) {
+  if (input >= kMaxButtons) return input;
+  const uint8_t function_index = runtime_template.input_function_index[input];
+  return function_index < kMaxButtons ? function_index : input;
+}
+
 uint8_t defaultInputMode(uint8_t input) {
   return isSwitchInput(input) ? kInputModeSwitch : kInputModeButton;
 }
@@ -530,7 +543,7 @@ uint8_t effectiveInputMode(uint8_t input) {
 
 uint8_t defaultInputOnLevel(uint8_t input) {
   if (input >= kMaxButtons || !hasPin(runtime_template.buttons[input])) return kInputOnLevelLow;
-  if (isSwitchInput(input)) return kInputOnLevelHigh;
+  if (isSwitchInput(input)) return runtime_template.buttons[input].no_pullup ? kInputOnLevelHigh : kInputOnLevelLow;
   return runtime_template.buttons[input].inverted ? kInputOnLevelHigh : kInputOnLevelLow;
 }
 
@@ -553,6 +566,13 @@ bool relayAvailable(uint8_t relay) {
 }
 
 bool defaultInputRelayTarget(uint8_t input, uint8_t &relay) {
+  if (input < kMaxButtons) {
+    const uint8_t preferred = runtime_template.input_default_relay[input];
+    if (preferred < runtime_template.relay_count && hasPin(runtime_template.relays[preferred])) {
+      relay = preferred;
+      return true;
+    }
+  }
   if (input < runtime_template.relay_count && hasPin(runtime_template.relays[input])) {
     relay = input;
     return true;
@@ -696,6 +716,31 @@ uint8_t templateIndexToPin(uint8_t index) {
 #endif
 }
 
+uint8_t templateInputSlot(RuntimeTemplate &target, uint8_t function_index, uint8_t kind) {
+  if (function_index >= kMaxButtons) return kMaxButtons;
+  if (!hasPin(target.buttons[function_index]) ||
+      (target.input_kind[function_index] == kind &&
+       target.input_function_index[function_index] == function_index)) {
+    return function_index;
+  }
+  for (uint8_t i = 0; i < kMaxButtons; i++) {
+    if (!hasPin(target.buttons[i])) return i;
+  }
+  return kMaxButtons;
+}
+
+bool assignTemplateInput(RuntimeTemplate &target, uint8_t function_index, uint8_t kind,
+                         const PinAssignment &assignment) {
+  const uint8_t slot = templateInputSlot(target, function_index, kind);
+  if (slot >= kMaxButtons) return false;
+  target.buttons[slot] = assignment;
+  target.input_kind[slot] = kind;
+  target.input_function_index[slot] = function_index;
+  target.input_default_relay[slot] = function_index < kMaxRelays ? function_index : kButtonRelayUnset;
+  if (target.button_count <= slot) target.button_count = slot + 1;
+  return true;
+}
+
 void parseTemplateFunction(RuntimeTemplate &target, uint8_t pin, uint16_t code) {
   if (code == kTplNone || code == kTplUser || code == kTplSentinelEnd) return;
 
@@ -744,13 +789,14 @@ void parseTemplateFunction(RuntimeTemplate &target, uint8_t pin, uint16_t code) 
       addUnsupportedTemplatePin(target, pin, code);
       return;
     }
-    target.buttons[index] = {
+    const PinAssignment assignment = {
       pin,
       base == kTplKey1Inv || base == kTplKey1InvNp,
       base == kTplKey1Np || base == kTplKey1InvNp
     };
-    target.input_kind[index] = kInputKindButton;
-    if (target.button_count <= index) target.button_count = index + 1;
+    if (!assignTemplateInput(target, index, kInputKindButton, assignment)) {
+      addUnsupportedTemplatePin(target, pin, code);
+    }
     return;
   }
 
@@ -759,9 +805,10 @@ void parseTemplateFunction(RuntimeTemplate &target, uint8_t pin, uint16_t code) 
       addUnsupportedTemplatePin(target, pin, code);
       return;
     }
-    target.buttons[index] = {pin, false, base == kTplSwt1Np};
-    target.input_kind[index] = kInputKindSwitch;
-    if (target.button_count <= index) target.button_count = index + 1;
+    const PinAssignment assignment = {pin, false, base == kTplSwt1Np};
+    if (!assignTemplateInput(target, index, kInputKindSwitch, assignment)) {
+      addUnsupportedTemplatePin(target, pin, code);
+    }
     return;
   }
 
@@ -799,7 +846,11 @@ void parseTemplateFunction(RuntimeTemplate &target, uint8_t pin, uint16_t code) 
 void resetRuntimeTemplate(RuntimeTemplate &target) {
   memset(&target, 0, sizeof(target));
   for (uint8_t i = 0; i < kMaxRelays; i++) resetPinAssignment(target.relays[i]);
-  for (uint8_t i = 0; i < kMaxButtons; i++) resetPinAssignment(target.buttons[i]);
+  for (uint8_t i = 0; i < kMaxButtons; i++) {
+    resetPinAssignment(target.buttons[i]);
+    target.input_function_index[i] = kButtonRelayUnset;
+    target.input_default_relay[i] = kButtonRelayUnset;
+  }
   for (uint8_t i = 0; i < kMaxLeds; i++) resetPinAssignment(target.leds[i]);
   resetPinAssignment(target.link_led);
   target.i2c_scl_pin = kInvalidPin;
@@ -1512,7 +1563,7 @@ String expandButtonActionText(const char *input, uint8_t button, bool hold) {
     const size_t len = static_cast<size_t>(end - p + 1);
     uint8_t relay = 0;
     if (len == 10 && strncmp(p, "{BUTTONID}", len) == 0) {
-      out += String(button + 1);
+      out += String(inputFunctionIndex(button) + 1);
     } else if (len == 6 && strncmp(p, "{TYPE}", len) == 0) {
       out += buttonEventType(hold);
     } else if (len == 7 && strncmp(p, "{TOPIC}", len) == 0) {
@@ -2743,7 +2794,7 @@ bool inputCanFollowOutput(uint8_t input) {
 
 String inputDisplayName(uint8_t input) {
   String name = isSwitchInput(input) ? F("Switch ") : F("Button ");
-  name += String(input + 1);
+  name += String(inputFunctionIndex(input) + 1);
   return name;
 }
 
@@ -2858,6 +2909,8 @@ void appendTemplateForm(String &page) {
   page += F("'>Generic C3 Relay</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateNousA8tJson)));
   page += F("'>NOUS A8T</option><option data-json='");
+  page += htmlEscape(String(FPSTR(kTemplateNousB1tJson)));
+  page += F("'>NOUS B1T</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateNousB3tJson)));
   page += F("'>NOUS B3T</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateShellyPlus2PmPcb019Json)));

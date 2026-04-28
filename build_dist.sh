@@ -79,6 +79,12 @@ def expect(sec_name, key, expected):
         die(f"[{sec_name}] {key} is {actual!r}, expected {expected!r}")
 
 
+def expect_empty(sec_name, key):
+    actual = section(sec_name).get(key, "")
+    if actual not in ("", [], None):
+        die(f"[{sec_name}] {key} is {actual!r}, expected empty")
+
+
 def expect_define(sec_name, name, value=None):
     prefix = f"-D{name}"
     expected = prefix if value is None else f"{prefix}="
@@ -106,6 +112,14 @@ expect_define("env:mymota32-esp32-u4wdh-d-4m", "MYMOTA32_TARGET", "esp32-u4wdh-d
 expect_define("env:mymota32-esp32-u4wdh-d-4m", "MYMOTA32_ESP32_U4WDH", "1")
 reject_define("env:mymota32-esp32-u4wdh-d-4m", "CORE32SOLO1")
 reject_define("env:mymota32-esp32-u4wdh-d-4m", "FRAMEWORK_ARDUINO_SOLO1")
+
+expect("env:mymota32-esp32-u4wdh-s-4m", "board", "esp32-solo1")
+expect_empty("env:mymota32-esp32-u4wdh-s-4m", "board_espidf.custom_sdkconfig")
+expect("env:mymota32-esp32-u4wdh-s-4m", "board_build.f_flash", "40000000L")
+expect("env:mymota32-esp32-u4wdh-s-4m", "board_build.flash_mode", "dio")
+expect_define("env:mymota32-esp32-u4wdh-s-4m", "MYMOTA32_TARGET", "esp32-u4wdh-s-4m")
+expect_define("env:mymota32-esp32-u4wdh-s-4m", "MYMOTA32_ESP32_U4WDH", "1")
+expect_define("env:mymota32-esp32-u4wdh-s-4m", "FRAMEWORK_ARDUINO_SOLO1")
 
 expect("env:mymota32-esp32-c3-4m", "board", "esp32-c3-devkitm-1")
 expect("env:mymota32-esp32-c3-4m", "board_build.f_flash", "80000000L")
@@ -190,6 +204,10 @@ build_target() {
   local raw_bin="$DIST_DIR/mymota32-$VERSION-$target_name.bin"
   local factory_bin="$DIST_DIR/mymota32-$VERSION-$target_name-factory.bin"
   local image_info_file="$TMP_DIR/mymota32-$VERSION-$target_name.image_info.txt"
+  local boot_app0="$BOOT_APP0"
+  local safeboot_offset="0x10000"
+  local safeboot_size="$((0xD0000))"
+  local app0_offset="0xe0000"
 
   echo "==> Building $display_name ($env_name)"
   pio run -e "$env_name" -t clean >/dev/null
@@ -198,9 +216,16 @@ build_target() {
   assert_file "$build_dir/firmware.bin"
   assert_file "$build_dir/bootloader.bin"
   assert_file "$build_dir/partitions.bin"
+  if [[ "$target_name" == "esp32-u4wdh-s-4m" ]]; then
+    boot_app0="$HOME/.platformio/packages/framework-arduino-solo1/tools/partitions/boot_app0.bin"
+  fi
+  assert_file "$boot_app0"
 
   cp "$build_dir/firmware.bin" "$raw_bin"
   cmp -s "$build_dir/firmware.bin" "$raw_bin" || fail "copy failed for $raw_bin"
+  local raw_size
+  raw_size="$(stat -c '%s' "$raw_bin")"
+  (( raw_size <= safeboot_size )) || fail "$raw_bin is $raw_size bytes; must fit in 0xD0000 safeboot partition"
 
   esptool --chip "$chip" merge_bin \
     -o "$factory_bin" \
@@ -209,22 +234,34 @@ build_target() {
     --flash_size 4MB \
     "$bootloader_offset" "$build_dir/bootloader.bin" \
     0x8000 "$build_dir/partitions.bin" \
-    0xe000 "$BOOT_APP0" \
-    0xe0000 "$raw_bin"
+    0xe000 "$boot_app0" \
+    "$safeboot_offset" "$raw_bin" \
+    "$app0_offset" "$raw_bin"
 
   verify_app_image "$raw_bin" "$image_type" "$flash_freq" "$image_info_file"
   verify_first_bytes "$raw_bin" "e9"
   verify_merged_layout "$factory_bin" \
     "$bootloader_offset" "$build_dir/bootloader.bin" \
     0x8000 "$build_dir/partitions.bin" \
-    0xe000 "$BOOT_APP0" \
-    0xe0000 "$raw_bin"
+    0xe000 "$boot_app0" \
+    "$safeboot_offset" "$raw_bin" \
+    "$app0_offset" "$raw_bin"
 
   if [[ "$target_name" == "esp32-u4wdh-d-4m" ]]; then
     local esp32_sdkconfig="$HOME/.platformio/packages/framework-arduinoespressif32/tools/esp32-arduino-libs/esp32/sdkconfig"
     assert_file "$esp32_sdkconfig"
     assert_contains "$esp32_sdkconfig" "# CONFIG_FREERTOS_UNICORE is not set"
     assert_not_contains "$esp32_sdkconfig" "CONFIG_ESP_SYSTEM_SINGLE_CORE_MODE=y"
+  fi
+
+  if [[ "$target_name" == "esp32-u4wdh-s-4m" ]]; then
+    local solo_sdkconfig="$HOME/.platformio/packages/framework-arduino-solo1/tools/esp32-arduino-libs/esp32/sdkconfig"
+    assert_file "$solo_sdkconfig"
+    assert_contains "$solo_sdkconfig" "CONFIG_FREERTOS_UNICORE=y"
+    assert_contains "$solo_sdkconfig" "CONFIG_ESP_SYSTEM_SINGLE_CORE_MODE=y"
+    assert_file "$build_dir/firmware.map"
+    assert_contains "$build_dir/firmware.map" "framework-arduino-solo1/tools/esp32-arduino-libs"
+    assert_not_contains "$build_dir/firmware.map" "framework-arduinoespressif32/tools/esp32-arduino-libs"
   fi
 
   echo "    target:  $display_name"
@@ -245,6 +282,7 @@ need_cmd pio
 need_cmd python3
 need_cmd cmp
 need_cmd od
+need_cmd stat
 
 assert_file platformio.ini
 assert_file partitions.csv
@@ -261,6 +299,7 @@ echo "==> Clearing PlatformIO build cache"
 rm -rf "$ROOT_DIR/.cache"
 
 build_target "mymota32-esp32-u4wdh-d-4m" "esp32-u4wdh-d-4m" "esp32" "ESP32" "40m" "0x1000" "ESP32-U4WDH-D"
+build_target "mymota32-esp32-u4wdh-s-4m" "esp32-u4wdh-s-4m" "esp32" "ESP32" "40m" "0x1000" "ESP32-U4WDH-S"
 build_target "mymota32-esp32-c3-4m" "esp32-c3-4m" "esp32c3" "ESP32-C3" "80m" "0x0000" "ESP32-C3 4M"
 
 refresh_checksums
