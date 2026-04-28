@@ -97,6 +97,7 @@ constexpr uint8_t kButtonActionMqtt = 2;
 constexpr uint8_t kButtonActionWebhook = 3;
 constexpr size_t kButtonActionTargetMaxLen = 128;
 constexpr size_t kButtonActionPayloadMaxLen = 128;
+constexpr uint16_t kApiSettingsVersion = 2;
 constexpr const char *kDefaultButtonMqttTopic = "stat/{TOPIC}/RESULT";
 constexpr const char *kDefaultButtonMqttPressPayload = "{\"Switch{BUTTONID}\":{\"Action\":\"{TYPE}\"}}";
 constexpr const char *kDefaultButtonMqttHoldPayload = "{\"Switch{BUTTONID}\":{\"Action\":\"{TYPE}\"}}";
@@ -5280,6 +5281,253 @@ void handleButtonSave() {
   server.send(303, F("text/plain"), "");
 }
 
+struct ApiSettingsStats {
+  uint16_t applied;
+  uint16_t skipped;
+};
+
+void recordApiSettingsApplied(ApiSettingsStats &stats) {
+  stats.applied++;
+}
+
+void recordApiSettingsSkipped(ApiSettingsStats &stats) {
+  stats.skipped++;
+}
+
+const __FlashStringHelper *apiSettingsActionName(uint8_t action) {
+  switch (action) {
+    case kButtonActionRelayToggle: return F("relay_toggle");
+    case kButtonActionMqtt: return F("mqtt");
+    case kButtonActionWebhook: return F("webhook");
+    default: return F("none");
+  }
+}
+
+const __FlashStringHelper *apiSettingsInputModeName(uint8_t mode) {
+  return mode == kInputModeSwitch ? F("switch") : F("button");
+}
+
+bool apiSettingsButtonAvailable(uint8_t input) {
+  return input < runtime_template.button_count && hasPin(runtime_template.buttons[input]);
+}
+
+void appendApiSettingsJson(String &out) {
+  out += F("{\"format\":\"mymota-api-settings\",\"api_version\":");
+  out += kApiSettingsVersion;
+  out += F(",\"inputs\":[");
+  bool first = true;
+  for (uint8_t i = 0; i < runtime_template.button_count && i < kMaxButtons; i++) {
+    if (!first) out += ',';
+    first = false;
+    if (!hasPin(runtime_template.buttons[i])) {
+      out += F("null");
+      continue;
+    }
+    out += F("{\"input\":");
+    out += i + 1;
+    out += F(",\"mode\":\"");
+    out += apiSettingsInputModeName(effectiveInputMode(i));
+    out += F("\",\"press\":{\"action\":\"");
+    out += apiSettingsActionName(config.button_press_action[i]);
+    out += F("\",\"mqtt_topic\":\"");
+    out += jsonEscape(config.button_press_target[i]);
+    out += F("\",\"mqtt_payload\":\"");
+    out += jsonEscape(config.button_press_payload[i]);
+    out += F("\"}}");
+  }
+  out += F("]}");
+}
+
+bool applyApiInputPressMqttValues(uint16_t input_number, bool has_topic, const String &topic_value,
+                                  bool has_payload, const String &payload_value, StoredConfig &target,
+                                  ApiSettingsStats &stats) {
+  if (input_number < 1 || input_number > kMaxButtons) {
+    recordApiSettingsSkipped(stats);
+    return false;
+  }
+  const uint8_t input = static_cast<uint8_t>(input_number - 1);
+  if (!apiSettingsButtonAvailable(input)) {
+    recordApiSettingsSkipped(stats);
+    return false;
+  }
+  if (!has_topic && !has_payload) {
+    recordApiSettingsSkipped(stats);
+    return false;
+  }
+
+  String topic = target.button_press_target[input];
+  topic.trim();
+  if (topic.length() == 0 || !isValidMqttPublishTopicTemplate(topic)) {
+    topic = kDefaultButtonMqttTopic;
+  }
+  String payload = target.button_press_payload[input];
+  if (payload.length() == 0 || !isValidButtonActionText(payload, kButtonActionPayloadMaxLen, false, true)) {
+    payload = kDefaultButtonMqttPressPayload;
+  }
+
+  if (has_topic) {
+    topic = topic_value;
+    topic.trim();
+  }
+  if (has_topic && !isValidMqttPublishTopicTemplate(topic)) {
+    recordApiSettingsSkipped(stats);
+    return false;
+  }
+  if (has_payload) {
+    payload = payload_value;
+  }
+  if (has_payload && !isValidButtonActionText(payload, kButtonActionPayloadMaxLen, false, true)) {
+    recordApiSettingsSkipped(stats);
+    return false;
+  }
+
+  target.input_mode[input] = kInputModeButton;
+  target.input_relay[input] = input;
+  target.input_on_level[input] = kInputOnLevelUnset;
+  target.button_press_action[input] = kButtonActionMqtt;
+  strlcpy(target.button_press_target[input], topic.c_str(), sizeof(target.button_press_target[input]));
+  strlcpy(target.button_press_payload[input], payload.c_str(), sizeof(target.button_press_payload[input]));
+  if (has_topic) recordApiSettingsApplied(stats);
+  if (has_payload) recordApiSettingsApplied(stats);
+  return true;
+}
+
+bool apiSettingsGetArg(const String &primary, const String &fallback, String &out) {
+  if (server.hasArg(primary)) {
+    out = server.arg(primary);
+    return true;
+  }
+  if (fallback.length() && server.hasArg(fallback)) {
+    out = server.arg(fallback);
+    return true;
+  }
+  return false;
+}
+
+bool apiSettingsIndexedArg(uint8_t input_number, const char *primary_suffix, const char *fallback_suffix, String &out) {
+  String primary = F("input");
+  primary += input_number;
+  primary += primary_suffix;
+  String fallback = F("input");
+  fallback += input_number;
+  fallback += fallback_suffix;
+  return apiSettingsGetArg(primary, fallback, out);
+}
+
+bool apiSettingsIndexedArgPresent(uint8_t input_number, const char *primary_suffix, const char *fallback_suffix) {
+  String primary = F("input");
+  primary += input_number;
+  primary += primary_suffix;
+  if (server.hasArg(primary)) return true;
+
+  String fallback = F("input");
+  fallback += input_number;
+  fallback += fallback_suffix;
+  return server.hasArg(fallback);
+}
+
+bool apiSettingsGetHasUpdateArgs() {
+  if (server.hasArg("input") || server.hasArg("id")) return true;
+  for (uint8_t input_number = 1; input_number <= kMaxButtons; input_number++) {
+    if (apiSettingsIndexedArgPresent(input_number, "_mqtt_topic", "_topic") ||
+        apiSettingsIndexedArgPresent(input_number, "_mqtt_payload", "_payload")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool applyApiSettingsGetArgs(StoredConfig &target, ApiSettingsStats &stats) {
+  bool saw_setting_arg = false;
+
+  if (server.hasArg("input") || server.hasArg("id")) {
+    saw_setting_arg = true;
+    const String input_text = server.hasArg("input") ? server.arg("input") : server.arg("id");
+    uint16_t input_number = 0;
+    if (!parseUint16Input(input_text, 1, kMaxButtons, input_number)) {
+      recordApiSettingsSkipped(stats);
+    } else {
+      String topic;
+      String payload;
+      const bool has_topic = apiSettingsGetArg(F("mqtt_topic"), F("topic"), topic);
+      const bool has_payload = apiSettingsGetArg(F("mqtt_payload"), F("payload"), payload);
+      applyApiInputPressMqttValues(input_number, has_topic, topic, has_payload, payload, target, stats);
+    }
+  }
+
+  for (uint8_t input_number = 1; input_number <= kMaxButtons; input_number++) {
+    String topic;
+    String payload;
+    const bool has_topic = apiSettingsIndexedArg(input_number, "_mqtt_topic", "_topic", topic);
+    const bool has_payload = apiSettingsIndexedArg(input_number, "_mqtt_payload", "_payload", payload);
+    if (!has_topic && !has_payload) continue;
+    saw_setting_arg = true;
+    applyApiInputPressMqttValues(input_number, has_topic, topic, has_payload, payload, target, stats);
+  }
+
+  return saw_setting_arg;
+}
+
+void sendApiSettingsError(uint16_t status, const __FlashStringHelper *message) {
+  String out;
+  out.reserve(120);
+  out += F("{\"ok\":false,\"error\":\"");
+  out += message;
+  out += F("\"}");
+  server.sendHeader(F("Cache-Control"), F("no-store"));
+  server.send(status, F("application/json"), out);
+}
+
+void finishApiSettingsUpdate(const StoredConfig &candidate, const ApiSettingsStats &stats) {
+  if (stats.applied == 0) {
+    String out;
+    out.reserve(260);
+    out += F("{\"ok\":false,\"error\":\"No API settings applied\",\"skipped\":");
+    out += stats.skipped;
+    out += F("}");
+    server.sendHeader(F("Cache-Control"), F("no-store"));
+    server.send(400, F("application/json"), out);
+    return;
+  }
+
+  if (!saveInputConfig(candidate)) {
+    sendApiSettingsError(500, F("Could not save settings"));
+    return;
+  }
+  updateDeviceLeds(true);
+
+  String out;
+  out.reserve(2200);
+  out += F("{\"ok\":true,\"applied\":");
+  out += stats.applied;
+  out += F(",\"skipped\":");
+  out += stats.skipped;
+  out += F(",\"settings\":");
+  appendApiSettingsJson(out);
+  out += F("}");
+  server.sendHeader(F("Cache-Control"), F("no-store"));
+  server.send(200, F("application/json"), out);
+}
+
+void handleApiSettingsGet() {
+  if (!apiSettingsGetHasUpdateArgs()) {
+    String out;
+    out.reserve(1800);
+    appendApiSettingsJson(out);
+    server.sendHeader(F("Cache-Control"), F("no-store"));
+    server.send(200, F("application/json"), out);
+    return;
+  }
+
+  StoredConfig candidate = config;
+  ApiSettingsStats stats = {0, 0};
+  if (applyApiSettingsGetArgs(candidate, stats)) {
+    finishApiSettingsUpdate(candidate, stats);
+    return;
+  }
+  sendApiSettingsError(400, F("No API settings supplied"));
+}
+
 void handleMqttSave() {
   String host = server.arg("host");
   String port_arg = server.arg("port");
@@ -5748,6 +5996,7 @@ void setupRoutes() {
   server.on("/factory-reset", HTTP_POST, handleFactoryReset);
   server.on("/health", HTTP_GET, handleHealth);
   server.on("/cm", HTTP_GET, handleCmnd);
+  server.on("/api/settings", HTTP_GET, handleApiSettingsGet);
   server.on("/update", HTTP_POST, handleUpdateDone, handleUpdateUpload);
   server.onNotFound(handleNotFound);
 }
