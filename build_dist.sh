@@ -105,6 +105,14 @@ def reject_define(sec_name, name):
 
 expect("common", "board_build.partitions", "partitions.csv")
 
+expect("env:mymota32-esp32-d0wd-v3-4m", "board", "esp32dev")
+expect("env:mymota32-esp32-d0wd-v3-4m", "board_build.f_flash", "40000000L")
+expect("env:mymota32-esp32-d0wd-v3-4m", "board_build.flash_mode", "dio")
+expect_define("env:mymota32-esp32-d0wd-v3-4m", "MYMOTA32_TARGET", "esp32-d0wd-v3-4m")
+reject_define("env:mymota32-esp32-d0wd-v3-4m", "MYMOTA32_ESP32_U4WDH")
+reject_define("env:mymota32-esp32-d0wd-v3-4m", "CORE32SOLO1")
+reject_define("env:mymota32-esp32-d0wd-v3-4m", "FRAMEWORK_ARDUINO_SOLO1")
+
 expect("env:mymota32-esp32-u4wdh-d-4m", "board", "esp32dev")
 expect("env:mymota32-esp32-u4wdh-d-4m", "board_build.f_flash", "40000000L")
 expect("env:mymota32-esp32-u4wdh-d-4m", "board_build.flash_mode", "dio")
@@ -247,7 +255,7 @@ build_target() {
     "$safeboot_offset" "$raw_bin" \
     "$app0_offset" "$raw_bin"
 
-  if [[ "$target_name" == "esp32-u4wdh-d-4m" ]]; then
+  if [[ "$target_name" == "esp32-d0wd-v3-4m" || "$target_name" == "esp32-u4wdh-d-4m" ]]; then
     local esp32_sdkconfig="$HOME/.platformio/packages/framework-arduinoespressif32/tools/esp32-arduino-libs/esp32/sdkconfig"
     assert_file "$esp32_sdkconfig"
     assert_contains "$esp32_sdkconfig" "# CONFIG_FREERTOS_UNICORE is not set"
@@ -298,6 +306,7 @@ purge_gzip_artifacts
 echo "==> Clearing PlatformIO build cache"
 rm -rf "$ROOT_DIR/.cache"
 
+build_target "mymota32-esp32-d0wd-v3-4m" "esp32-d0wd-v3-4m" "esp32" "ESP32" "40m" "0x1000" "ESP32-D0WD-V3"
 build_target "mymota32-esp32-u4wdh-d-4m" "esp32-u4wdh-d-4m" "esp32" "ESP32" "40m" "0x1000" "ESP32-U4WDH-D"
 build_target "mymota32-esp32-u4wdh-s-4m" "esp32-u4wdh-s-4m" "esp32" "ESP32" "40m" "0x1000" "ESP32-U4WDH-S"
 build_target "mymota32-esp32-c3-4m" "esp32-c3-4m" "esp32c3" "ESP32-C3" "80m" "0x0000" "ESP32-C3 4M"

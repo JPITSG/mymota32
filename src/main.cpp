@@ -1,10 +1,11 @@
 #include <Arduino.h>
-#include <ArduinoJson.h>
+#include <NimBLEDevice.h>
 #include <Preferences.h>
 #include <Update.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <bootloader_common.h>
+#include <cJSON.h>
 #include <esp_chip_info.h>
 #include <esp_system.h>
 #include <esp_wifi.h>
@@ -19,6 +20,12 @@
 
 #ifndef MYMOTA32_ESP32_U4WDH
 #define MYMOTA32_ESP32_U4WDH 0
+#endif
+
+#if CONFIG_BT_ENABLED && CONFIG_BT_NIMBLE_ROLE_OBSERVER
+#define MYMOTA32_IBEACON_SUPPORTED 1
+#else
+#define MYMOTA32_IBEACON_SUPPORTED 0
 #endif
 
 namespace {
@@ -42,7 +49,6 @@ constexpr size_t kHostnameMaxLen = 32;
 constexpr size_t kTemplateGpioCount = 36;
 constexpr size_t kTemplateNameMaxLen = 32;
 constexpr size_t kTemplateJsonMaxLen = 800;
-constexpr size_t kTemplateJsonDocCapacity = 2048;
 
 constexpr uint8_t kInvalidPin = 0xff;
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -135,6 +141,23 @@ constexpr uint8_t kMqttConnectConnackTimeout = 4;
 constexpr uint8_t kMqttConnectConnackRejected = 5;
 constexpr uint8_t kMqttConnectSubscribeFailed = 6;
 
+constexpr uint8_t kIBeaconQueueDepth = 12;
+constexpr uint8_t kIBeaconMaxPacketBytes = 62;
+constexpr uint8_t kIBeaconProcessLimit = 4;
+constexpr uint8_t kIBeaconCacheSize = 32;
+constexpr size_t kIBeaconFilterListMaxLen = 255;
+constexpr size_t kIBeaconFilterInputMaxLen = 384;
+constexpr uint32_t kIBeaconPruneIntervalMs = 60000;
+constexpr uint32_t kIBeaconKeyfobCacheTtlMs = 1800000;
+constexpr uint32_t kIBeaconClimateCacheTtlMs = 21600000;
+constexpr uint16_t kIBeaconScanIntervalMs = 160;
+constexpr uint16_t kIBeaconScanWindowMs = 80;
+constexpr uint8_t kIBeaconKindKeyfob = 1;
+constexpr uint8_t kIBeaconKindClimate = 2;
+constexpr uint16_t kIBeaconFilter1DefaultSec = 60;
+constexpr uint16_t kIBeaconFilter2DefaultSec = 10;
+const uint16_t kIBeaconFilterIntervals[] = {1, 5, 10, 15, 30, 60, 120, 300, 600};
+
 constexpr uint8_t kPowerStateOff = 0;
 constexpr uint8_t kPowerStateOn = 1;
 constexpr uint8_t kPowerStateToggle = 2;
@@ -187,6 +210,8 @@ const char kTemplateShellyPlusPlugSJson[] PROGMEM =
   "{\"NAME\":\"Shelly Plus Plug S\",\"GPIO\":[0,0,0,0,224,0,32,2720,0,0,0,0,0,0,0,2624,0,0,2656,0,0,288,289,0,0,0,0,0,0,4736,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateShellyPlus2PmPcb019Json[] PROGMEM =
   "{\"NAME\":\"Shelly Plus 2PM PCB v0.1.9\",\"GPIO\":[320,0,0,0,34,192,0,0,225,224,0,0,0,0,193,0,0,0,0,0,0,608,640,3458,0,0,0,0,0,9472,0,4736,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
+const char kTemplateShellyPlus1PmJson[] PROGMEM =
+  "{\"NAME\":\"Shelly Plus 1PM\",\"GPIO\":[0,0,0,0,192,2720,0,0,0,0,0,0,0,0,2656,0,0,0,0,2624,0,32,224,0,0,0,0,0,4736,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateNousA8tJson[] PROGMEM =
   "{\"NAME\":\"NOUS A8T\",\"GPIO\":[1,1,320,1,32,1,1,1,1,224,2624,1,1,1,1,1,0,1,1,1,0,1,2656,2720,0,0,0,0,1,1,1,1,1,0,0,1],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateNousB1tJson[] PROGMEM =
@@ -278,6 +303,41 @@ struct StoredConfig {
   uint16_t mqtt_port;
   char mqtt_topic[kMqttTopicMaxLen + 1];
   uint16_t mqtt_keepalive;
+
+  uint8_t ibeacon_enabled;
+  uint16_t ibeacon_filter1_interval_sec;
+  uint16_t ibeacon_filter2_interval_sec;
+  char ibeacon_filter1_macs[kIBeaconFilterListMaxLen + 1];
+  char ibeacon_filter2_macs[kIBeaconFilterListMaxLen + 1];
+};
+
+struct IBeaconObservation {
+  char mac[18];
+  int8_t rssi;
+  uint8_t payload[kIBeaconMaxPacketBytes];
+  uint8_t payload_len;
+  uint32_t seen_at;
+};
+
+struct IBeaconClimateReading {
+  bool valid;
+  uint32_t hash;
+};
+
+struct IBeaconBthomeReading {
+  bool has_packet_id;
+  uint8_t packet_id;
+};
+
+struct IBeaconCacheEntry {
+  bool used;
+  char mac[18];
+  uint8_t kind;
+  int8_t rssi;
+  uint32_t climate_hash;
+  uint8_t packet_id;
+  bool has_packet_id;
+  uint32_t sent_at;
 };
 
 StoredConfig config{};
@@ -334,6 +394,28 @@ bool mqtt_ping_pending = false;
 MqttButtonPending mqtt_button_queue[kMqttButtonQueueDepth]{};
 uint8_t mqtt_button_queue_head = 0;
 uint8_t mqtt_button_queue_count = 0;
+
+IBeaconCacheEntry ibeacon_cache[kIBeaconCacheSize]{};
+uint32_t last_ibeacon_prune = 0;
+uint32_t next_ibeacon_start_attempt = 0;
+bool ibeacon_stack_started = false;
+bool ibeacon_scanning = false;
+char ibeacon_status[24] = "idle";
+
+#if MYMOTA32_IBEACON_SUPPORTED
+IBeaconObservation ibeacon_queue[kIBeaconQueueDepth]{};
+uint8_t ibeacon_queue_head = 0;
+uint8_t ibeacon_queue_count = 0;
+portMUX_TYPE ibeacon_queue_mux = portMUX_INITIALIZER_UNLOCKED;
+
+class IBeaconScanCallbacks : public NimBLEScanCallbacks {
+ public:
+  void onResult(const NimBLEAdvertisedDevice *device) override;
+};
+
+IBeaconScanCallbacks ibeacon_scan_callbacks;
+NimBLEScan *ibeacon_scan = nullptr;
+#endif
 
 void recordLoopPerf(uint32_t started_us, uint32_t ended_us) {
   const uint32_t now_ms = millis();
@@ -876,40 +958,39 @@ void decodeTemplateConfig() {
   decodeTemplateConfigInto(config, runtime_template);
 }
 
-bool isJsonSpace(char c) {
-  return c == ' ' || c == '\n' || c == '\r' || c == '\t';
+bool cjsonIsType(const cJSON *value, int type) {
+  return value && ((value->type & 0xff) == type);
 }
 
-bool templateJsonHasSingleRootObject(const String &json) {
-  const char *p = json.c_str();
-  while (isJsonSpace(*p)) p++;
-  if (*p != '{') return false;
-
-  uint16_t depth = 0;
-  bool in_string = false;
-  bool escaped = false;
-  for (; *p; p++) {
-    const char c = *p;
-    if (in_string) {
-      if (escaped) escaped = false;
-      else if (c == '\\') escaped = true;
-      else if (c == '"') in_string = false;
-      continue;
-    }
-    if (c == '"') in_string = true;
-    else if (c == '{' || c == '[') depth++;
-    else if (c == '}' || c == ']') {
-      if (depth == 0) return false;
-      depth--;
-      if (depth == 0) {
-        p++;
-        break;
-      }
-    }
+const cJSON *cjsonObjectItem(const cJSON *object, const char *key) {
+  if (!cjsonIsType(object, cJSON_Object)) return nullptr;
+  for (const cJSON *item = object->child; item; item = item->next) {
+    if (item->string && strcmp(item->string, key) == 0) return item;
   }
-  if (depth != 0 || in_string || escaped) return false;
-  while (isJsonSpace(*p)) p++;
-  return *p == '\0';
+  return nullptr;
+}
+
+uint8_t cjsonArraySize(const cJSON *array) {
+  if (!cjsonIsType(array, cJSON_Array)) return 0;
+  uint8_t count = 0;
+  for (const cJSON *item = array->child; item && count < UINT8_MAX; item = item->next) count++;
+  return count;
+}
+
+const cJSON *cjsonArrayItem(const cJSON *array, uint8_t index) {
+  const cJSON *item = cjsonIsType(array, cJSON_Array) ? array->child : nullptr;
+  while (item && index--) item = item->next;
+  return item;
+}
+
+bool cjsonUintInRange(const cJSON *value, uint32_t max_value, uint32_t &out) {
+  if (!cjsonIsType(value, cJSON_Number)) return false;
+  const double number = value->valuedouble;
+  if (number < 0 || number > static_cast<double>(max_value)) return false;
+  const uint32_t integer = static_cast<uint32_t>(number);
+  if (static_cast<double>(integer) != number) return false;
+  out = integer;
+  return true;
 }
 
 bool parseTemplateJson(const String &json, StoredConfig &target, String &error) {
@@ -917,67 +998,71 @@ bool parseTemplateJson(const String &json, StoredConfig &target, String &error) 
     error = F("Template JSON length is invalid");
     return false;
   }
-  if (!templateJsonHasSingleRootObject(json)) {
-    error = F("Template must be one complete JSON object");
-    return false;
-  }
 
-  DynamicJsonDocument doc(kTemplateJsonDocCapacity);
-  const DeserializationError json_error = deserializeJson(doc, json);
-  if (json_error) {
-    error = F("Template JSON parse failed: ");
-    error += json_error.c_str();
+  cJSON *doc = cJSON_ParseWithLengthOpts(json.c_str(), json.length() + 1, nullptr, true);
+  if (!doc) {
+    error = F("Template JSON parse failed");
     return false;
   }
-  if (!doc.is<JsonObject>()) {
+  if (!cjsonIsType(doc, cJSON_Object)) {
+    cJSON_Delete(doc);
     error = F("Template must be a JSON object");
     return false;
   }
 
-  const char *name = doc["NAME"] | "";
+  const cJSON *name_value = cjsonObjectItem(doc, "NAME");
+  const char *name = (cjsonIsType(name_value, cJSON_String) && name_value->valuestring) ? name_value->valuestring : "";
   if (name[0] == '\0') {
+    cJSON_Delete(doc);
     error = F("Template NAME is empty");
     return false;
   }
   if (strlen(name) >= sizeof(target.template_name)) {
+    cJSON_Delete(doc);
     error = F("Template NAME is too long");
     return false;
   }
 
-  JsonArray gpio_values = doc["GPIO"].as<JsonArray>();
-  const size_t gpio_count = gpio_values.size();
-  if (gpio_values.isNull() ||
+  const cJSON *gpio_values = cjsonObjectItem(doc, "GPIO");
+  const uint8_t gpio_count = cjsonArraySize(gpio_values);
+  if (!cjsonIsType(gpio_values, cJSON_Array) ||
       (gpio_count != kTemplateGpioCount && gpio_count != kTemplateJsonMinGpioCount)) {
+    cJSON_Delete(doc);
     error = F("GPIO entry count is invalid for this target");
     return false;
   }
 
   uint16_t gpio[kTemplateGpioCount]{};
   for (uint8_t i = 0; i < gpio_count; i++) {
-    JsonVariant value = gpio_values[i];
-    if (!value.is<uint16_t>()) {
+    uint32_t parsed = 0;
+    if (!cjsonUintInRange(cjsonArrayItem(gpio_values, i), UINT16_MAX, parsed)) {
+      cJSON_Delete(doc);
       error = F("Invalid GPIO value");
       return false;
     }
-    gpio[i] = value.as<uint16_t>();
+    gpio[i] = static_cast<uint16_t>(parsed);
   }
 
-  JsonVariant base_value = doc["BASE"];
-  if (!base_value.is<uint16_t>() || base_value.as<uint16_t>() == 0) {
+  uint32_t base = 0;
+  if (!cjsonUintInRange(cjsonObjectItem(doc, "BASE"), UINT16_MAX, base) || base == 0) {
+    cJSON_Delete(doc);
     error = F("Template BASE is invalid");
     return false;
   }
-  JsonVariant flag_value = doc["FLAG"];
-  if (!flag_value.isNull() && !flag_value.is<uint32_t>()) {
+  uint32_t flag = 0;
+  const cJSON *flag_value = cjsonObjectItem(doc, "FLAG");
+  if (flag_value && !cjsonUintInRange(flag_value, UINT32_MAX, flag)) {
+    cJSON_Delete(doc);
     error = F("Template FLAG is invalid");
     return false;
   }
 
   target.template_enabled = 1;
-  target.template_base = base_value.as<uint16_t>();
-  target.template_flag = flag_value.isNull() ? 0 : flag_value.as<uint32_t>();
+  target.template_base = static_cast<uint16_t>(base);
+  target.template_flag = flag;
   strlcpy(target.template_name, name, sizeof(target.template_name));
   memcpy(target.template_gpio, gpio, sizeof(target.template_gpio));
+  cJSON_Delete(doc);
   return true;
 }
 
@@ -1021,6 +1106,72 @@ String defaultMqttTopic() {
   return "tasmota_" + chipIdHex();
 }
 
+bool isIBeaconFilterInterval(uint16_t value) {
+  for (uint8_t i = 0; i < sizeof(kIBeaconFilterIntervals) / sizeof(kIBeaconFilterIntervals[0]); i++) {
+    if (kIBeaconFilterIntervals[i] == value) return true;
+  }
+  return false;
+}
+
+uint16_t sanitizeIBeaconFilterInterval(uint16_t value, uint16_t fallback) {
+  return isIBeaconFilterInterval(value) ? value : fallback;
+}
+
+bool isHexChar(char c) {
+  return (c >= '0' && c <= '9') ||
+         (c >= 'a' && c <= 'f') ||
+         (c >= 'A' && c <= 'F');
+}
+
+char uppercaseHexChar(char c) {
+  if (c >= 'a' && c <= 'f') return static_cast<char>(c - 'a' + 'A');
+  return c;
+}
+
+bool appendNormalizedIBeaconMacToken(const char *token, size_t token_len, char *out, size_t out_size, size_t &out_len) {
+  char hex[12]{};
+  uint8_t count = 0;
+  for (size_t i = 0; i < token_len; i++) {
+    const char c = token[i];
+    if (c == ':' || c == '-' || c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+    if (!isHexChar(c) || count >= 12) {
+      return false;
+    }
+    hex[count++] = uppercaseHexChar(c);
+  }
+  if (count == 0) return true;
+  if (count != 12) {
+    return false;
+  }
+  const size_t needed = out_len + (out_len ? 1 : 0) + 12 + 1;
+  if (needed > out_size) {
+    return false;
+  }
+  if (out_len) out[out_len++] = ',';
+  memcpy(out + out_len, hex, sizeof(hex));
+  out_len += sizeof(hex);
+  out[out_len] = '\0';
+  return true;
+}
+
+bool normalizeIBeaconMacList(const String &input, char *out, size_t out_size) {
+  if (out_size == 0) return false;
+  out[0] = '\0';
+  size_t out_len = 0;
+  size_t start = 0;
+  const size_t input_len = input.length();
+  const char *raw = input.c_str();
+  for (size_t i = 0; i <= input_len; i++) {
+    if (i == input_len || raw[i] == ',') {
+      if (!appendNormalizedIBeaconMacToken(raw + start, i - start, out, out_size, out_len)) {
+        return false;
+      }
+      start = i + 1;
+    }
+  }
+  return true;
+}
+
 void setDefaultConfig() {
   memset(&config, 0, sizeof(config));
   strlcpy(config.hostname, defaultHostname().c_str(), sizeof(config.hostname));
@@ -1046,6 +1197,11 @@ void setDefaultConfig() {
   config.mqtt_port = kMqttDefaultPort;
   strlcpy(config.mqtt_topic, defaultMqttTopic().c_str(), sizeof(config.mqtt_topic));
   config.mqtt_keepalive = 0;
+  config.ibeacon_enabled = 0;
+  config.ibeacon_filter1_interval_sec = kIBeaconFilter1DefaultSec;
+  config.ibeacon_filter2_interval_sec = kIBeaconFilter2DefaultSec;
+  config.ibeacon_filter1_macs[0] = '\0';
+  config.ibeacon_filter2_macs[0] = '\0';
 }
 
 template <size_t N>
@@ -1126,6 +1282,11 @@ bool loadConfig() {
   uint16_t mqtt_port = prefs.getUShort("mqtt_port", kMqttDefaultPort);
   String mqtt_topic = prefs.getString("mqtt_topic", "");
   uint16_t mqtt_keepalive = prefs.getUShort("mqtt_keep", 0);
+  uint8_t ibeacon_enabled = prefs.getUChar("ibeacon", 0);
+  uint16_t ibeacon_filter1_interval = prefs.getUShort("ib_f1_int", kIBeaconFilter1DefaultSec);
+  uint16_t ibeacon_filter2_interval = prefs.getUShort("ib_f2_int", kIBeaconFilter2DefaultSec);
+  String ibeacon_filter1_macs = prefs.getString("ib_f1_mac", "");
+  String ibeacon_filter2_macs = prefs.getString("ib_f2_mac", "");
   prefs.end();
 
   strlcpy(config.ssid, ssid.c_str(), sizeof(config.ssid));
@@ -1185,6 +1346,15 @@ bool loadConfig() {
     strlcpy(config.mqtt_topic, mqtt_topic.c_str(), sizeof(config.mqtt_topic));
   }
   config.mqtt_keepalive = mqtt_keepalive;
+  config.ibeacon_enabled = ibeacon_enabled ? 1 : 0;
+  config.ibeacon_filter1_interval_sec = sanitizeIBeaconFilterInterval(ibeacon_filter1_interval, kIBeaconFilter1DefaultSec);
+  config.ibeacon_filter2_interval_sec = sanitizeIBeaconFilterInterval(ibeacon_filter2_interval, kIBeaconFilter2DefaultSec);
+  if (!normalizeIBeaconMacList(ibeacon_filter1_macs, config.ibeacon_filter1_macs, sizeof(config.ibeacon_filter1_macs))) {
+    config.ibeacon_filter1_macs[0] = '\0';
+  }
+  if (!normalizeIBeaconMacList(ibeacon_filter2_macs, config.ibeacon_filter2_macs, sizeof(config.ibeacon_filter2_macs))) {
+    config.ibeacon_filter2_macs[0] = '\0';
+  }
 
   config_ok = config.ssid[0] != '\0';
   return config_ok;
@@ -1241,6 +1411,18 @@ bool saveMqttConfig(const char *host, uint16_t port, const char *topic, uint16_t
   prefs.end();
   resetMqttRuntimeState();
   if (mqtt_client.connected()) mqtt_client.stop();
+  return loadConfig();
+}
+
+bool saveIBeaconConfig(bool enabled, uint16_t filter1_interval, const char *filter1_macs,
+                       uint16_t filter2_interval, const char *filter2_macs) {
+  if (!prefs.begin("mymota32", false)) return false;
+  prefs.putUChar("ibeacon", enabled ? 1 : 0);
+  prefs.putUShort("ib_f1_int", sanitizeIBeaconFilterInterval(filter1_interval, kIBeaconFilter1DefaultSec));
+  prefs.putString("ib_f1_mac", filter1_macs ? filter1_macs : "");
+  prefs.putUShort("ib_f2_int", sanitizeIBeaconFilterInterval(filter2_interval, kIBeaconFilter2DefaultSec));
+  prefs.putString("ib_f2_mac", filter2_macs ? filter2_macs : "");
+  prefs.end();
   return loadConfig();
 }
 
@@ -2105,6 +2287,438 @@ bool mqttPublish(const char *topic, const char *payload) {
   return true;
 }
 
+bool iBeaconCaptureSupported() {
+  return MYMOTA32_IBEACON_SUPPORTED != 0;
+}
+
+void setIBeaconStatus(const char *status) {
+  strlcpy(ibeacon_status, status ? status : "unknown", sizeof(ibeacon_status));
+}
+
+uint32_t fnv1aUpdate(uint32_t hash, uint8_t value) {
+  hash ^= value;
+  return hash * 16777619UL;
+}
+
+bool readAdStructure(const uint8_t *payload, uint8_t payload_len, size_t &offset, uint8_t &type, const uint8_t *&data, uint8_t &data_len) {
+  while (offset < payload_len && payload[offset] == 0) {
+    offset++;
+  }
+  if (offset >= payload_len) return false;
+  const uint8_t ad_len = payload[offset];
+  if (ad_len == 0) return false;
+  if (offset + 1U + ad_len > payload_len) return false;
+  type = payload[offset + 1];
+  data = &payload[offset + 2];
+  data_len = ad_len - 1;
+  offset += 1U + ad_len;
+  return true;
+}
+
+bool parseIBeaconClimate(const uint8_t *payload, uint8_t payload_len, IBeaconClimateReading &reading) {
+  reading.valid = false;
+  reading.hash = 0;
+  size_t offset = 0;
+  uint8_t type = 0;
+  const uint8_t *data = nullptr;
+  uint8_t data_len = 0;
+  while (readAdStructure(payload, payload_len, offset, type, data, data_len)) {
+    if (type != 0x16 || data_len < 2 || data[0] != 0x1a || data[1] != 0x18) continue;
+    const uint8_t *service = data + 2;
+    const uint8_t service_len = data_len - 2;
+    if (service_len == 13) {
+      const uint8_t *r = service + 6;
+      int16_t temp10 = static_cast<int16_t>((static_cast<uint16_t>(r[0]) << 8) | r[1]);
+      const uint8_t hum = r[2];
+      const uint8_t bat = r[3];
+      if (temp10 < -100 || temp10 > 400 || hum < 1 || hum > 100 || bat < 1 || bat > 100) return false;
+      uint32_t hash = fnv1aUpdate(2166136261UL, 0xa1);
+      hash = fnv1aUpdate(hash, r[0]);
+      hash = fnv1aUpdate(hash, r[1]);
+      hash = fnv1aUpdate(hash, hum);
+      hash = fnv1aUpdate(hash, bat);
+      reading.valid = true;
+      reading.hash = hash;
+      return true;
+    }
+    if (service_len == 15) {
+      const uint8_t *r = service + 6;
+      int16_t temp100 = static_cast<int16_t>(static_cast<uint16_t>(r[0]) | (static_cast<uint16_t>(r[1]) << 8));
+      const uint16_t hum100 = static_cast<uint16_t>(r[2]) | (static_cast<uint16_t>(r[3]) << 8);
+      const uint8_t bat = r[6];
+      if (temp100 < -1000 || temp100 > 4000 || hum100 < 100 || hum100 > 10000 || bat < 1 || bat > 100) return false;
+      uint32_t hash = fnv1aUpdate(2166136261UL, 0xa2);
+      hash = fnv1aUpdate(hash, r[0]);
+      hash = fnv1aUpdate(hash, r[1]);
+      hash = fnv1aUpdate(hash, r[2]);
+      hash = fnv1aUpdate(hash, r[3]);
+      hash = fnv1aUpdate(hash, bat);
+      reading.valid = true;
+      reading.hash = hash;
+      return true;
+    }
+  }
+  return false;
+}
+
+IBeaconBthomeReading parseIBeaconBthome(const uint8_t *payload, uint8_t payload_len) {
+  IBeaconBthomeReading reading{};
+  size_t offset = 0;
+  uint8_t type = 0;
+  const uint8_t *data = nullptr;
+  uint8_t data_len = 0;
+  while (readAdStructure(payload, payload_len, offset, type, data, data_len)) {
+    if (type != 0x16 || data_len < 3 || data[0] != 0xd2 || data[1] != 0xfc) continue;
+    const uint8_t *service = data + 2;
+    const uint8_t service_len = data_len - 2;
+    const uint8_t dev_info = service[0];
+    if (((dev_info >> 5) & 0x7) != 2 || (dev_info & 0x01)) continue;
+    uint8_t index = 1;
+    while (index < service_len) {
+      const uint8_t obj = service[index++];
+      if (obj == 0x00) {
+        if (index >= service_len) break;
+        reading.has_packet_id = true;
+        reading.packet_id = service[index];
+        return reading;
+      } else if (obj == 0x01 || obj == 0x0a || obj == 0x3a) {
+        index += 1;
+      } else if (obj == 0x02 || obj == 0x03 || obj == 0x0c) {
+        index += 2;
+      } else {
+        break;
+      }
+    }
+  }
+  return reading;
+}
+
+IBeaconCacheEntry *findIBeaconCacheEntry(const char *mac, uint8_t kind) {
+  for (uint8_t i = 0; i < kIBeaconCacheSize; i++) {
+    if (ibeacon_cache[i].used && ibeacon_cache[i].kind == kind && strcmp(ibeacon_cache[i].mac, mac) == 0) {
+      return &ibeacon_cache[i];
+    }
+  }
+  return nullptr;
+}
+
+IBeaconCacheEntry *allocateIBeaconCacheEntry(uint32_t now) {
+  IBeaconCacheEntry *oldest = &ibeacon_cache[0];
+  for (uint8_t i = 0; i < kIBeaconCacheSize; i++) {
+    if (!ibeacon_cache[i].used) {
+      return &ibeacon_cache[i];
+    }
+    if (static_cast<uint32_t>(ibeacon_cache[i].sent_at - oldest->sent_at) > 0x7fffffffUL) {
+      oldest = &ibeacon_cache[i];
+    }
+  }
+  memset(oldest, 0, sizeof(*oldest));
+  oldest->sent_at = now;
+  return oldest;
+}
+
+void pruneIBeaconCache(uint32_t now) {
+  if (last_ibeacon_prune && now - last_ibeacon_prune < kIBeaconPruneIntervalMs) return;
+  last_ibeacon_prune = now;
+  for (uint8_t i = 0; i < kIBeaconCacheSize; i++) {
+    if (!ibeacon_cache[i].used) continue;
+    const uint32_t ttl = ibeacon_cache[i].kind == kIBeaconKindClimate ? kIBeaconClimateCacheTtlMs : kIBeaconKeyfobCacheTtlMs;
+    if (now - ibeacon_cache[i].sent_at > ttl) {
+      memset(&ibeacon_cache[i], 0, sizeof(ibeacon_cache[i]));
+    }
+  }
+}
+
+bool compactIBeaconMac(const char *mac, char (&out)[13]) {
+  uint8_t count = 0;
+  for (const char *p = mac; p && *p; p++) {
+    if (*p == ':' || *p == '-') continue;
+    if (!isHexChar(*p) || count >= 12) return false;
+    out[count++] = uppercaseHexChar(*p);
+  }
+  out[count] = '\0';
+  return count == 12;
+}
+
+bool iBeaconMacInFilterList(const char *list, const char *mac) {
+  if (!list || !mac || !list[0]) return false;
+  char compact[13]{};
+  if (!compactIBeaconMac(mac, compact)) return false;
+  const char *p = list;
+  while (*p) {
+    while (*p == ',' || *p == ' ' || *p == '\t') p++;
+    const char *start = p;
+    while (*p && *p != ',') p++;
+    if (static_cast<size_t>(p - start) == 12 && strncmp(start, compact, 12) == 0) return true;
+    if (*p == ',') p++;
+  }
+  return false;
+}
+
+bool iBeaconFiltersConfigured() {
+  return config.ibeacon_filter1_macs[0] != '\0' || config.ibeacon_filter2_macs[0] != '\0';
+}
+
+bool iBeaconMacAllowedByFilters(const char *mac) {
+  if (!iBeaconFiltersConfigured()) return true;
+  return iBeaconMacInFilterList(config.ibeacon_filter1_macs, mac) ||
+         iBeaconMacInFilterList(config.ibeacon_filter2_macs, mac);
+}
+
+uint16_t iBeaconThrottleIntervalSec(const char *mac) {
+  uint16_t interval = 0;
+  if (iBeaconMacInFilterList(config.ibeacon_filter1_macs, mac)) {
+    interval = config.ibeacon_filter1_interval_sec;
+  }
+  if (iBeaconMacInFilterList(config.ibeacon_filter2_macs, mac) &&
+      config.ibeacon_filter2_interval_sec > interval) {
+    interval = config.ibeacon_filter2_interval_sec;
+  }
+  return interval;
+}
+
+bool iBeaconThrottleAllows(const IBeaconObservation &obs, const IBeaconCacheEntry *entry, uint32_t now) {
+  if (!entry) return true;
+  const uint16_t interval_sec = iBeaconThrottleIntervalSec(obs.mac);
+  if (interval_sec == 0) return true;
+  return now - entry->sent_at >= static_cast<uint32_t>(interval_sec) * 1000UL;
+}
+
+bool shouldPublishIBeacon(const IBeaconObservation &obs, const IBeaconClimateReading &climate, const IBeaconBthomeReading &bthome, uint32_t now) {
+  if (!iBeaconMacAllowedByFilters(obs.mac)) {
+    return false;
+  }
+
+  const uint8_t kind = climate.valid ? kIBeaconKindClimate : kIBeaconKindKeyfob;
+  IBeaconCacheEntry *entry = findIBeaconCacheEntry(obs.mac, kind);
+  if (!entry) {
+    return true;
+  }
+  if (!iBeaconThrottleAllows(obs, entry, now)) {
+    return false;
+  }
+  if (kind == kIBeaconKindClimate) {
+    return entry->climate_hash != climate.hash;
+  }
+  if (bthome.has_packet_id && (!entry->has_packet_id || entry->packet_id != bthome.packet_id)) {
+    return true;
+  }
+  if (entry->rssi != obs.rssi) {
+    return true;
+  }
+  return false;
+}
+
+void rememberPublishedIBeacon(const IBeaconObservation &obs, const IBeaconClimateReading &climate, const IBeaconBthomeReading &bthome, uint32_t now) {
+  const uint8_t kind = climate.valid ? kIBeaconKindClimate : kIBeaconKindKeyfob;
+  IBeaconCacheEntry *entry = findIBeaconCacheEntry(obs.mac, kind);
+  if (!entry) {
+    entry = allocateIBeaconCacheEntry(now);
+  }
+  entry->used = true;
+  strlcpy(entry->mac, obs.mac, sizeof(entry->mac));
+  entry->kind = kind;
+  entry->rssi = obs.rssi;
+  entry->climate_hash = climate.valid ? climate.hash : 0;
+  entry->has_packet_id = bthome.has_packet_id;
+  entry->packet_id = bthome.packet_id;
+  entry->sent_at = now;
+}
+
+void bytesToHex(const uint8_t *data, uint8_t len, char *out, size_t out_size) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  if (out_size == 0) return;
+  size_t pos = 0;
+  for (uint8_t i = 0; i < len && pos + 2 < out_size; i++) {
+    out[pos++] = kHex[(data[i] >> 4) & 0x0f];
+    out[pos++] = kHex[data[i] & 0x0f];
+  }
+  out[pos] = '\0';
+}
+
+bool mqttPublishIBeacon(const IBeaconObservation &obs) {
+  if (!mqttConfigured()) return false;
+  char packet_hex[(kIBeaconMaxPacketBytes * 2) + 1];
+  bytesToHex(obs.payload, obs.payload_len, packet_hex, sizeof(packet_hex));
+
+  String topic;
+  topic.reserve(strlen(config.mqtt_topic) + 14);
+  topic += F("tele/");
+  topic += config.mqtt_topic;
+  topic += F("/SENSOR");
+
+  String payload;
+  payload.reserve(100 + strlen(packet_hex));
+  payload += F("{\"IBEACON\":{\"MAC\":\"");
+  payload += obs.mac;
+  payload += F("\",\"RSSI\":");
+  payload += String(static_cast<int>(obs.rssi));
+  if (obs.payload_len > 0) {
+    payload += F(",\"PACKET\":\"");
+    payload += packet_hex;
+    payload += F("\"");
+  }
+  payload += F("}}");
+
+  return mqttPublish(topic.c_str(), payload.c_str());
+}
+
+#if MYMOTA32_IBEACON_SUPPORTED
+void normalizeIBeaconMac(char *mac) {
+  for (char *p = mac; *p; p++) {
+    if (*p >= 'a' && *p <= 'f') *p = static_cast<char>(*p - 'a' + 'A');
+  }
+}
+
+void pushIBeaconObservation(const IBeaconObservation &obs) {
+  portENTER_CRITICAL(&ibeacon_queue_mux);
+  if (ibeacon_queue_count >= kIBeaconQueueDepth) {
+    ibeacon_queue_head = (ibeacon_queue_head + 1) % kIBeaconQueueDepth;
+    ibeacon_queue_count--;
+  }
+  const uint8_t index = (ibeacon_queue_head + ibeacon_queue_count) % kIBeaconQueueDepth;
+  ibeacon_queue[index] = obs;
+  ibeacon_queue_count++;
+  portEXIT_CRITICAL(&ibeacon_queue_mux);
+}
+
+bool popIBeaconObservation(IBeaconObservation &obs) {
+  bool have = false;
+  portENTER_CRITICAL(&ibeacon_queue_mux);
+  if (ibeacon_queue_count > 0) {
+    obs = ibeacon_queue[ibeacon_queue_head];
+    ibeacon_queue_head = (ibeacon_queue_head + 1) % kIBeaconQueueDepth;
+    ibeacon_queue_count--;
+    have = true;
+  }
+  portEXIT_CRITICAL(&ibeacon_queue_mux);
+  return have;
+}
+
+void resetIBeaconObservationQueue() {
+  portENTER_CRITICAL(&ibeacon_queue_mux);
+  ibeacon_queue_head = 0;
+  ibeacon_queue_count = 0;
+  portEXIT_CRITICAL(&ibeacon_queue_mux);
+}
+
+void IBeaconScanCallbacks::onResult(const NimBLEAdvertisedDevice *device) {
+  if (!device || !config.ibeacon_enabled) return;
+  IBeaconObservation obs{};
+  std::string mac = device->getAddress().toString();
+  strlcpy(obs.mac, mac.c_str(), sizeof(obs.mac));
+  normalizeIBeaconMac(obs.mac);
+  if (!iBeaconMacAllowedByFilters(obs.mac)) return;
+  obs.rssi = device->getRSSI();
+  const std::vector<uint8_t> &payload = device->getPayload();
+  obs.payload_len = static_cast<uint8_t>(min(payload.size(), static_cast<size_t>(kIBeaconMaxPacketBytes)));
+  if (obs.payload_len > 0) {
+    memcpy(obs.payload, payload.data(), obs.payload_len);
+  }
+  obs.seen_at = millis();
+  pushIBeaconObservation(obs);
+}
+#endif
+
+void resetIBeaconRuntimeState() {
+  memset(ibeacon_cache, 0, sizeof(ibeacon_cache));
+  last_ibeacon_prune = 0;
+#if MYMOTA32_IBEACON_SUPPORTED
+  resetIBeaconObservationQueue();
+#endif
+}
+
+void stopIBeaconCapture() {
+#if MYMOTA32_IBEACON_SUPPORTED
+  if (ibeacon_scan && ibeacon_scan->isScanning()) {
+    ibeacon_scan->stop();
+  }
+#endif
+  ibeacon_scanning = false;
+  setIBeaconStatus(config.ibeacon_enabled ? "stopped" : "disabled");
+}
+
+void startIBeaconCapture() {
+  if (!config.ibeacon_enabled) {
+    stopIBeaconCapture();
+    return;
+  }
+  if (!iBeaconCaptureSupported()) {
+    ibeacon_scanning = false;
+    setIBeaconStatus("unsupported");
+    return;
+  }
+#if MYMOTA32_IBEACON_SUPPORTED
+  const uint32_t now = millis();
+  if (next_ibeacon_start_attempt && now - next_ibeacon_start_attempt < 30000UL) return;
+  if (!ibeacon_stack_started) {
+    next_ibeacon_start_attempt = now;
+    setIBeaconStatus("starting");
+    if (!NimBLEDevice::init("mymota32")) {
+      setIBeaconStatus("init_failed");
+      return;
+    }
+    ibeacon_stack_started = true;
+    ibeacon_scan = NimBLEDevice::getScan();
+    if (!ibeacon_scan) {
+      setIBeaconStatus("scan_missing");
+      return;
+    }
+    ibeacon_scan->setScanCallbacks(&ibeacon_scan_callbacks, true);
+    ibeacon_scan->setActiveScan(false);
+    ibeacon_scan->setInterval(kIBeaconScanIntervalMs);
+    ibeacon_scan->setWindow(kIBeaconScanWindowMs);
+    ibeacon_scan->setMaxResults(0);
+  }
+  if (!ibeacon_scan) {
+    ibeacon_scanning = false;
+    setIBeaconStatus("scan_missing");
+    return;
+  }
+  if (!ibeacon_scan->isScanning()) {
+    if (!ibeacon_scan->start(0, true, false)) {
+      ibeacon_scanning = false;
+      setIBeaconStatus("scan_failed");
+      return;
+    }
+  }
+  next_ibeacon_start_attempt = 0;
+  ibeacon_scanning = true;
+  setIBeaconStatus("scanning");
+#endif
+}
+
+void processIBeaconObservation(const IBeaconObservation &obs) {
+  IBeaconClimateReading climate{};
+  parseIBeaconClimate(obs.payload, obs.payload_len, climate);
+  const IBeaconBthomeReading bthome = parseIBeaconBthome(obs.payload, obs.payload_len);
+  const uint32_t now = millis();
+  if (!shouldPublishIBeacon(obs, climate, bthome, now)) {
+    return;
+  }
+  if (mqttPublishIBeacon(obs)) {
+    rememberPublishedIBeacon(obs, climate, bthome, now);
+  }
+}
+
+void maintainIBeacon() {
+  const uint32_t now = millis();
+  pruneIBeaconCache(now);
+  if (!config.ibeacon_enabled) {
+    if (ibeacon_scanning) stopIBeaconCapture();
+    return;
+  }
+  startIBeaconCapture();
+#if MYMOTA32_IBEACON_SUPPORTED
+  IBeaconObservation obs{};
+  uint8_t processed = 0;
+  while (processed < kIBeaconProcessLimit && popIBeaconObservation(obs)) {
+    processIBeaconObservation(obs);
+    processed++;
+  }
+#endif
+}
+
 bool mqttPublishCommandResult(const String &payload) {
   if (payload.length() == 0) return true;
   String topic;
@@ -2485,6 +3099,13 @@ void flushStreamChunk(String &chunk) {
   delay(0);
 }
 
+void appendMillisTenthsFromMicros(String &out, uint32_t micros_value) {
+  const uint32_t tenths = (micros_value + 50) / 100;
+  out += String(tenths / 10);
+  out += '.';
+  out += static_cast<char>('0' + (tenths % 10));
+}
+
 void appendStatusBlock(String &page) {
   page += F("<section class='panel wide'><h2>System Status</h2><div class='kv'>");
   page += F("<span>Version</span><div><code>");
@@ -2504,7 +3125,7 @@ void appendStatusBlock(String &page) {
   page += F("%</code> app busy</div><span>Loop rate</span><div><code id='live-loop-hz'>");
   page += String(perf_last_loop_hz);
   page += F("/s</code></div><span>Slowest loop</span><div><code id='live-loop-max'>");
-  page += String(static_cast<float>(perf_last_loop_max_us) / 1000.0f, 1);
+  appendMillisTenthsFromMicros(page, perf_last_loop_max_us);
   page += F(" ms</code></div><span>PHY mode</span><div><code>");
   page += phyModeName(config.phy_mode);
   page += F("</code> configured <code id='live-active-phy'>");
@@ -2915,6 +3536,8 @@ void appendTemplateForm(String &page) {
   page += F("'>NOUS B3T</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateShellyPlus2PmPcb019Json)));
   page += F("'>Shelly Plus 2PM PCB v0.1.9</option><option data-json='");
+  page += htmlEscape(String(FPSTR(kTemplateShellyPlus1PmJson)));
+  page += F("'>Shelly Plus 1PM</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateShellyPlusPlugSJson)));
   page += F("'>Shelly Plus Plug S</option></select></label></div>");
   page += F("<div class='row'><label>Tasmota ESP32 template JSON<br><textarea id='template-json' name='template' rows='6' maxlength='");
@@ -2944,9 +3567,69 @@ void appendMqttForm(String &page) {
   page += F("'></label></div><button type='submit'>Save MQTT</button></form></section>");
 }
 
+void appendIBeaconIntervalSelect(String &page, const char *name, uint16_t selected, bool disabled) {
+  page += F("<select name='");
+  page += name;
+  page += F("'");
+  if (disabled) page += F(" disabled");
+  page += F(">");
+  for (uint8_t i = 0; i < sizeof(kIBeaconFilterIntervals) / sizeof(kIBeaconFilterIntervals[0]); i++) {
+    const uint16_t value = kIBeaconFilterIntervals[i];
+    page += F("<option value='");
+    page += String(value);
+    page += F("'");
+    if (selected == value) page += F(" selected");
+    page += F(">");
+    page += String(value);
+    page += F("s</option>");
+  }
+  page += F("</select>");
+}
+
+void appendIBeaconForm(String &page) {
+  const bool unsupported = !iBeaconCaptureSupported();
+  page += F("<section class='panel'><div class='panel-title'><h2>iBeacon</h2>");
+  if (unsupported) {
+    page += F("<span class='pill bad'>unsupported</span>");
+  } else if (config.ibeacon_enabled && ibeacon_scanning) {
+    page += F("<span id='live-ibeacon' class='pill ok'>scanning</span>");
+  } else if (config.ibeacon_enabled) {
+    page += F("<span id='live-ibeacon' class='pill bad'>");
+    page += htmlEscape(ibeacon_status);
+    page += F("</span>");
+  } else {
+    page += F("<span id='live-ibeacon' class='pill'>disabled</span>");
+  }
+  page += F("</div><form data-inline='1' method='post' action='/ibeacon'>");
+  page += F("<div class='row'><label><input type='checkbox' name='enabled' value='1'");
+  if (config.ibeacon_enabled) page += F(" checked");
+  if (unsupported) page += F(" disabled");
+  page += F(">Enable</label></div>");
+  page += F("<div class='row'><label>G1 MACs<br><input name='f1' maxlength='");
+  page += String(kIBeaconFilterInputMaxLen);
+  page += F("' value='");
+  page += htmlEscape(config.ibeacon_filter1_macs);
+  page += F("'");
+  if (unsupported) page += F(" disabled");
+  page += F("></label><label>Max<br>");
+  appendIBeaconIntervalSelect(page, "i1", config.ibeacon_filter1_interval_sec, unsupported);
+  page += F("</label></div>");
+  page += F("<div class='row'><label>G2 MACs<br><input name='f2' maxlength='");
+  page += String(kIBeaconFilterInputMaxLen);
+  page += F("' value='");
+  page += htmlEscape(config.ibeacon_filter2_macs);
+  page += F("'");
+  if (unsupported) page += F(" disabled");
+  page += F("></label><label>Max<br>");
+  appendIBeaconIntervalSelect(page, "i2", config.ibeacon_filter2_interval_sec, unsupported);
+  page += F("</label></div><button type='submit'");
+  if (unsupported) page += F(" disabled");
+  page += F(">Save</button></form></section>");
+}
+
 void handleRoot() {
   String page;
-  page.reserve(6500);
+  page.reserve(8800);
   beginStreamedResponse("text/html");
   appendHeader(page, F("myMota32"), true);
   page += F("<div class='grid'>");
@@ -2962,6 +3645,8 @@ void handleRoot() {
   appendLedSettings(page);
   flushStreamChunk(page);
   appendMqttForm(page);
+  flushStreamChunk(page);
+  appendIBeaconForm(page);
   flushStreamChunk(page);
 
   page += F("<section class='panel'><h2>Wi-Fi</h2><form method='post' action='/wifi'>");
@@ -3464,6 +4149,54 @@ void handleMqttSave() {
   sendHtml(page);
 }
 
+void handleIBeaconSave() {
+  const bool enabled = server.hasArg("enabled") && server.arg("enabled") == "1";
+  if (enabled && !iBeaconCaptureSupported()) {
+    server.send(400, F("text/plain"), F("unsupported"));
+    return;
+  }
+
+  uint16_t filter1_interval = kIBeaconFilter1DefaultSec;
+  uint16_t filter2_interval = kIBeaconFilter2DefaultSec;
+  if (!parseUint16Input(server.hasArg("i1") ? server.arg("i1") : String(kIBeaconFilter1DefaultSec),
+                        1, 600, filter1_interval) ||
+      !isIBeaconFilterInterval(filter1_interval) ||
+      !parseUint16Input(server.hasArg("i2") ? server.arg("i2") : String(kIBeaconFilter2DefaultSec),
+                        1, 600, filter2_interval) ||
+      !isIBeaconFilterInterval(filter2_interval)) {
+    server.send(400, F("text/plain"), F("invalid interval"));
+    return;
+  }
+
+  char filter1_macs[kIBeaconFilterListMaxLen + 1]{};
+  char filter2_macs[kIBeaconFilterListMaxLen + 1]{};
+  if (!normalizeIBeaconMacList(server.hasArg("f1") ? server.arg("f1") : String(),
+                               filter1_macs, sizeof(filter1_macs)) ||
+      !normalizeIBeaconMacList(server.hasArg("f2") ? server.arg("f2") : String(),
+                               filter2_macs, sizeof(filter2_macs))) {
+    server.send(400, F("text/plain"), F("invalid mac"));
+    return;
+  }
+
+  if (!saveIBeaconConfig(enabled, filter1_interval, filter1_macs, filter2_interval, filter2_macs)) {
+    server.send(500, F("text/plain"), F("save failed"));
+    return;
+  }
+
+  resetIBeaconRuntimeState();
+  if (config.ibeacon_enabled) startIBeaconCapture();
+  else stopIBeaconCapture();
+
+  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
+  String page;
+  page.reserve(700);
+  appendHeader(page, F("myMota32 iBeacon"));
+  page += F("<p class='ok'>iBeacon settings saved.</p>");
+  page += F("<p><a href='/'>Back</a></p>");
+  appendFooter(page);
+  sendHtml(page);
+}
+
 void handleReboot() {
   String page;
   page.reserve(700);
@@ -3493,7 +4226,7 @@ void handleFactoryReset() {
 
 void handleHealth() {
   String out;
-  out.reserve(1400);
+  out.reserve(1750);
   beginStreamedResponse("application/json");
   out += F("{\"name\":\"myMota32\",\"version\":\"");
   out += F(MYMOTA32_VERSION);
@@ -3749,6 +4482,7 @@ void setupRoutes() {
   server.on("/leds", HTTP_POST, handleLedSave);
   server.on("/buttons", HTTP_POST, handleButtonSave);
   server.on("/mqtt", HTTP_POST, handleMqttSave);
+  server.on("/ibeacon", HTTP_POST, handleIBeaconSave);
   server.on("/reboot", HTTP_GET, handleReboot);
   server.on("/factory-reset", HTTP_POST, handleFactoryReset);
   server.on("/health", HTTP_GET, handleHealth);
@@ -3793,6 +4527,7 @@ void loop() {
   maintainDevice();
   server.handleClient();
   maintainMqtt();
+  maintainIBeacon();
   server.handleClient();
 
   if (restartDue()) {
