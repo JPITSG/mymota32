@@ -9,6 +9,7 @@
 #include <esp_chip_info.h>
 #include <esp_system.h>
 #include <esp_wifi.h>
+#include <math.h>
 
 #ifndef MYMOTA32_VERSION
 #define MYMOTA32_VERSION "dev"
@@ -125,6 +126,9 @@ constexpr uint8_t kMqttButtonQueueDepth = 4;
 constexpr size_t kMqttButtonTopicMaxLen = kButtonActionTargetMaxLen + kMqttTopicMaxLen + 16;
 constexpr size_t kMqttButtonPayloadMaxLen = kButtonActionPayloadMaxLen + kMqttTopicMaxLen + 24;
 constexpr uint32_t kMqttButtonQueueMaxAgeMs = 5000;
+constexpr uint16_t kMqttEnergyIntervalMax = 65535U;
+constexpr float kMqttEnergyChangeMaxPercent = 1000.0f;
+constexpr uint16_t kMqttEnergyChangeMaxWatts = 65535U;
 constexpr uint8_t kMqttPacketConnack = 0x20;
 constexpr uint8_t kMqttPacketPublish = 0x30;
 constexpr uint8_t kMqttPacketPuback = 0x40;
@@ -140,6 +144,47 @@ constexpr uint8_t kMqttConnectWriteFailed = 3;
 constexpr uint8_t kMqttConnectConnackTimeout = 4;
 constexpr uint8_t kMqttConnectConnackRejected = 5;
 constexpr uint8_t kMqttConnectSubscribeFailed = 6;
+
+constexpr uint32_t kEnergyIntegrateMs = 1000;
+constexpr uint32_t kEnergyPersistMinMs = 600000;
+constexpr uint64_t kEnergyPersistDeltaUkwh = 10000;
+constexpr uint64_t kEnergyTotalMaxUkwh = 1000000000000ULL;
+constexpr float kEnergyTotalOffsetMinKwh = 0.0f;
+constexpr float kEnergyTotalOffsetMaxKwh = 1000000.0f;
+constexpr float kEnergyZeroPowerThreshold = 0.001f;
+constexpr uint8_t kEnergyDriverNone = 0;
+constexpr uint8_t kEnergyDriverBl0939 = 1;
+constexpr uint8_t kEnergyMaxChannels = 2;
+constexpr uint32_t kBl0939PollMs = 1000;
+constexpr uint32_t kBl0939StaleMs = 5000;
+constexpr uint8_t kBl0939BufferSize = 35;
+constexpr uint8_t kBl0939Address = 0x05;
+constexpr uint8_t kBl09xxReadCommand = 0x50;
+constexpr uint8_t kBl09xxWriteCommand = 0xa0;
+constexpr uint8_t kBl09xxFullPacket = 0xaa;
+constexpr uint8_t kBl09xxPacketHeader = 0x55;
+constexpr uint32_t kBl0939PowerRef = 713;
+constexpr uint32_t kBl0939VoltageRef = 17159;
+constexpr uint32_t kBl0939CurrentRef = 266013;
+constexpr uint8_t kBl09xxInit[][4] = {
+  {0x19, 0x5a, 0x5a, 0x5a},
+  {0x1a, 0x55, 0x00, 0x00},
+  {0x18, 0x00, 0x10, 0x00},
+  {0x1b, 0xff, 0x47, 0x00},
+  {0x10, 0x1c, 0x18, 0x00}
+};
+
+constexpr uint8_t kMqttEnergyReportReasonNone = 0;
+constexpr uint8_t kMqttEnergyReportReasonInitial = 1;
+constexpr uint8_t kMqttEnergyReportReasonInterval = 2;
+constexpr uint8_t kMqttEnergyReportReasonPowerChangePercent = 3;
+constexpr uint8_t kMqttEnergyReportReasonIntervalPowerChangePercent = 4;
+constexpr uint8_t kMqttEnergyReportReasonPowerChangeWatts = 5;
+constexpr uint8_t kMqttEnergyReportReasonIntervalPowerChangeWatts = 6;
+constexpr uint8_t kMqttEnergyReportReasonPowerChangePercentWatts = 7;
+constexpr uint8_t kMqttEnergyReportReasonIntervalPowerChangePercentWatts = 8;
+constexpr uint8_t kMqttEnergyReportReasonRelayOff = 9;
+constexpr uint8_t kMqttEnergyReportReasonPowerZero = 10;
 
 constexpr uint8_t kIBeaconQueueDepth = 12;
 constexpr uint8_t kIBeaconMaxPacketBytes = 62;
@@ -220,6 +265,8 @@ const char kTemplateNousB1tJson[] PROGMEM =
   "{\"NAME\":\"NOUS B1T\",\"GPIO\":[544,0,1,0,32,160,1,1,224,0,0,1,1,1,0,1,0,1,1,1,0,1,1,1,0,0,0,0,1,1,1,0,1,0,0,1],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateNousB3tJson[] PROGMEM =
   "{\"NAME\":\"NOUS B3T\",\"GPIO\":[544,3200,1,8128,32,160,1,1,224,225,0,1,1,1,161,1,0,1,1,1,0,1,1,1,0,0,0,0,1,1,1,0,1,0,0,1],\"FLAG\":0,\"BASE\":1}";
+const char kTemplateSonoffDualR3V2Json[] PROGMEM =
+  "{\"NAME\":\"Sonoff Dual R3 v2\",\"GPIO\":[32,0,0,0,0,0,0,0,0,576,225,0,0,0,0,0,0,0,0,0,0,3200,8128,224,0,0,0,0,160,161,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateGenericC3RelayJson[] PROGMEM =
   "{\"NAME\":\"Generic C3 Relay\",\"GPIO\":[32,0,0,0,224,288,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 
@@ -263,6 +310,8 @@ struct RuntimeTemplate {
   uint8_t energy_cf_pin;
   uint8_t energy_cf1_pin;
   uint8_t energy_sel_pin;
+  uint8_t energy_tx_pin;
+  uint8_t energy_bl0939_rx_pin;
   bool energy_sel_inverted;
   bool energy_hjl;
   bool adc_temp;
@@ -306,6 +355,11 @@ struct StoredConfig {
   char mqtt_topic[kMqttTopicMaxLen + 1];
   uint16_t mqtt_keepalive;
 
+  float energy_total_offset_kwh;
+  uint16_t energy_mqtt_interval;
+  uint16_t energy_mqtt_change_percent_x10;
+  uint16_t energy_mqtt_change_watts;
+
   uint8_t ibeacon_enabled;
   uint16_t ibeacon_filter1_interval_sec;
   uint16_t ibeacon_filter2_interval_sec;
@@ -342,8 +396,39 @@ struct IBeaconCacheEntry {
   uint32_t sent_at;
 };
 
+struct EnergyChannelState {
+  float voltage;
+  float current;
+  float power;
+  uint32_t current_raw;
+  int32_t power_raw;
+};
+
+struct EnergyState {
+  bool present;
+  uint8_t driver;
+  uint8_t channel_count;
+  uint8_t rx_pin;
+  uint8_t tx_pin;
+  float voltage;
+  float current;
+  float power;
+  float total_kwh;
+  float temperature;
+  EnergyChannelState channel[kEnergyMaxChannels];
+  uint8_t rx_buffer[kBl0939BufferSize];
+  uint8_t byte_counter;
+  uint16_t tps1;
+  uint32_t voltage_raw;
+  bool received;
+  uint32_t last_poll_ms;
+  uint32_t last_success_ms;
+  uint32_t last_integrate_ms;
+};
+
 StoredConfig config{};
 RuntimeTemplate runtime_template{};
+EnergyState energy{};
 bool relay_state[kMaxRelays] = {false};
 ButtonState button_state[kMaxButtons] = {};
 uint32_t last_led_update = 0;
@@ -382,16 +467,27 @@ WebServer server(80);
 Preferences prefs;
 
 WiFiClient mqtt_client;
+HardwareSerial bl0939_serial(1);
 uint32_t next_mqtt_reconnect = 0;
 uint32_t last_mqtt_io = 0;
 uint32_t last_mqtt_rx = 0;
 uint32_t last_mqtt_ping = 0;
 uint32_t last_mqtt_state_publish = 0;
+uint32_t last_mqtt_energy_publish = 0;
 uint32_t last_mqtt_connect_attempt = 0;
 uint32_t last_mqtt_connect_duration = 0;
 uint8_t last_mqtt_connect_result = kMqttConnectIdle;
+uint8_t last_mqtt_energy_report_reason = kMqttEnergyReportReasonNone;
 uint8_t mqtt_pending_relay_mask = 0;
+uint16_t mqtt_pending_energy_zero_relay_mask = 0;
+uint8_t mqtt_pending_energy_report_reason = kMqttEnergyReportReasonNone;
 bool mqtt_ping_pending = false;
+float last_mqtt_energy_power = NAN;
+float last_observed_energy_power = NAN;
+
+uint64_t energy_saved_ukwh = 0;
+uint32_t last_energy_persist_ms = 0;
+bool energy_persist_requested = false;
 
 MqttButtonPending mqtt_button_queue[kMqttButtonQueueDepth]{};
 uint8_t mqtt_button_queue_head = 0;
@@ -787,6 +883,15 @@ bool hasConfigurableButtons() {
   return false;
 }
 
+bool templateEnergyUsesUart0Pins() {
+  return digitalPinSupported(runtime_template.energy_bl0939_rx_pin) &&
+         digitalPinSupported(runtime_template.energy_tx_pin) &&
+         (runtime_template.energy_bl0939_rx_pin == 1 ||
+          runtime_template.energy_bl0939_rx_pin == 3 ||
+          runtime_template.energy_tx_pin == 1 ||
+          runtime_template.energy_tx_pin == 3);
+}
+
 void addUnsupportedTemplatePin(RuntimeTemplate &target, uint8_t pin, uint16_t code) {
   const uint8_t cap = sizeof(target.unsupported_code) / sizeof(target.unsupported_code[0]);
   if (target.unsupported_count >= cap) return;
@@ -856,7 +961,12 @@ void parseTemplateFunction(RuntimeTemplate &target, uint8_t pin, uint16_t code) 
     if (digitalPinSupported(pin)) target.adc_temp = code == kTplAdcTemp;
     return;
   }
-  if (code == kTplTxd || code == kTplBl0939Rx) {
+  if (code == kTplTxd) {
+    if (digitalPinSupported(pin)) target.energy_tx_pin = pin;
+    return;
+  }
+  if (code == kTplBl0939Rx) {
+    if (digitalPinSupported(pin)) target.energy_bl0939_rx_pin = pin;
     return;
   }
   if (base == kTplAde7953Irq) {
@@ -945,6 +1055,8 @@ void resetRuntimeTemplate(RuntimeTemplate &target) {
   target.energy_cf_pin = kInvalidPin;
   target.energy_cf1_pin = kInvalidPin;
   target.energy_sel_pin = kInvalidPin;
+  target.energy_tx_pin = kInvalidPin;
+  target.energy_bl0939_rx_pin = kInvalidPin;
 }
 
 void decodeTemplateConfigInto(const StoredConfig &source, RuntimeTemplate &target) {
@@ -1202,6 +1314,10 @@ void setDefaultConfig() {
   config.mqtt_port = kMqttDefaultPort;
   strlcpy(config.mqtt_topic, defaultMqttTopic().c_str(), sizeof(config.mqtt_topic));
   config.mqtt_keepalive = 0;
+  config.energy_total_offset_kwh = 0.0f;
+  config.energy_mqtt_interval = 0;
+  config.energy_mqtt_change_percent_x10 = 0;
+  config.energy_mqtt_change_watts = 0;
   config.ibeacon_enabled = 0;
   config.ibeacon_filter1_interval_sec = kIBeaconFilter1DefaultSec;
   config.ibeacon_filter2_interval_sec = kIBeaconFilter2DefaultSec;
@@ -1287,6 +1403,11 @@ bool loadConfig() {
   uint16_t mqtt_port = prefs.getUShort("mqtt_port", kMqttDefaultPort);
   String mqtt_topic = prefs.getString("mqtt_topic", "");
   uint16_t mqtt_keepalive = prefs.getUShort("mqtt_keep", 0);
+  float energy_total_offset_kwh = prefs.getFloat("en_offset", 0.0f);
+  uint16_t energy_mqtt_interval = prefs.getUShort("en_int", 0);
+  uint16_t energy_mqtt_change_percent_x10 = prefs.getUShort("en_pct", 0);
+  uint16_t energy_mqtt_change_watts = prefs.getUShort("en_watts", 0);
+  energy_saved_ukwh = prefs.getULong64("en_total", 0);
   uint8_t ibeacon_enabled = prefs.getUChar("ibeacon", 0);
   uint16_t ibeacon_filter1_interval = prefs.getUShort("ib_f1_int", kIBeaconFilter1DefaultSec);
   uint16_t ibeacon_filter2_interval = prefs.getUShort("ib_f2_int", kIBeaconFilter2DefaultSec);
@@ -1351,6 +1472,17 @@ bool loadConfig() {
     strlcpy(config.mqtt_topic, mqtt_topic.c_str(), sizeof(config.mqtt_topic));
   }
   config.mqtt_keepalive = mqtt_keepalive;
+  if (isnan(energy_total_offset_kwh) ||
+      energy_total_offset_kwh < kEnergyTotalOffsetMinKwh ||
+      energy_total_offset_kwh > kEnergyTotalOffsetMaxKwh) {
+    energy_total_offset_kwh = 0.0f;
+  }
+  config.energy_total_offset_kwh = energy_total_offset_kwh;
+  config.energy_mqtt_interval = energy_mqtt_interval;
+  config.energy_mqtt_change_percent_x10 =
+    energy_mqtt_change_percent_x10 > static_cast<uint16_t>(kMqttEnergyChangeMaxPercent * 10.0f) ? 0 : energy_mqtt_change_percent_x10;
+  config.energy_mqtt_change_watts = energy_mqtt_change_watts;
+  if (energy_saved_ukwh > kEnergyTotalMaxUkwh) energy_saved_ukwh = 0;
   config.ibeacon_enabled = ibeacon_enabled ? 1 : 0;
   config.ibeacon_filter1_interval_sec = sanitizeIBeaconFilterInterval(ibeacon_filter1_interval, kIBeaconFilter1DefaultSec);
   config.ibeacon_filter2_interval_sec = sanitizeIBeaconFilterInterval(ibeacon_filter2_interval, kIBeaconFilter2DefaultSec);
@@ -1400,11 +1532,17 @@ void resetMqttRuntimeState() {
   last_mqtt_rx = 0;
   last_mqtt_ping = 0;
   last_mqtt_state_publish = 0;
+  last_mqtt_energy_publish = 0;
   last_mqtt_connect_attempt = 0;
   last_mqtt_connect_duration = 0;
   last_mqtt_connect_result = kMqttConnectIdle;
   mqtt_pending_relay_mask = 0;
+  mqtt_pending_energy_zero_relay_mask = 0;
+  mqtt_pending_energy_report_reason = kMqttEnergyReportReasonNone;
   mqtt_ping_pending = false;
+  last_mqtt_energy_power = NAN;
+  last_observed_energy_power = NAN;
+  last_mqtt_energy_report_reason = kMqttEnergyReportReasonNone;
 }
 
 bool saveMqttConfig(const char *host, uint16_t port, const char *topic, uint16_t keepalive) {
@@ -1416,6 +1554,23 @@ bool saveMqttConfig(const char *host, uint16_t port, const char *topic, uint16_t
   prefs.end();
   resetMqttRuntimeState();
   if (mqtt_client.connected()) mqtt_client.stop();
+  return loadConfig();
+}
+
+bool saveEnergyConfig(float total_offset_kwh, uint16_t mqtt_interval, uint16_t mqtt_change_percent_x10,
+                      uint16_t mqtt_change_watts) {
+  if (!prefs.begin("mymota32", false)) return false;
+  prefs.putFloat("en_offset", total_offset_kwh);
+  prefs.putUShort("en_int", mqtt_interval);
+  prefs.putUShort("en_pct", mqtt_change_percent_x10);
+  prefs.putUShort("en_watts", mqtt_change_watts);
+  prefs.end();
+  last_mqtt_energy_publish = 0;
+  last_mqtt_energy_power = NAN;
+  last_observed_energy_power = NAN;
+  last_mqtt_energy_report_reason = kMqttEnergyReportReasonNone;
+  mqtt_pending_energy_zero_relay_mask = 0;
+  mqtt_pending_energy_report_reason = kMqttEnergyReportReasonNone;
   return loadConfig();
 }
 
@@ -1623,6 +1778,8 @@ void updateDeviceLeds(bool force = false) {
 }
 
 void scheduleMqttRelayPublish(uint8_t relay);
+void scheduleMqttRelayOffEnergyReport(uint8_t relay);
+bool persistEnergyTotal(bool force);
 bool mqttConfigured();
 bool parseUint16Input(const String &input, uint16_t min_value, uint16_t max_value, uint16_t &out);
 
@@ -1634,6 +1791,10 @@ void setRelay(uint8_t relay, bool on) {
   if (changed) {
     updateDeviceLeds(true);
     scheduleMqttRelayPublish(relay);
+    if (!on) {
+      energy_persist_requested = true;
+      scheduleMqttRelayOffEnergyReport(relay);
+    }
   }
 }
 
@@ -1947,6 +2108,251 @@ void maintainDevice() {
   updateDeviceLeds();
 }
 
+uint64_t kwhToUkwh(float value) {
+  if (isnan(value) || value <= 0.0f) return 0;
+  if (value >= static_cast<float>(kEnergyTotalMaxUkwh) / 1000000.0f) return kEnergyTotalMaxUkwh;
+  return static_cast<uint64_t>((value * 1000000.0f) + 0.5f);
+}
+
+float ukwhToKwh(uint64_t value) {
+  return static_cast<float>(value) / 1000000.0f;
+}
+
+float reportedEnergyTotalKwh() {
+  return energy.total_kwh + config.energy_total_offset_kwh;
+}
+
+bool persistEnergyTotal(bool force) {
+  if (!energy.present) return true;
+  const uint64_t total = kwhToUkwh(energy.total_kwh);
+  const uint64_t saved = energy_saved_ukwh;
+  const uint64_t delta = total > saved ? total - saved : saved - total;
+  const uint32_t now = millis();
+  if (!force) {
+    if (now - last_energy_persist_ms < kEnergyPersistMinMs) return true;
+    if (!energy_persist_requested && delta < kEnergyPersistDeltaUkwh) return true;
+  }
+  if (!prefs.begin("mymota32", false)) return false;
+  prefs.putULong64("en_total", total);
+  prefs.end();
+  energy_saved_ukwh = total;
+  last_energy_persist_ms = now;
+  energy_persist_requested = false;
+  return true;
+}
+
+void updateEnergyAggregateFromChannels() {
+  energy.voltage = 0.0f;
+  energy.current = 0.0f;
+  energy.power = 0.0f;
+  for (uint8_t i = 0; i < energy.channel_count && i < kEnergyMaxChannels; i++) {
+    if (energy.channel[i].voltage > energy.voltage) energy.voltage = energy.channel[i].voltage;
+    energy.current += energy.channel[i].current;
+    energy.power += energy.channel[i].power;
+  }
+}
+
+const __FlashStringHelper *energyDriverName() {
+  if (energy.driver == kEnergyDriverBl0939) return F("BL0939");
+  return F("none");
+}
+
+bool energyRelayHasChannel(uint8_t relay) {
+  if (!energy.present || relay >= runtime_template.relay_count || relay >= kMaxRelays) return false;
+  if (energy.channel_count <= 1) return relay == 0;
+  return relay < energy.channel_count && relay < kEnergyMaxChannels;
+}
+
+void updateEnergyRelayOffZero(uint8_t relay) {
+  if (!energyRelayHasChannel(relay)) return;
+  energy.channel[relay].power = 0.0f;
+  energy.channel[relay].current = 0.0f;
+  updateEnergyAggregateFromChannels();
+}
+
+void scheduleMqttEnergyReport(uint8_t reason) {
+  if (!energy.present || !mqttConfigured() || reason == kMqttEnergyReportReasonNone) return;
+  if (mqtt_pending_energy_report_reason == kMqttEnergyReportReasonRelayOff &&
+      reason == kMqttEnergyReportReasonPowerZero) {
+    return;
+  }
+  mqtt_pending_energy_report_reason = reason;
+}
+
+void scheduleMqttRelayOffEnergyReport(uint8_t relay) {
+  if (!energyRelayHasChannel(relay)) return;
+  updateEnergyRelayOffZero(relay);
+  mqtt_pending_energy_zero_relay_mask |= (1U << relay);
+  scheduleMqttEnergyReport(kMqttEnergyReportReasonRelayOff);
+}
+
+uint32_t bl09xxRead24(uint8_t index) {
+  return (static_cast<uint32_t>(energy.rx_buffer[index + 2]) << 16) |
+         (static_cast<uint32_t>(energy.rx_buffer[index + 1]) << 8) |
+         energy.rx_buffer[index];
+}
+
+int32_t bl09xxReadSigned24(uint8_t index) {
+  int32_t value = static_cast<int32_t>(bl09xxRead24(index));
+  if (value & 0x00800000L) value |= 0xff000000L;
+  return value;
+}
+
+bool decodeBl0939Packet() {
+  const uint16_t tps1 = (static_cast<uint16_t>(energy.rx_buffer[29]) << 8) | energy.rx_buffer[28];
+  const bool tps_jump = energy.tps1 &&
+                        (abs(static_cast<int>(tps1) - static_cast<int>(energy.tps1)) > 10);
+  if (energy.rx_buffer[0] != kBl09xxPacketHeader ||
+      tps_jump) {
+    return false;
+  }
+
+  energy.tps1 = tps1;
+  energy.temperature = ((170.0f / 448.0f) * ((static_cast<float>(tps1) / 2.0f) - 32.0f)) - 45.0f;
+  energy.voltage_raw = bl09xxRead24(10);
+  const float voltage = static_cast<float>(energy.voltage_raw) / static_cast<float>(kBl0939VoltageRef);
+
+  for (uint8_t i = 0; i < kEnergyMaxChannels; i++) {
+    const uint8_t current_index = i == 0 ? 4 : 7;
+    const uint8_t power_index = i == 0 ? 16 : 19;
+    EnergyChannelState &channel = energy.channel[i];
+    channel.voltage = voltage;
+    channel.current_raw = bl09xxRead24(current_index);
+    channel.power_raw = bl09xxReadSigned24(power_index);
+    if (channel.power_raw > static_cast<int32_t>(kBl0939PowerRef)) {
+      channel.power = static_cast<float>(channel.power_raw) / static_cast<float>(kBl0939PowerRef);
+      channel.current = static_cast<float>(channel.current_raw) / static_cast<float>(kBl0939CurrentRef);
+    } else {
+      channel.power = 0.0f;
+      channel.current = 0.0f;
+    }
+  }
+
+  updateEnergyAggregateFromChannels();
+  energy.last_success_ms = millis();
+  return true;
+}
+
+void processBl0939Serial() {
+  if (!energy.present || energy.driver != kEnergyDriverBl0939) return;
+  while (bl0939_serial.available()) {
+    const int raw = bl0939_serial.read();
+    if (raw < 0) break;
+    const uint8_t value = static_cast<uint8_t>(raw);
+    if (!energy.received && value == kBl09xxPacketHeader) {
+      energy.received = true;
+      energy.byte_counter = 0;
+    }
+    if (!energy.received) continue;
+    energy.rx_buffer[energy.byte_counter++] = value;
+    if (energy.byte_counter < kBl0939BufferSize) continue;
+
+    uint8_t checksum = kBl09xxReadCommand | kBl0939Address;
+    for (uint8_t i = 0; i < kBl0939BufferSize - 1; i++) checksum += energy.rx_buffer[i];
+    checksum ^= 0xff;
+    if (checksum == energy.rx_buffer[kBl0939BufferSize - 1] && decodeBl0939Packet()) {
+      energy.received = false;
+      energy.byte_counter = 0;
+      return;
+    }
+
+    memmove(energy.rx_buffer, energy.rx_buffer + 1, kBl0939BufferSize - 1);
+    energy.byte_counter = kBl0939BufferSize - 1;
+    while (energy.byte_counter > 0 && energy.rx_buffer[0] != kBl09xxPacketHeader) {
+      memmove(energy.rx_buffer, energy.rx_buffer + 1, energy.byte_counter - 1);
+      energy.byte_counter--;
+    }
+    energy.received = energy.byte_counter > 0;
+  }
+}
+
+void sendBl0939Init() {
+  for (uint8_t i = 0; i < sizeof(kBl09xxInit) / sizeof(kBl09xxInit[0]); i++) {
+    uint8_t checksum = kBl09xxWriteCommand | kBl0939Address;
+    bl0939_serial.write(checksum);
+    for (uint8_t j = 0; j < 4; j++) {
+      checksum += kBl09xxInit[i][j];
+      bl0939_serial.write(kBl09xxInit[i][j]);
+    }
+    bl0939_serial.write(0xff ^ checksum);
+    delay(1);
+  }
+}
+
+void pollBl0939(uint32_t now) {
+  if (now - energy.last_poll_ms < kBl0939PollMs) return;
+  energy.last_poll_ms = now;
+  bl0939_serial.write(kBl09xxReadCommand | kBl0939Address);
+  bl0939_serial.write(kBl09xxFullPacket);
+}
+
+void setupEnergyMonitor() {
+  memset(&energy, 0, sizeof(energy));
+  energy.driver = kEnergyDriverNone;
+  energy.rx_pin = kInvalidPin;
+  energy.tx_pin = kInvalidPin;
+  energy.total_kwh = ukwhToKwh(energy_saved_ukwh);
+  last_energy_persist_ms = millis();
+  energy_persist_requested = false;
+
+  if (!digitalPinSupported(runtime_template.energy_bl0939_rx_pin) ||
+      !digitalPinSupported(runtime_template.energy_tx_pin)) {
+    return;
+  }
+
+  energy.present = true;
+  energy.driver = kEnergyDriverBl0939;
+  energy.channel_count = 2;
+  energy.rx_pin = runtime_template.energy_bl0939_rx_pin;
+  energy.tx_pin = runtime_template.energy_tx_pin;
+  energy.last_integrate_ms = millis();
+  energy.last_success_ms = millis();
+  bl0939_serial.setRxBufferSize(128);
+  bl0939_serial.begin(4800, SERIAL_8N1, energy.rx_pin, energy.tx_pin);
+  sendBl0939Init();
+}
+
+void observeEnergyPowerForZeroReport() {
+  if (!energy.present) {
+    last_observed_energy_power = NAN;
+    return;
+  }
+  const bool had_positive_power = !isnan(last_observed_energy_power) &&
+                                  fabsf(last_observed_energy_power) > kEnergyZeroPowerThreshold &&
+                                  last_observed_energy_power > 0.0f;
+  const bool has_zero_power = fabsf(energy.power) <= kEnergyZeroPowerThreshold;
+  if (had_positive_power && has_zero_power) scheduleMqttEnergyReport(kMqttEnergyReportReasonPowerZero);
+  last_observed_energy_power = energy.power;
+}
+
+void maintainEnergy() {
+  if (!energy.present) return;
+  const uint32_t now = millis();
+  if (energy.driver == kEnergyDriverBl0939) {
+    processBl0939Serial();
+    pollBl0939(now);
+    if (now - energy.last_success_ms >= kBl0939StaleMs) {
+      for (uint8_t i = 0; i < energy.channel_count && i < kEnergyMaxChannels; i++) {
+        energy.channel[i].power = 0.0f;
+        energy.channel[i].current = 0.0f;
+      }
+      updateEnergyAggregateFromChannels();
+    }
+  }
+  if (now - energy.last_integrate_ms >= kEnergyIntegrateMs) {
+    const uint32_t elapsed = now - energy.last_integrate_ms;
+    energy.last_integrate_ms = now;
+    if (energy.power > 0.0f) {
+      energy.total_kwh += (energy.power * static_cast<float>(elapsed)) / 3600000000.0f;
+      if (kwhToUkwh(energy.total_kwh) > kEnergyTotalMaxUkwh) {
+        energy.total_kwh = ukwhToKwh(kEnergyTotalMaxUkwh);
+      }
+    }
+  }
+  persistEnergyTotal(false);
+  observeEnergyPowerForZeroReport();
+}
+
 bool parseUint16Input(const String &input, uint16_t min_value, uint16_t max_value, uint16_t &out) {
   if (input.length() == 0) return false;
   for (size_t i = 0; i < input.length(); i++) {
@@ -1955,6 +2361,81 @@ bool parseUint16Input(const String &input, uint16_t min_value, uint16_t max_valu
   long parsed = input.toInt();
   if (parsed < min_value || parsed > max_value) return false;
   out = static_cast<uint16_t>(parsed);
+  return true;
+}
+
+uint32_t decimalScale(uint8_t decimals) {
+  uint32_t scale = 1;
+  while (decimals--) scale *= 10;
+  return scale;
+}
+
+int64_t floatToScaledDecimal(float value, uint8_t decimals) {
+  if (isnan(value)) return 0;
+  const float scale = static_cast<float>(decimalScale(decimals));
+  const float scaled = value * scale;
+  return static_cast<int64_t>(scaled >= 0.0f ? scaled + 0.5f : scaled - 0.5f);
+}
+
+void appendScaledDecimal(String &out, int64_t scaled, uint8_t decimals) {
+  if (scaled < 0) {
+    out += '-';
+    scaled = -scaled;
+  }
+  const uint32_t scale = decimalScale(decimals);
+  const uint64_t whole = decimals ? static_cast<uint64_t>(scaled) / scale : static_cast<uint64_t>(scaled);
+  out += static_cast<unsigned long>(whole);
+  if (!decimals) return;
+
+  uint32_t fraction = static_cast<uint32_t>(static_cast<uint64_t>(scaled) % scale);
+  out += '.';
+  for (uint32_t pad = scale / 10; pad > 1 && fraction < pad; pad /= 10) out += '0';
+  out += static_cast<unsigned long>(fraction);
+}
+
+void appendFloatDecimal(String &out, float value, uint8_t decimals) {
+  appendScaledDecimal(out, floatToScaledDecimal(value, decimals), decimals);
+}
+
+bool parseUnsignedScaledDecimalInput(const String &input, uint8_t decimals, uint64_t max_scaled, uint64_t &out) {
+  const uint32_t scale = decimalScale(decimals);
+  uint64_t whole = 0;
+  uint64_t fraction = 0;
+  uint8_t fraction_digits = 0;
+  bool have_digit = false;
+  bool have_decimal = false;
+  size_t index = 0;
+  while (index < input.length() && (input[index] == ' ' || input[index] == '\t')) index++;
+  for (; index < input.length(); index++) {
+    const char c = input[index];
+    if (c >= '0' && c <= '9') {
+      have_digit = true;
+      const uint8_t digit = static_cast<uint8_t>(c - '0');
+      if (have_decimal) {
+        if (fraction_digits >= decimals) return false;
+        fraction = (fraction * 10U) + digit;
+        fraction_digits++;
+      } else {
+        whole = (whole * 10U) + digit;
+        if (whole > max_scaled / scale) return false;
+      }
+      continue;
+    }
+    if (c == '.' && !have_decimal && decimals > 0) {
+      have_decimal = true;
+      continue;
+    }
+    while (index < input.length()) {
+      const char tail = input[index++];
+      if (tail != ' ' && tail != '\t' && tail != '\r' && tail != '\n') return false;
+    }
+    break;
+  }
+  if (!have_digit) return false;
+  while (fraction_digits++ < decimals) fraction *= 10U;
+  const uint64_t scaled = (whole * scale) + fraction;
+  if (scaled > max_scaled) return false;
+  out = scaled;
   return true;
 }
 
@@ -2782,6 +3263,148 @@ bool mqttPublishAllRelayStates() {
   return ok;
 }
 
+String mqttEnergyTopic() {
+  String topic;
+  topic.reserve(strlen(config.mqtt_topic) + 16);
+  topic += F("stat/");
+  topic += config.mqtt_topic;
+  topic += F("/STATUS8");
+  return topic;
+}
+
+bool mqttEnergyReportingEnabled() {
+  return energy.present && (config.energy_mqtt_interval > 0 ||
+                            config.energy_mqtt_change_percent_x10 > 0 ||
+                            config.energy_mqtt_change_watts > 0);
+}
+
+bool mqttEnergyPowerChangedPercentEnough() {
+  if (config.energy_mqtt_change_percent_x10 == 0) return false;
+  if (isnan(last_mqtt_energy_power)) return true;
+  const float delta = fabsf(energy.power - last_mqtt_energy_power);
+  const float baseline = fabsf(last_mqtt_energy_power);
+  if (baseline < 0.001f) return delta > 0.0f;
+  return (delta * 1000.0f) >= (baseline * static_cast<float>(config.energy_mqtt_change_percent_x10));
+}
+
+bool mqttEnergyPowerChangedWattsEnough() {
+  if (config.energy_mqtt_change_watts == 0) return false;
+  if (isnan(last_mqtt_energy_power)) return true;
+  return fabsf(energy.power - last_mqtt_energy_power) >= static_cast<float>(config.energy_mqtt_change_watts);
+}
+
+const __FlashStringHelper *mqttEnergyReportReasonName(uint8_t reason) {
+  switch (reason) {
+    case kMqttEnergyReportReasonInitial: return F("initial");
+    case kMqttEnergyReportReasonInterval: return F("interval");
+    case kMqttEnergyReportReasonPowerChangePercent: return F("power change %");
+    case kMqttEnergyReportReasonIntervalPowerChangePercent: return F("interval + power change %");
+    case kMqttEnergyReportReasonPowerChangeWatts: return F("power change W");
+    case kMqttEnergyReportReasonIntervalPowerChangeWatts: return F("interval + power change W");
+    case kMqttEnergyReportReasonPowerChangePercentWatts: return F("power change % + W");
+    case kMqttEnergyReportReasonIntervalPowerChangePercentWatts: return F("interval + power change % + W");
+    case kMqttEnergyReportReasonRelayOff: return F("relay off");
+    case kMqttEnergyReportReasonPowerZero: return F("power zero");
+    default: return F("none");
+  }
+}
+
+uint8_t mqttEnergyReportReason(uint32_t now) {
+  if (last_mqtt_energy_publish == 0 || isnan(last_mqtt_energy_power)) return kMqttEnergyReportReasonInitial;
+  bool interval_due = false;
+  if (config.energy_mqtt_interval > 0) {
+    interval_due = now - last_mqtt_energy_publish >= static_cast<uint32_t>(config.energy_mqtt_interval) * 1000UL;
+  }
+  const bool percent_due = mqttEnergyPowerChangedPercentEnough();
+  const bool watts_due = mqttEnergyPowerChangedWattsEnough();
+  if (interval_due && percent_due && watts_due) return kMqttEnergyReportReasonIntervalPowerChangePercentWatts;
+  if (interval_due && percent_due) return kMqttEnergyReportReasonIntervalPowerChangePercent;
+  if (interval_due && watts_due) return kMqttEnergyReportReasonIntervalPowerChangeWatts;
+  if (interval_due) return kMqttEnergyReportReasonInterval;
+  if (percent_due && watts_due) return kMqttEnergyReportReasonPowerChangePercentWatts;
+  if (percent_due) return kMqttEnergyReportReasonPowerChangePercent;
+  if (watts_due) return kMqttEnergyReportReasonPowerChangeWatts;
+  return kMqttEnergyReportReasonNone;
+}
+
+bool mqttPublishEnergyStatus(uint8_t reason, uint16_t zero_relay_mask = 0) {
+  if (!energy.present) return true;
+
+  float payload_power = energy.power;
+  float payload_current = energy.current;
+  if (zero_relay_mask) {
+    if (energy.channel_count > 1) {
+      for (uint8_t i = 0; i < energy.channel_count && i < kEnergyMaxChannels; i++) {
+        if (!(zero_relay_mask & (1U << i))) continue;
+        payload_power -= energy.channel[i].power;
+        payload_current -= energy.channel[i].current;
+      }
+      if (payload_power < 0.0f && fabsf(payload_power) <= kEnergyZeroPowerThreshold) payload_power = 0.0f;
+      if (payload_current < 0.0f && fabsf(payload_current) <= kEnergyZeroPowerThreshold) payload_current = 0.0f;
+    } else if (zero_relay_mask & 0x01U) {
+      payload_power = 0.0f;
+      payload_current = 0.0f;
+    }
+  }
+
+  String payload;
+  payload.reserve(260);
+  payload += F("{\"StatusSNS\":{\"ENERGY\":{\"Total\":");
+  appendFloatDecimal(payload, reportedEnergyTotalKwh(), 4);
+  payload += F(",\"Power\":");
+  appendFloatDecimal(payload, payload_power, 2);
+  payload += F(",\"Voltage\":");
+  appendFloatDecimal(payload, energy.voltage, 1);
+  payload += F(",\"Current\":");
+  appendFloatDecimal(payload, payload_current, 3);
+  if (energy.channel_count > 1) {
+    for (uint8_t i = 0; i < energy.channel_count && i < kEnergyMaxChannels; i++) {
+      const bool zero_channel = zero_relay_mask & (1U << i);
+      payload += F(",\"Power");
+      payload += String(i + 1);
+      payload += F("\":");
+      appendFloatDecimal(payload, zero_channel ? 0.0f : energy.channel[i].power, 2);
+      payload += F(",\"Current");
+      payload += String(i + 1);
+      payload += F("\":");
+      appendFloatDecimal(payload, zero_channel ? 0.0f : energy.channel[i].current, 3);
+    }
+  }
+  payload += F("}}}");
+
+  const String topic = mqttEnergyTopic();
+  const bool ok = mqttPublish(topic.c_str(), payload.c_str());
+  if (ok) {
+    last_mqtt_energy_publish = millis();
+    last_mqtt_energy_power = payload_power;
+    last_mqtt_energy_report_reason = reason;
+  }
+  return ok;
+}
+
+void maintainMqttEnergyReports(uint32_t now) {
+  if (!energy.present) {
+    last_mqtt_energy_publish = 0;
+    last_mqtt_energy_power = NAN;
+    last_mqtt_energy_report_reason = kMqttEnergyReportReasonNone;
+    mqtt_pending_energy_zero_relay_mask = 0;
+    mqtt_pending_energy_report_reason = kMqttEnergyReportReasonNone;
+    return;
+  }
+  if (mqtt_pending_energy_report_reason != kMqttEnergyReportReasonNone) {
+    const uint8_t reason = mqtt_pending_energy_report_reason;
+    const uint16_t zero_relay_mask = mqtt_pending_energy_zero_relay_mask;
+    if (mqttPublishEnergyStatus(reason, zero_relay_mask)) {
+      mqtt_pending_energy_zero_relay_mask = 0;
+      mqtt_pending_energy_report_reason = kMqttEnergyReportReasonNone;
+    }
+    return;
+  }
+  if (!mqttEnergyReportingEnabled()) return;
+  const uint8_t reason = mqttEnergyReportReason(now);
+  if (reason != kMqttEnergyReportReasonNone) mqttPublishEnergyStatus(reason);
+}
+
 bool mqttCommandFromTopic(const char *topic, size_t topic_len, const char *&command, size_t &command_len) {
   constexpr size_t prefix_len = 5;
   if (!topic || topic_len <= prefix_len) return false;
@@ -2997,6 +3620,9 @@ void maintainMqtt() {
   }
   now = millis();
 
+  maintainMqttEnergyReports(now);
+  now = millis();
+
   if (config.mqtt_keepalive > 0 && runtime_template.relay_count > 0) {
     const uint32_t interval_ms = static_cast<uint32_t>(config.mqtt_keepalive) * 1000UL;
     if (now - last_mqtt_state_publish >= interval_ms) {
@@ -3069,6 +3695,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!==null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
+  page += F("function fmt(v,d,s){return v==null?'n/a':Number(v).toFixed(d)+s;}if(d.energy){t('live-energy-power',fmt(d.energy.power,1,' W'));t('live-energy-voltage',fmt(d.energy.voltage,1,' V'));t('live-energy-current',fmt(d.energy.current,3,' A'));t('live-energy-total',fmt(d.energy.total_kwh,4,' kWh'));t('live-energy-offset',fmt(d.energy.offset_kwh,4,' kWh'));t('live-energy-mqtt-age',d.energy.last_mqtt_report_ms_ago==null?'n/a':d.energy.last_mqtt_report_ms_ago+' ms ago');t('live-energy-mqtt-reason',d.energy.last_mqtt_report_reason||'n/a');if(d.energy.channels){for(var e=0;e<d.energy.channels.length;e++){t('live-energy-ch'+e+'-power',fmt(d.energy.channels[e].power,1,' W'));t('live-energy-ch'+e+'-current',fmt(d.energy.channels[e].current,3,' A'));}}}");
   page += F("}).catch(function(){});}");
   page += F("function ba(s){var k=s.getAttribute('data-key'),v=s.value,b=document.getElementById('extra-'+k);if(!b)return;var t=b.querySelector('.target-input'),p=b.querySelector('.payload-input'),rr=b.querySelector('.relay-row'),tr=b.querySelector('.target-row'),pr=b.querySelector('.payload-row'),tl=b.querySelector('.target-label'),h=b.querySelector('.action-hint'),off=s.disabled;b.className=(v=='1'||v=='2'||v=='3')?'action-extra show':'action-extra';if(rr)rr.className=v=='1'?'row relay-row':'row relay-row hidden';if(tr)tr.className=(v=='2'||v=='3')?'row target-row':'row target-row hidden';if(pr)pr.className=(v=='2')?'row payload-row':'row payload-row hidden';sd(rr,off||v!='1');sd(tr,off||!(v=='2'||v=='3'));sd(pr,off||v!='2');if(v=='1'){if(h)h.textContent='Toggles the configured relay.';}else if(v=='2'){if(t&&(!t.value||t.value.indexOf('http://')==0))t.value=t.getAttribute('data-default-topic');if(p&&!p.value)p.value=p.getAttribute('data-default-payload');if(tl)tl.textContent='MQTT topic';if(h)h.textContent='Publishes this topic and payload through the configured MQTT broker.';}else if(v=='3'){if(tl)tl.textContent='Webhook URL';if(h)h.textContent='Executes an HTTP GET request; only http:// URLs are supported.';}}");
   page += F("function im(s){var k=s.getAttribute('data-input'),v=s.value,b=document.getElementById('input-button-'+k),w=document.getElementById('input-switch-'+k);if(b)b.className=v=='0'?'mode-extra show':'mode-extra';if(w)w.className=v=='1'?'mode-extra show':'mode-extra';sd(b,v!='0');sd(w,v!='1');if(b){var a=b.querySelectorAll('.button-action');for(var i=0;i<a.length;i++)ba(a[i]);}}");
@@ -3239,6 +3866,17 @@ void appendTemplateStatus(String &page) {
       page += pinName(runtime_template.i2c_sda_pin);
       page += F("</code></div>");
     }
+    if (energy.present) {
+      page += F("<span>Energy</span><div><code>");
+      page += energyDriverName();
+      page += F("</code> RX <code>");
+      page += pinName(energy.rx_pin);
+      page += F("</code>, TX <code>");
+      page += pinName(energy.tx_pin);
+      page += F("</code>, channels <code>");
+      page += String(energy.channel_count);
+      page += F("</code></div>");
+    }
     if (hasPin(runtime_template.link_led)) {
       page += F("<span>Link LED</span><div><code>");
       page += pinName(runtime_template.link_led.pin);
@@ -3261,7 +3899,7 @@ void appendTemplateStatus(String &page) {
 }
 
 void appendDeviceControls(String &page) {
-  if (!runtime_template.enabled || runtime_template.relay_count == 0) return;
+  if (!runtime_template.enabled || (runtime_template.relay_count == 0 && !energy.present)) return;
   page += F("<section class='panel'><h2>Device</h2>");
   for (uint8_t i = 0; i < runtime_template.relay_count; i++) {
     if (!hasPin(runtime_template.relays[i])) continue;
@@ -3278,6 +3916,64 @@ void appendDeviceControls(String &page) {
     page += F("<form class='inline' data-inline='1' method='post' action='/power'><input type='hidden' name='relay' value='");
     page += String(i + 1);
     page += F("'><span class='actions'><button name='state' value='toggle'>Toggle</button><button name='state' value='on'>On</button><button class='secondary' name='state' value='off'>Off</button></span></form></div>");
+  }
+  if (energy.present) {
+    page += F("<div class='button-block'><strong>Energy</strong><div class='kv'><span>Power</span><div><code id='live-energy-power'>");
+    appendFloatDecimal(page, energy.power, 1);
+    page += F(" W</code></div><span>Voltage</span><div><code id='live-energy-voltage'>");
+    appendFloatDecimal(page, energy.voltage, 1);
+    page += F(" V</code></div><span>Current</span><div><code id='live-energy-current'>");
+    appendFloatDecimal(page, energy.current, 3);
+    page += F(" A</code></div><span>Total</span><div><code id='live-energy-total'>");
+    appendFloatDecimal(page, reportedEnergyTotalKwh(), 4);
+    page += F(" kWh</code></div><span>Total offset</span><div><code id='live-energy-offset'>");
+    appendFloatDecimal(page, config.energy_total_offset_kwh, 4);
+    page += F(" kWh</code></div><span>Last MQTT report</span><div><code id='live-energy-mqtt-age'>");
+    if (last_mqtt_energy_publish == 0) {
+      page += F("n/a");
+    } else {
+      page += String(millis() - last_mqtt_energy_publish);
+      page += F(" ms ago");
+    }
+    page += F("</code></div><span>MQTT report reason</span><div><code id='live-energy-mqtt-reason'>");
+    page += mqttEnergyReportReasonName(last_mqtt_energy_report_reason);
+    page += F("</code></div></div>");
+    if (energy.channel_count > 1) {
+      page += F("<div class='kv'>");
+      for (uint8_t i = 0; i < energy.channel_count && i < kEnergyMaxChannels; i++) {
+        page += F("<span>Channel ");
+        page += String(i + 1);
+        page += F("</span><div><code id='live-energy-ch");
+        page += String(i);
+        page += F("-power'>");
+        appendFloatDecimal(page, energy.channel[i].power, 1);
+        page += F(" W</code> <code id='live-energy-ch");
+        page += String(i);
+        page += F("-current'>");
+        appendFloatDecimal(page, energy.channel[i].current, 3);
+        page += F(" A</code></div>");
+      }
+      page += F("</div>");
+    }
+    page += F("<form data-inline='1' method='post' action='/energy'><div class='row'><label>Total kWh offset<br><input name='total_offset_kwh' type='number' min='");
+    appendFloatDecimal(page, kEnergyTotalOffsetMinKwh, 0);
+    page += F("' max='");
+    appendFloatDecimal(page, kEnergyTotalOffsetMaxKwh, 0);
+    page += F("' step='0.0001' value='");
+    appendFloatDecimal(page, config.energy_total_offset_kwh, 4);
+    page += F("'></label></div><div class='row'><label>MQTT report interval seconds<br><input name='energy_report_interval' type='number' min='0' max='");
+    page += String(kMqttEnergyIntervalMax);
+    page += F("' step='1' value='");
+    page += String(config.energy_mqtt_interval);
+    page += F("'></label></div><div class='row'><label>MQTT report power change percent<br><input name='energy_report_change_percent' type='number' min='0' max='");
+    appendFloatDecimal(page, kMqttEnergyChangeMaxPercent, 1);
+    page += F("' step='0.1' value='");
+    appendScaledDecimal(page, config.energy_mqtt_change_percent_x10, 1);
+    page += F("'></label></div><div class='row'><label>MQTT report power change watts<br><input name='energy_report_change_watts' type='number' min='0' max='");
+    page += String(kMqttEnergyChangeMaxWatts);
+    page += F("' step='1' value='");
+    page += String(config.energy_mqtt_change_watts);
+    page += F("'></label></div><button type='submit'>Save energy</button></form></div>");
   }
   page += F("</section>");
 }
@@ -3548,7 +4244,9 @@ void appendTemplateForm(String &page) {
   page += htmlEscape(String(FPSTR(kTemplateShellyPlusI4Json)));
   page += F("'>Shelly Plus i4</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateShellyPlusPlugSJson)));
-  page += F("'>Shelly Plus Plug S</option></select></label></div>");
+  page += F("'>Shelly Plus Plug S</option><option data-json='");
+  page += htmlEscape(String(FPSTR(kTemplateSonoffDualR3V2Json)));
+  page += F("'>Sonoff Dual R3 v2</option></select></label></div>");
   page += F("<div class='row'><label>Tasmota ESP32 template JSON<br><textarea id='template-json' name='template' rows='6' maxlength='");
   page += String(kTemplateJsonMaxLen);
   page += F("'>");
@@ -4160,6 +4858,61 @@ void handleMqttSave() {
   sendHtml(page);
 }
 
+void handleEnergySave() {
+  if (!energy.present) {
+    server.send(400, F("text/plain"), F("No energy monitor is configured"));
+    return;
+  }
+
+  float total_offset_kwh = 0.0f;
+  uint16_t energy_report_interval = config.energy_mqtt_interval;
+  uint16_t energy_report_change_percent_x10 = config.energy_mqtt_change_percent_x10;
+  uint16_t energy_report_change_watts = config.energy_mqtt_change_watts;
+  uint64_t total_offset_scaled = 0;
+  if (!parseUnsignedScaledDecimalInput(server.arg("total_offset_kwh"), 4,
+                                       static_cast<uint64_t>(kEnergyTotalOffsetMaxKwh) * 10000ULL,
+                                       total_offset_scaled)) {
+    server.send(400, F("text/plain"), F("Invalid total kWh offset"));
+    return;
+  }
+  total_offset_kwh = static_cast<float>(total_offset_scaled) / 10000.0f;
+  if (server.hasArg("energy_report_interval") &&
+      !parseUint16Input(server.arg("energy_report_interval"), 0, kMqttEnergyIntervalMax, energy_report_interval)) {
+    server.send(400, F("text/plain"), F("Invalid energy report interval"));
+    return;
+  }
+  if (server.hasArg("energy_report_change_percent")) {
+    uint64_t percent_scaled = 0;
+    if (!parseUnsignedScaledDecimalInput(server.arg("energy_report_change_percent"), 1,
+                                         static_cast<uint64_t>(kMqttEnergyChangeMaxPercent * 10.0f),
+                                         percent_scaled)) {
+      server.send(400, F("text/plain"), F("Invalid energy report change percent"));
+      return;
+    }
+    energy_report_change_percent_x10 = static_cast<uint16_t>(percent_scaled);
+  }
+  if (server.hasArg("energy_report_change_watts") &&
+      !parseUint16Input(server.arg("energy_report_change_watts"), 0, kMqttEnergyChangeMaxWatts, energy_report_change_watts)) {
+    server.send(400, F("text/plain"), F("Invalid energy report change watts"));
+    return;
+  }
+
+  if (!saveEnergyConfig(total_offset_kwh, energy_report_interval, energy_report_change_percent_x10,
+                        energy_report_change_watts)) {
+    server.send(500, F("text/plain"), F("Could not save energy settings"));
+    return;
+  }
+
+  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
+  String page;
+  page.reserve(700);
+  appendHeader(page, F("myMota32 Energy"));
+  page += F("<p class='ok'>Energy settings saved.</p>");
+  page += F("<p><a href='/'>Back</a></p>");
+  appendFooter(page);
+  sendHtml(page);
+}
+
 void handleIBeaconSave() {
   const bool enabled = server.hasArg("enabled") && server.arg("enabled") == "1";
   if (enabled && !iBeaconCaptureSupported()) {
@@ -4224,6 +4977,7 @@ void handleFactoryReset() {
     server.send(500, F("text/plain"), F("Could not factory reset settings"));
     return;
   }
+  energy.present = false;
   clearBootRecoveryState();
   String page;
   page.reserve(900);
@@ -4336,7 +5090,69 @@ void handleHealth() {
       out += F("null");
     }
   }
-  out += F("],\"mqtt\":{\"enabled\":");
+  out += F("]");
+  if (energy.present) {
+    out += F(",\"energy\":{\"driver\":\"");
+    out += energy.driver == kEnergyDriverBl0939 ? F("bl0939") : F("unknown");
+    out += F("\",\"voltage\":");
+    appendFloatDecimal(out, energy.voltage, 1);
+    out += F(",\"current\":");
+    appendFloatDecimal(out, energy.current, 3);
+    out += F(",\"power\":");
+    appendFloatDecimal(out, energy.power, 1);
+    out += F(",\"total_kwh\":");
+    appendFloatDecimal(out, reportedEnergyTotalKwh(), 4);
+    out += F(",\"recorded_total_kwh\":");
+    appendFloatDecimal(out, energy.total_kwh, 4);
+    out += F(",\"offset_kwh\":");
+    appendFloatDecimal(out, config.energy_total_offset_kwh, 4);
+    out += F(",\"report_interval\":");
+    out += config.energy_mqtt_interval;
+    out += F(",\"report_change_percent\":");
+    appendScaledDecimal(out, config.energy_mqtt_change_percent_x10, 1);
+    out += F(",\"report_change_watts\":");
+    out += config.energy_mqtt_change_watts;
+    out += F(",\"last_mqtt_report_ms_ago\":");
+    if (last_mqtt_energy_publish == 0) out += F("null");
+    else out += millis() - last_mqtt_energy_publish;
+    out += F(",\"last_mqtt_report_reason\":\"");
+    out += mqttEnergyReportReasonName(last_mqtt_energy_report_reason);
+    out += F("\",\"temperature\":");
+    appendFloatDecimal(out, energy.temperature, 1);
+    if (energy.channel_count > 1) {
+      out += F(",\"channels\":[");
+      for (uint8_t i = 0; i < energy.channel_count && i < kEnergyMaxChannels; i++) {
+        if (i) out += ',';
+        out += F("{\"voltage\":");
+        appendFloatDecimal(out, energy.channel[i].voltage, 1);
+        out += F(",\"current\":");
+        appendFloatDecimal(out, energy.channel[i].current, 3);
+        out += F(",\"power\":");
+        appendFloatDecimal(out, energy.channel[i].power, 1);
+        out += F("}");
+      }
+      out += F("]");
+    }
+    out += F(",\"debug\":{\"rx_pin\":");
+    out += energy.rx_pin;
+    out += F(",\"tx_pin\":");
+    out += energy.tx_pin;
+    out += F(",\"last_success_ms_ago\":");
+    out += millis() - energy.last_success_ms;
+    out += F(",\"voltage_raw\":");
+    out += energy.voltage_raw;
+    out += F(",\"raw\":[");
+    for (uint8_t i = 0; i < energy.channel_count && i < kEnergyMaxChannels; i++) {
+      if (i) out += ',';
+      out += F("{\"current\":");
+      out += energy.channel[i].current_raw;
+      out += F(",\"power\":");
+      out += energy.channel[i].power_raw;
+      out += F("}");
+    }
+    out += F("]}}");
+  }
+  out += F(",\"mqtt\":{\"enabled\":");
   out += (mqttConfigured() ? F("true") : F("false"));
   out += F(",\"connected\":");
   out += (mqtt_client.connected() ? F("true") : F("false"));
@@ -4442,6 +5258,7 @@ void handleUpdateUpload() {
     update_started = false;
     update_ok = false;
     update_error = UPDATE_ERROR_OK;
+    persistEnergyTotal(true);
     if (upload.filename.length() == 0) update_error = UPDATE_ERROR_SIZE;
     return;
   }
@@ -4493,6 +5310,7 @@ void setupRoutes() {
   server.on("/leds", HTTP_POST, handleLedSave);
   server.on("/buttons", HTTP_POST, handleButtonSave);
   server.on("/mqtt", HTTP_POST, handleMqttSave);
+  server.on("/energy", HTTP_POST, handleEnergySave);
   server.on("/ibeacon", HTTP_POST, handleIBeaconSave);
   server.on("/reboot", HTTP_GET, handleReboot);
   server.on("/factory-reset", HTTP_POST, handleFactoryReset);
@@ -4507,26 +5325,32 @@ void setupRoutes() {
 void setup() {
   Serial.begin(115200);
   delay(20);
-  Serial.println();
   boot_started_ms = millis();
   loadBootRecoveryState();
   loadConfig();
   decodeTemplateConfig();
-  setupDevicePins();
-  Serial.printf("myMota32 %s %s chip %s\n", MYMOTA32_VERSION, MYMOTA32_TARGET, chipDisplayName().c_str());
-  if (runtime_template.enabled) {
-    Serial.printf("Template '%s' base %u relays %u buttons %u leds %u unsupported %u\n",
-                  runtime_template.name, runtime_template.base, runtime_template.relay_count,
-                  runtime_template.button_count, runtime_template.led_count,
-                  runtime_template.unsupported_count);
+  const bool serial_logs_ok = !templateEnergyUsesUart0Pins();
+  if (serial_logs_ok) {
+    Serial.println();
+    Serial.printf("myMota32 %s %s chip %s\n", MYMOTA32_VERSION, MYMOTA32_TARGET, chipDisplayName().c_str());
+    if (runtime_template.enabled) {
+      Serial.printf("Template '%s' base %u relays %u buttons %u leds %u unsupported %u\n",
+                    runtime_template.name, runtime_template.base, runtime_template.relay_count,
+                    runtime_template.button_count, runtime_template.led_count,
+                    runtime_template.unsupported_count);
+    }
   }
+  setupDevicePins();
+  setupEnergyMonitor();
   connectWifi();
   boot_id = makeBootId();
   setupRoutes();
   server.begin();
-  Serial.printf("HTTP server started; STA %s AP %s\n",
-                WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "not-connected",
-                ap_started ? WiFi.softAPIP().toString().c_str() : "off");
+  if (serial_logs_ok) {
+    Serial.printf("HTTP server started; STA %s AP %s\n",
+                  WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "not-connected",
+                  ap_started ? WiFi.softAPIP().toString().c_str() : "off");
+  }
 }
 
 void loop() {
@@ -4536,12 +5360,14 @@ void loop() {
   maintainWifi();
   server.handleClient();
   maintainDevice();
+  maintainEnergy();
   server.handleClient();
   maintainMqtt();
   maintainIBeacon();
   server.handleClient();
 
   if (restartDue()) {
+    persistEnergyTotal(true);
     delay(50);
     ESP.restart();
   }
