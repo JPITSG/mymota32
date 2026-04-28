@@ -1,12 +1,13 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <Preferences.h>
-#include <Update.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <bootloader_common.h>
 #include <cJSON.h>
 #include <esp_chip_info.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <math.h>
@@ -37,6 +38,22 @@ constexpr uint32_t kInitialFallbackApMs = 300000;
 constexpr uint32_t kApRetryMs = 10000;
 constexpr uint32_t kBootRecoveryStableMs = 30000;
 constexpr uint8_t kBootRecoveryLimit = 5;
+constexpr size_t kUpdateSectorSize = 4096;
+constexpr size_t kUpdateHeaderHoldBytes = 16;
+constexpr uint8_t kEspImageMagic = 0xE9;
+constexpr uint8_t UPDATE_ERROR_OK = 0;
+constexpr uint8_t UPDATE_ERROR_WRITE = 1;
+constexpr uint8_t UPDATE_ERROR_ERASE = 2;
+constexpr uint8_t UPDATE_ERROR_READ = 3;
+constexpr uint8_t UPDATE_ERROR_SPACE = 4;
+constexpr uint8_t UPDATE_ERROR_SIZE = 5;
+constexpr uint8_t UPDATE_ERROR_STREAM = 6;
+constexpr uint8_t UPDATE_ERROR_MD5 = 7;
+constexpr uint8_t UPDATE_ERROR_MAGIC_BYTE = 8;
+constexpr uint8_t UPDATE_ERROR_ACTIVATE = 9;
+constexpr uint8_t UPDATE_ERROR_NO_PARTITION = 10;
+constexpr uint8_t UPDATE_ERROR_BAD_ARGUMENT = 11;
+constexpr uint8_t UPDATE_ERROR_ABORT = 12;
 constexpr uint8_t kPhyModeAuto = 0;
 constexpr uint8_t kPhyModeB = 1;
 constexpr uint8_t kPhyModeG = 2;
@@ -76,6 +93,8 @@ constexpr uint16_t kButtonDebounceMaxMs = 200;
 constexpr uint32_t kLedUpdateMs = 50;
 constexpr uint16_t kRelayEnforcementMinSeconds = 1;
 constexpr uint16_t kRelayEnforcementMaxSeconds = 65535U;
+constexpr uint16_t kRelayPulseMinSeconds = 1;
+constexpr uint16_t kRelayPulseMaxSeconds = 65535U;
 constexpr uint32_t kGracefulRelaySnapshotMagic = 0x4d523252UL;  // MR2R
 constexpr uint16_t kGracefulRelaySnapshotVersion = 1;
 constexpr const char *kGracefulRelayPrefsNamespace = "mymota32-rl";
@@ -384,6 +403,8 @@ struct StoredConfig {
   uint8_t relay_on_boot[kMaxRelays];
   uint8_t relay_time_enabled[kMaxRelays];
   uint16_t relay_time_seconds[kMaxRelays];
+  uint8_t relay_pulse_enabled[kMaxRelays];
+  uint16_t relay_pulse_seconds[kMaxRelays];
 
   uint8_t ibeacon_enabled;
   uint16_t ibeacon_filter1_interval_sec;
@@ -459,6 +480,8 @@ bool graceful_relay_restore_valid = false;
 uint16_t graceful_relay_restore_mask = 0;
 bool relay_enforcement_pending[kMaxRelays] = {false};
 uint32_t relay_enforcement_due[kMaxRelays] = {0};
+bool relay_pulse_pending[kMaxRelays] = {false};
+uint32_t relay_pulse_due[kMaxRelays] = {0};
 ButtonState button_state[kMaxButtons] = {};
 uint32_t last_led_update = 0;
 
@@ -479,6 +502,11 @@ uint32_t boot_started_ms = 0;
 bool update_started = false;
 bool update_ok = false;
 uint8_t update_error = UPDATE_ERROR_OK;
+const esp_partition_t *update_partition = nullptr;
+size_t update_written = 0;
+size_t update_erased_until = 0;
+uint8_t update_header[kUpdateHeaderHoldBytes] = {0};
+size_t update_header_len = 0;
 
 uint32_t restart_due_ms = 0;
 uint32_t restart_scheduled_ms = 0;
@@ -1327,6 +1355,7 @@ bool normalizeIBeaconMacList(const String &input, char *out, size_t out_size) {
 
 bool clearGracefulRelaySnapshot();
 void refreshRelayEnforcementRuntime(bool schedule_off_relays);
+void refreshRelayPulseRuntime(bool schedule_on_relays);
 
 void setDefaultConfig() {
   memset(&config, 0, sizeof(config));
@@ -1360,6 +1389,8 @@ void setDefaultConfig() {
   memset(config.relay_on_boot, 0, sizeof(config.relay_on_boot));
   memset(config.relay_time_enabled, 0, sizeof(config.relay_time_enabled));
   memset(config.relay_time_seconds, 0, sizeof(config.relay_time_seconds));
+  memset(config.relay_pulse_enabled, 0, sizeof(config.relay_pulse_enabled));
+  memset(config.relay_pulse_seconds, 0, sizeof(config.relay_pulse_seconds));
   config.ibeacon_enabled = 0;
   config.ibeacon_filter1_interval_sec = kIBeaconFilter1DefaultSec;
   config.ibeacon_filter2_interval_sec = kIBeaconFilter2DefaultSec;
@@ -1465,9 +1496,13 @@ bool loadConfig() {
   uint8_t relay_on_boot[kMaxRelays];
   uint8_t relay_time_enabled[kMaxRelays];
   uint16_t relay_time_seconds[kMaxRelays];
+  uint8_t relay_pulse_enabled[kMaxRelays];
+  uint16_t relay_pulse_seconds[kMaxRelays];
   readByteArray(prefs, "rel_on_boot", relay_on_boot, 0);
   readByteArray(prefs, "rel_time_en", relay_time_enabled, 0);
   readUShortArray(prefs, "rel_time_s", relay_time_seconds, 0);
+  readByteArray(prefs, "rel_pulse_en", relay_pulse_enabled, 0);
+  readUShortArray(prefs, "rel_pulse_s", relay_pulse_seconds, 0);
 
   uint8_t ibeacon_enabled = prefs.getUChar("ibeacon", 0);
   uint16_t ibeacon_filter1_interval = prefs.getUShort("ib_f1_int", kIBeaconFilter1DefaultSec);
@@ -1553,6 +1588,13 @@ bool loadConfig() {
          config.relay_time_seconds[i] > kRelayEnforcementMaxSeconds)) {
       config.relay_time_enabled[i] = 0;
       config.relay_time_seconds[i] = 0;
+    }
+    config.relay_pulse_enabled[i] = relay_pulse_enabled[i] ? 1 : 0;
+    config.relay_pulse_seconds[i] = relay_pulse_seconds[i];
+    if (config.relay_pulse_enabled[i] &&
+        config.relay_pulse_seconds[i] < kRelayPulseMinSeconds) {
+      config.relay_pulse_enabled[i] = 0;
+      config.relay_pulse_seconds[i] = 0;
     }
   }
   config.ibeacon_enabled = ibeacon_enabled ? 1 : 0;
@@ -1666,6 +1708,16 @@ bool saveRelayEnforcementConfig(const uint8_t *on_boot, const uint8_t *time_enab
   prefs.end();
   if (!loadConfig()) return false;
   refreshRelayEnforcementRuntime(true);
+  return true;
+}
+
+bool saveRelayPulseConfig(const uint8_t *pulse_enabled, const uint16_t *pulse_seconds) {
+  if (!prefs.begin("mymota32", false)) return false;
+  prefs.putBytes("rel_pulse_en", pulse_enabled, sizeof(config.relay_pulse_enabled));
+  prefs.putBytes("rel_pulse_s", pulse_seconds, sizeof(config.relay_pulse_seconds));
+  prefs.end();
+  if (!loadConfig()) return false;
+  refreshRelayPulseRuntime(true);
   return true;
 }
 
@@ -1988,6 +2040,12 @@ bool relayTimeEnforcementActive(uint8_t relay) {
          config.relay_time_seconds[relay] >= kRelayEnforcementMinSeconds;
 }
 
+bool relayPulseActive(uint8_t relay) {
+  return relayAvailable(relay) &&
+         config.relay_pulse_enabled[relay] &&
+         config.relay_pulse_seconds[relay] >= kRelayPulseMinSeconds;
+}
+
 void cancelRelayEnforcement(uint8_t relay) {
   if (relay >= kMaxRelays) return;
   relay_enforcement_pending[relay] = false;
@@ -2013,7 +2071,32 @@ void refreshRelayEnforcementRuntime(bool schedule_off_relays) {
   }
 }
 
-void setRelay(uint8_t relay, bool on) {
+void cancelRelayPulse(uint8_t relay) {
+  if (relay >= kMaxRelays) return;
+  relay_pulse_pending[relay] = false;
+  relay_pulse_due[relay] = 0;
+}
+
+void scheduleRelayPulse(uint8_t relay) {
+  if (relay >= kMaxRelays || !relayPulseActive(relay)) {
+    cancelRelayPulse(relay);
+    return;
+  }
+  relay_pulse_due[relay] = millis() + (static_cast<uint32_t>(config.relay_pulse_seconds[relay]) * 1000UL);
+  relay_pulse_pending[relay] = true;
+}
+
+void refreshRelayPulseRuntime(bool schedule_on_relays) {
+  for (uint8_t i = 0; i < kMaxRelays; i++) {
+    if (!relayPulseActive(i) || !relay_state[i]) {
+      cancelRelayPulse(i);
+    } else if (schedule_on_relays) {
+      scheduleRelayPulse(i);
+    }
+  }
+}
+
+void setRelay(uint8_t relay, bool on, bool suppress_off_enforcement = false) {
   if (relay >= kMaxRelays || !hasPin(runtime_template.relays[relay])) return;
   const bool changed = relay_state[relay] != on;
   const bool was_on = relay_state[relay];
@@ -2021,7 +2104,11 @@ void setRelay(uint8_t relay, bool on) {
   writeAssignedPin(runtime_template.relays[relay], on);
   if (on) {
     cancelRelayEnforcement(relay);
-  } else if (changed) {
+    scheduleRelayPulse(relay);
+  } else {
+    cancelRelayPulse(relay);
+  }
+  if (!on && changed && !suppress_off_enforcement) {
     scheduleRelayEnforcement(relay);
   }
   if (changed) {
@@ -2042,6 +2129,8 @@ void toggleRelay(uint8_t relay) {
 void setupDevicePins() {
   memset(relay_enforcement_pending, 0, sizeof(relay_enforcement_pending));
   memset(relay_enforcement_due, 0, sizeof(relay_enforcement_due));
+  memset(relay_pulse_pending, 0, sizeof(relay_pulse_pending));
+  memset(relay_pulse_due, 0, sizeof(relay_pulse_due));
 
   for (uint8_t i = 0; i < kMaxRelays; i++) {
     relay_state[i] = relayBootState(i);
@@ -2049,6 +2138,7 @@ void setupDevicePins() {
     writeAssignedPin(runtime_template.relays[i], relay_state[i]);
     pinMode(runtime_template.relays[i].pin, OUTPUT);
     writeAssignedPin(runtime_template.relays[i], relay_state[i]);
+    if (relay_state[i]) scheduleRelayPulse(i);
   }
   for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
     const PinAssignment *assignment = ledOutputAssignment(i);
@@ -2472,9 +2562,24 @@ void maintainRelayEnforcement() {
   }
 }
 
+void maintainRelayPulsing() {
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
+    if (!relay_pulse_pending[i]) continue;
+    if (!relayPulseActive(i) || !relay_state[i]) {
+      cancelRelayPulse(i);
+      continue;
+    }
+    if (static_cast<int32_t>(now - relay_pulse_due[i]) >= 0) {
+      setRelay(i, false, true);
+    }
+  }
+}
+
 void maintainDevice() {
   maintainButtons();
   maintainRelayEnforcement();
+  maintainRelayPulsing();
   updateDeviceLeds();
 }
 
@@ -4423,6 +4528,33 @@ void appendRelayEnforcementSettings(String &page) {
   page += F("<button type='submit'>Save relay enforcement</button></form></section>");
 }
 
+void appendRelayPulseSettings(String &page) {
+  if (!runtime_template.enabled || !hasConfigurableRelays()) return;
+
+  page += F("<section class='panel'><h2>Relay Pulsing</h2><form data-inline='1' method='post' action='/relay-pulsing'>");
+  for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
+    if (!relayAvailable(i)) continue;
+    page += F("<div class='button-block'><strong>Relay ");
+    page += String(i + 1);
+    page += F("</strong> <span class='hint'>");
+    page += pinName(runtime_template.relays[i].pin);
+    page += F("</span><div class='row'><label><input type='checkbox' name='relay_pulse_enabled");
+    page += String(i);
+    page += F("' value='1'");
+    if (config.relay_pulse_enabled[i]) page += F(" checked");
+    page += F(">Pulse when ON</label><input name='relay_pulse_seconds");
+    page += String(i);
+    page += F("' type='number' min='0' max='");
+    page += String(kRelayPulseMaxSeconds);
+    page += F("' step='1' placeholder='seconds' value='");
+    if (config.relay_pulse_seconds[i] > 0) {
+      page += String(config.relay_pulse_seconds[i]);
+    }
+    page += F("'></div></div>");
+  }
+  page += F("<button type='submit'>Save relay pulsing</button></form></section>");
+}
+
 void appendInputModeOption(String &page, uint8_t value, const String &label, uint8_t selected) {
   page += F("<option value='");
   page += String(value);
@@ -4741,7 +4873,7 @@ void appendIBeaconForm(String &page) {
 
 void handleRoot() {
   String page;
-  page.reserve(9800);
+  page.reserve(10800);
   beginStreamedResponse("text/html");
   appendHeader(page, F("myMota32"), true);
   page += F("<div class='grid'>");
@@ -4757,6 +4889,8 @@ void handleRoot() {
   appendLedSettings(page);
   flushStreamChunk(page);
   appendRelayEnforcementSettings(page);
+  flushStreamChunk(page);
+  appendRelayPulseSettings(page);
   flushStreamChunk(page);
   appendIBeaconForm(page);
   flushStreamChunk(page);
@@ -4793,7 +4927,7 @@ void handleRoot() {
   page += F("'>");
   page += F("<input type='file' name='firmware' accept='.bin' required><br><button type='submit'>Upload firmware</button></form>");
   page += F("<p><a class='btn secondary' href='/reboot'>Reboot</a></p>");
-  page += F("<form method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset will delete Wi-Fi, template, MQTT, input, LED, relay enforcement, iBeacon, and energy settings. Continue?')\"><button class='danger' type='submit'>Factory reset</button></form></section>");
+  page += F("<form method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset will delete Wi-Fi, template, MQTT, input, LED, relay enforcement, relay pulsing, iBeacon, and energy settings. Continue?')\"><button class='danger' type='submit'>Factory reset</button></form></section>");
   flushStreamChunk(page);
 
   appendTemplateForm(page);
@@ -5066,6 +5200,53 @@ void handleRelayEnforcementSave() {
   page.reserve(700);
   appendHeader(page, F("myMota32 Relay Enforcement"));
   page += F("<p class='ok'>Relay enforcement settings saved.</p>");
+  page += F("<p><a href='/'>Back</a></p>");
+  appendFooter(page);
+  sendHtml(page);
+}
+
+void handleRelayPulseSave() {
+  if (!hasConfigurableRelays()) {
+    server.send(400, F("text/plain"), F("No configurable relays are available"));
+    return;
+  }
+
+  uint8_t pulse_enabled[kMaxRelays];
+  uint16_t pulse_seconds[kMaxRelays];
+  memcpy(pulse_enabled, config.relay_pulse_enabled, sizeof(pulse_enabled));
+  memcpy(pulse_seconds, config.relay_pulse_seconds, sizeof(pulse_seconds));
+
+  for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
+    if (!relayAvailable(i)) continue;
+
+    String enabled_arg = F("relay_pulse_enabled");
+    enabled_arg += String(i);
+    String seconds_arg = F("relay_pulse_seconds");
+    seconds_arg += String(i);
+
+    uint16_t seconds = 0;
+    String seconds_text = server.hasArg(seconds_arg) ? server.arg(seconds_arg) : String();
+    seconds_text.trim();
+    if (seconds_text.length() > 0 &&
+        !parseUint16Input(seconds_text, 0, kRelayPulseMaxSeconds, seconds)) {
+      server.send(400, F("text/plain"), F("Invalid relay pulse seconds"));
+      return;
+    }
+
+    pulse_seconds[i] = seconds;
+    pulse_enabled[i] = (server.hasArg(enabled_arg) && seconds >= kRelayPulseMinSeconds) ? 1 : 0;
+  }
+
+  if (!saveRelayPulseConfig(pulse_enabled, pulse_seconds)) {
+    server.send(500, F("text/plain"), F("Could not save relay pulsing settings"));
+    return;
+  }
+
+  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
+  String page;
+  page.reserve(700);
+  appendHeader(page, F("myMota32 Relay Pulsing"));
+  page += F("<p class='ok'>Relay pulsing settings saved.</p>");
   page += F("<p><a href='/'>Back</a></p>");
   appendFooter(page);
   sendHtml(page);
@@ -5910,8 +6091,116 @@ void handleCmnd() {
   server.send(200, F("application/json"), out);
 }
 
+void clearUpdateRuntime() {
+  update_started = false;
+  update_partition = nullptr;
+  update_written = 0;
+  update_erased_until = 0;
+  update_header_len = 0;
+  memset(update_header, 0, sizeof(update_header));
+}
+
+bool updateEraseUntil(size_t end_offset) {
+  if (!update_partition) return false;
+  while (update_erased_until < end_offset) {
+    if (esp_partition_erase_range(update_partition, update_erased_until, kUpdateSectorSize) != ESP_OK) {
+      update_error = UPDATE_ERROR_ERASE;
+      return false;
+    }
+    update_erased_until += kUpdateSectorSize;
+  }
+  return true;
+}
+
+bool updateBeginUpload() {
+  update_partition = esp_ota_get_next_update_partition(nullptr);
+  if (!update_partition) {
+    update_error = UPDATE_ERROR_NO_PARTITION;
+    return false;
+  }
+  update_written = 0;
+  update_erased_until = 0;
+  update_header_len = 0;
+  update_started = true;
+  return true;
+}
+
+bool updateWritePayload(const uint8_t *data, size_t len) {
+  if (!update_started || !update_partition) {
+    update_error = UPDATE_ERROR_BAD_ARGUMENT;
+    return false;
+  }
+  if (len == 0) return true;
+  if (update_written + len > update_partition->size) {
+    update_error = UPDATE_ERROR_SPACE;
+    return false;
+  }
+
+  size_t pos = 0;
+  if (update_header_len < kUpdateHeaderHoldBytes) {
+    const size_t need = kUpdateHeaderHoldBytes - update_header_len;
+    const size_t take = len < need ? len : need;
+    memcpy(update_header + update_header_len, data, take);
+    update_header_len += take;
+    update_written += take;
+    pos += take;
+  }
+
+  if (pos < len) {
+    const size_t write_offset = update_written;
+    const size_t write_len = len - pos;
+    const size_t erase_end = ((write_offset + write_len + kUpdateSectorSize - 1) / kUpdateSectorSize) * kUpdateSectorSize;
+    if (!updateEraseUntil(erase_end)) return false;
+    if (esp_partition_write(update_partition, write_offset, data + pos, write_len) != ESP_OK) {
+      update_error = UPDATE_ERROR_WRITE;
+      return false;
+    }
+    update_written += write_len;
+  }
+  return true;
+}
+
+bool updateFinishUpload() {
+  if (!update_started || !update_partition || update_header_len < kUpdateHeaderHoldBytes) {
+    update_error = UPDATE_ERROR_SIZE;
+    clearUpdateRuntime();
+    return false;
+  }
+  if (!updateEraseUntil(kUpdateSectorSize)) {
+    clearUpdateRuntime();
+    return false;
+  }
+  if (esp_partition_write(update_partition, 0, update_header, sizeof(update_header)) != ESP_OK) {
+    update_error = UPDATE_ERROR_WRITE;
+    clearUpdateRuntime();
+    return false;
+  }
+
+  uint8_t check = 0;
+  if (esp_partition_read(update_partition, 0, &check, sizeof(check)) != ESP_OK || check != kEspImageMagic) {
+    update_error = UPDATE_ERROR_READ;
+    clearUpdateRuntime();
+    return false;
+  }
+  if (esp_ota_set_boot_partition(update_partition) != ESP_OK) {
+    update_error = UPDATE_ERROR_ACTIVATE;
+    clearUpdateRuntime();
+    return false;
+  }
+
+  clearUpdateRuntime();
+  update_ok = true;
+  return true;
+}
+
+void updateAbortUpload(uint8_t err) {
+  clearUpdateRuntime();
+  update_ok = false;
+  update_error = err;
+}
+
 void handleUpdateDone() {
-  if (update_ok && !Update.hasError()) {
+  if (update_ok && update_error == UPDATE_ERROR_OK) {
     String page;
     page.reserve(700);
     appendHeader(page, F("myMota32 Update"));
@@ -5935,7 +6224,7 @@ void handleUpdateDone() {
 void handleUpdateUpload() {
   HTTPUpload &upload = server.upload();
   if (upload.status == UPLOAD_FILE_START) {
-    update_started = false;
+    clearUpdateRuntime();
     update_ok = false;
     update_error = UPDATE_ERROR_OK;
     persistEnergyTotal(true);
@@ -5946,33 +6235,24 @@ void handleUpdateUpload() {
   if (upload.status == UPLOAD_FILE_WRITE) {
     if (!update_started && upload.totalSize == 0) {
       if (upload.currentSize < 4) { update_error = UPDATE_ERROR_SIZE; return; }
-      if (upload.buf[0] != 0xE9) { update_error = UPDATE_ERROR_MAGIC_BYTE; return; }
-      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { update_error = Update.getError(); return; }
-      update_started = true;
+      if (upload.buf[0] != kEspImageMagic) { update_error = UPDATE_ERROR_MAGIC_BYTE; return; }
+      if (!updateBeginUpload()) return;
     }
-    if (Update.hasError()) { update_error = Update.getError(); return; }
-    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) update_error = Update.getError();
+    updateWritePayload(upload.buf, upload.currentSize);
     return;
   }
   if (upload.status == UPLOAD_FILE_END) {
     if (update_error != UPDATE_ERROR_OK) {
-      if (update_started) { Update.abort(); update_started = false; }
+      clearUpdateRuntime();
     } else if (!update_started) {
       update_error = UPDATE_ERROR_SIZE;
-    } else if (Update.end(true)) {
-      update_ok = true;
-      update_started = false;
-    } else {
-      update_error = Update.getError();
-      update_started = false;
+    } else if (!updateFinishUpload()) {
+      update_ok = false;
     }
     return;
   }
   if (upload.status == UPLOAD_FILE_ABORTED) {
-    if (update_started) Update.abort();
-    update_started = false;
-    update_ok = false;
-    update_error = UPDATE_ERROR_STREAM;
+    updateAbortUpload(UPDATE_ERROR_STREAM);
   }
 }
 
@@ -5989,6 +6269,7 @@ void setupRoutes() {
   server.on("/power", HTTP_POST, handlePowerSave);
   server.on("/leds", HTTP_POST, handleLedSave);
   server.on("/relay-enforcement", HTTP_POST, handleRelayEnforcementSave);
+  server.on("/relay-pulsing", HTTP_POST, handleRelayPulseSave);
   server.on("/buttons", HTTP_POST, handleButtonSave);
   server.on("/mqtt", HTTP_POST, handleMqttSave);
   server.on("/energy", HTTP_POST, handleEnergySave);
