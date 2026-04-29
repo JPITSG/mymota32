@@ -480,6 +480,7 @@ struct StoredConfig {
   uint8_t light_on_dimmer;
   uint8_t light_fade;
   uint8_t light_speed;
+  uint8_t light_restore_boot;
 
   uint8_t ibeacon_enabled;
   uint16_t ibeacon_filter1_interval_sec;
@@ -1531,6 +1532,7 @@ void setDefaultConfig() {
   config.light_on_dimmer = kLightPowerOnDimmerDefault;
   config.light_fade = kLightFadeDefault;
   config.light_speed = kLightSpeedDefault;
+  config.light_restore_boot = 1;
   config.ibeacon_enabled = 0;
   config.ibeacon_filter1_interval_sec = kIBeaconFilter1DefaultSec;
   config.ibeacon_filter2_interval_sec = kIBeaconFilter2DefaultSec;
@@ -1655,6 +1657,7 @@ bool loadConfig() {
   uint8_t light_on_dimmer = prefs.getUChar("lt_on_dim", kLightPowerOnDimmerDefault);
   uint8_t light_fade = prefs.getUChar("lt_fade", kLightFadeDefault);
   uint8_t light_speed = prefs.getUChar("lt_speed", kLightSpeedDefault);
+  uint8_t light_restore_boot = prefs.getUChar("lt_restore", 1);
 
   uint8_t ibeacon_enabled = prefs.getUChar("ibeacon", 0);
   uint16_t ibeacon_filter1_interval = prefs.getUShort("ib_f1_int", kIBeaconFilter1DefaultSec);
@@ -1758,6 +1761,7 @@ bool loadConfig() {
   memcpy(config.light_rgb, light_rgb, sizeof(config.light_rgb));
   config.light_fade = light_fade ? 1 : 0;
   config.light_speed = sanitizeLightSpeedValue(light_speed);
+  config.light_restore_boot = light_restore_boot ? 1 : 0;
   if (!config.light_power) {
     config.light_dimmer = kLightDimmerOff;
   } else if (light_dimmer < kLightDimmerMin) {
@@ -1869,13 +1873,15 @@ bool saveIBeaconConfig(bool enabled, uint16_t filter1_interval, const char *filt
   return loadConfig();
 }
 
-bool saveRelayEnforcementConfig(const uint8_t *restore_boot, const uint8_t *on_boot,
-                                const uint8_t *time_enabled, const uint16_t *time_seconds) {
+bool saveDeviceStateEnforcementConfig(const uint8_t *restore_boot, const uint8_t *on_boot,
+                                      const uint8_t *time_enabled, const uint16_t *time_seconds,
+                                      uint8_t light_restore_boot) {
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putBytes("rel_restore", restore_boot, sizeof(config.relay_restore_boot));
   prefs.putBytes("rel_on_boot", on_boot, sizeof(config.relay_on_boot));
   prefs.putBytes("rel_time_en", time_enabled, sizeof(config.relay_time_enabled));
   prefs.putBytes("rel_time_s", time_seconds, sizeof(config.relay_time_seconds));
+  prefs.putUChar("lt_restore", light_restore_boot ? 1 : 0);
   prefs.end();
   if (!loadConfig()) return false;
   refreshRelayEnforcementRuntime(true);
@@ -1903,6 +1909,7 @@ bool saveLightConfig() {
   prefs.putUChar("lt_on_dim", config.light_on_dimmer);
   prefs.putUChar("lt_fade", config.light_fade);
   prefs.putUChar("lt_speed", config.light_speed);
+  prefs.putUChar("lt_restore", config.light_restore_boot ? 1 : 0);
   prefs.end();
   config.light_power = light.power ? 1 : 0;
   config.light_dimmer = light.dimmer;
@@ -3196,7 +3203,7 @@ bool lightAvailable() {
 }
 
 void loadLightStateFromConfig() {
-  light.power = config.light_power != 0;
+  light.power = config.light_restore_boot && config.light_power != 0;
   light.dimmer = light.power ? sanitizeLightDimmerValue(config.light_dimmer) : kLightDimmerOff;
   light.ct = sanitizeLightCtValue(config.light_ct);
   light.mode = config.light_mode == kLightModeRgb ? kLightModeRgb : kLightModeWhite;
@@ -5631,10 +5638,19 @@ void appendLedSettings(String &page) {
   page += F("<button type='submit'>Save LEDs</button></form></section>");
 }
 
-void appendRelayEnforcementSettings(String &page) {
-  if (!runtime_template.enabled || !hasConfigurableRelays()) return;
+bool deviceStateEnforcementAvailable() {
+  if (!runtime_template.enabled) return false;
+  if (hasConfigurableRelays()) return true;
+#if MYMOTA32_LIGHT_SUPPORTED
+  if (light.present) return true;
+#endif
+  return false;
+}
 
-  page += F("<section class='panel'><h2>Relay Enforcement</h2><form data-inline='1' method='post' action='/relay-enforcement'>");
+void appendDeviceStateEnforcementSettings(String &page) {
+  if (!deviceStateEnforcementAvailable()) return;
+
+  page += F("<section class='panel'><h2>Device State Enforcement</h2><form data-inline='1' method='post' action='/relay-enforcement'>");
   for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
     if (!relayAvailable(i)) continue;
     page += F("<div class='button-block'><strong>Relay ");
@@ -5673,7 +5689,14 @@ void appendRelayEnforcementSettings(String &page) {
     }
     page += F("'></div></div>");
   }
-  page += F("<button type='submit'>Save relay enforcement</button></form></section>");
+#if MYMOTA32_LIGHT_SUPPORTED
+  if (light.present) {
+    page += F("<div class='button-block'><strong>Light</strong><div class='row'><label><input type='checkbox' name='light_restore_boot' value='1'");
+    if (config.light_restore_boot) page += F(" checked");
+    page += F(">Restore last state at boot</label><span class='hint'>Power, dimmer, color temperature, and color</span></div></div>");
+  }
+#endif
+  page += F("<button type='submit'>Save device state enforcement</button></form></section>");
 }
 
 void appendRelayPulseSettings(String &page) {
@@ -6044,7 +6067,7 @@ void handleRoot() {
   flushStreamChunk(page);
   appendLedSettings(page);
   flushStreamChunk(page);
-  appendRelayEnforcementSettings(page);
+  appendDeviceStateEnforcementSettings(page);
   flushStreamChunk(page);
   appendRelayPulseSettings(page);
   flushStreamChunk(page);
@@ -6083,7 +6106,7 @@ void handleRoot() {
   page += F("'>");
   page += F("<input type='file' name='firmware' accept='.bin' required><br><button type='submit'>Upload firmware</button></form>");
   page += F("<p><a class='btn secondary' href='/reboot'>Reboot</a></p>");
-  page += F("<form method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset will delete Wi-Fi, template, MQTT, input, LED, light, relay enforcement, relay pulsing, iBeacon, and energy settings. Continue?')\"><button class='danger' type='submit'>Factory reset</button></form></section>");
+  page += F("<form method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset will delete Wi-Fi, template, MQTT, input, LED, light, device state enforcement, relay pulsing, iBeacon, and energy settings. Continue?')\"><button class='danger' type='submit'>Factory reset</button></form></section>");
   flushStreamChunk(page);
 
   appendTemplateForm(page);
@@ -6378,9 +6401,9 @@ void handleLedSave() {
   server.send(303, F("text/plain"), "");
 }
 
-void handleRelayEnforcementSave() {
-  if (!hasConfigurableRelays()) {
-    server.send(400, F("text/plain"), F("No configurable relays are available"));
+void handleDeviceStateEnforcementSave() {
+  if (!deviceStateEnforcementAvailable()) {
+    server.send(400, F("text/plain"), F("No configurable device state settings are available"));
     return;
   }
 
@@ -6388,6 +6411,7 @@ void handleRelayEnforcementSave() {
   uint8_t on_boot[kMaxRelays];
   uint8_t time_enabled[kMaxRelays];
   uint16_t time_seconds[kMaxRelays];
+  uint8_t light_restore_boot = config.light_restore_boot;
   memcpy(restore_boot, config.relay_restore_boot, sizeof(restore_boot));
   memcpy(on_boot, config.relay_on_boot, sizeof(on_boot));
   memcpy(time_enabled, config.relay_time_enabled, sizeof(time_enabled));
@@ -6430,16 +6454,22 @@ void handleRelayEnforcementSave() {
     }
   }
 
-  if (!saveRelayEnforcementConfig(restore_boot, on_boot, time_enabled, time_seconds)) {
-    server.send(500, F("text/plain"), F("Could not save relay enforcement settings"));
+#if MYMOTA32_LIGHT_SUPPORTED
+  if (light.present) {
+    light_restore_boot = server.hasArg("light_restore_boot") ? 1 : 0;
+  }
+#endif
+
+  if (!saveDeviceStateEnforcementConfig(restore_boot, on_boot, time_enabled, time_seconds, light_restore_boot)) {
+    server.send(500, F("text/plain"), F("Could not save device state enforcement settings"));
     return;
   }
 
   if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
   String page;
   page.reserve(700);
-  appendHeader(page, F("myMota32 Relay Enforcement"));
-  page += F("<p class='ok'>Relay enforcement settings saved.</p>");
+  appendHeader(page, F("myMota32 Device State Enforcement"));
+  page += F("<p class='ok'>Device state enforcement settings saved.</p>");
   page += F("<p><a href='/'>Back</a></p>");
   appendFooter(page);
   sendHtml(page);
@@ -7545,7 +7575,7 @@ void setupRoutes() {
   server.on("/light", HTTP_POST, handleLightSave);
 #endif
   server.on("/leds", HTTP_POST, handleLedSave);
-  server.on("/relay-enforcement", HTTP_POST, handleRelayEnforcementSave);
+  server.on("/relay-enforcement", HTTP_POST, handleDeviceStateEnforcementSave);
   server.on("/relay-pulsing", HTTP_POST, handleRelayPulseSave);
   server.on("/buttons", HTTP_POST, handleButtonSave);
   server.on("/mqtt", HTTP_POST, handleMqttSave);
