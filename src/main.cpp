@@ -61,6 +61,7 @@ constexpr uint8_t UPDATE_ERROR_ACTIVATE = 9;
 constexpr uint8_t UPDATE_ERROR_NO_PARTITION = 10;
 constexpr uint8_t UPDATE_ERROR_BAD_ARGUMENT = 11;
 constexpr uint8_t UPDATE_ERROR_ABORT = 12;
+constexpr uint8_t kUpdateErrorTargetMismatch = 250;
 constexpr uint8_t kPhyModeAuto = 0;
 constexpr uint8_t kPhyModeB = 1;
 constexpr uint8_t kPhyModeG = 2;
@@ -5394,8 +5395,24 @@ const __FlashStringHelper *updateErrorName(uint8_t err) {
     case UPDATE_ERROR_NO_PARTITION: return F("partition not found");
     case UPDATE_ERROR_BAD_ARGUMENT: return F("bad argument");
     case UPDATE_ERROR_ABORT: return F("aborted");
+    case kUpdateErrorTargetMismatch: return F("filename target mismatch");
     default: return F("unknown");
   }
+}
+
+bool truthyUpdateVerifyArg() {
+  if (!server.hasArg(F("verify"))) return true;
+  String value = server.arg(F("verify"));
+  value.trim();
+  value.toLowerCase();
+  return !(value == F("0") || value == F("false") || value == F("off") || value == F("no"));
+}
+
+bool firmwareFilenameMatchesTarget(String filename) {
+  filename.toLowerCase();
+  String target = F(MYMOTA32_TARGET);
+  target.toLowerCase();
+  return filename.indexOf(target) >= 0;
 }
 
 void appendHeader(String &page, const __FlashStringHelper *title, bool show_spinner = false) {
@@ -5457,8 +5474,9 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
 #endif
   page += F("function ts(){var s=document.getElementById('known-template'),t=document.getElementById('template-json');if(!s||!t)return;var v=t.value.trim(),m=0;for(var i=1;i<s.options.length;i++){if(s.options[i].getAttribute('data-json')==v){m=i;break;}}s.selectedIndex=m;}");
   page += F("function tp(s){var o=s.options[s.selectedIndex],t=document.getElementById('template-json');if(o&&t&&o.getAttribute('data-json')){t.value=o.getAttribute('data-json');ts();}}");
-  page += F("function vf(f){var t=(f.getAttribute('data-target')||'').toLowerCase(),i=f.querySelector('input[type=file]');if(!i||!t)return true;var n=i.files&&i.files[0]?i.files[0].name.toLowerCase():'';var o=!n||n.indexOf(t)>=0;i.setCustomValidity(o?'':'Firmware file name must include '+t);return o;}");
-  page += F("function fw(){var a=document.querySelectorAll('.firmware-upload');for(var i=0;i<a.length;i++){(function(f){var x=f.querySelector('input[type=file]');if(x)x.onchange=function(){vf(f);this.reportValidity();};f.addEventListener('submit',function(e){if(!vf(f)){e.preventDefault();if(x)x.reportValidity();}},true);})(a[i]);}}");
+  page += F("function vf(f){var t=(f.getAttribute('data-target')||'').toLowerCase(),i=f.querySelector('input[type=file]'),c=f.querySelector('.firmware-verify');if(!i||!t)return true;if(c&&!c.checked){i.setCustomValidity('');return true;}var n=i.files&&i.files[0]?i.files[0].name.toLowerCase():'';var o=!n||n.indexOf(t)>=0;i.setCustomValidity(o?'':'Firmware file name must include '+t);return o;}");
+  page += F("function fu(f){var c=f.querySelector('.firmware-verify');f.action='/update?verify='+(!c||c.checked?'1':'0');}");
+  page += F("function fw(){var a=document.querySelectorAll('.firmware-upload');for(var i=0;i<a.length;i++){(function(f){var x=f.querySelector('input[type=file]'),c=f.querySelector('.firmware-verify');fu(f);if(x)x.onchange=function(){vf(f);this.reportValidity();};if(c)c.onchange=function(){fu(f);vf(f);if(x)x.reportValidity();};f.addEventListener('submit',function(e){fu(f);if(!vf(f)){e.preventDefault();if(x)x.reportValidity();}},true);})(a[i]);}}");
 #if MYMOTA32_LIGHT_SUPPORTED
   page += F("function bi(){var a=document.querySelectorAll('.button-action');for(var i=0;i<a.length;i++){a[i].onchange=function(){ba(this)};ba(a[i]);}var m=document.querySelectorAll('.input-mode');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var c=document.querySelectorAll('.relay-boot-choice');for(var k=0;k<c.length;k++){c[k].onchange=function(){rb(this)};rb(c[k]);}var l=document.querySelectorAll('.light-auto');for(var n=0;n<l.length;n++){l[n].oninput=function(){lu(this)};l[n].onchange=function(){la(this)};}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ts();}bi();fw();");
 #else
@@ -6314,10 +6332,12 @@ void handleRoot() {
   appendMqttForm(page);
   flushStreamChunk(page);
 
-  page += F("<section class='panel'><h2>Firmware</h2><form class='firmware-upload' method='post' action='/update' enctype='multipart/form-data' data-target='");
+  page += F("<section class='panel'><h2>Firmware</h2><form class='firmware-upload' method='post' action='/update?verify=1' enctype='multipart/form-data' data-target='");
   page += F(MYMOTA32_TARGET);
   page += F("'>");
-  page += F("<input type='file' name='firmware' accept='.bin' required><br><button type='submit'>Upload firmware</button></form>");
+  page += F("<input type='file' name='firmware' accept='.bin' required>");
+  page += F("<div class='row'><label><input class='firmware-verify' type='checkbox' checked>Verify firmware target on device</label></div>");
+  page += F("<button type='submit'>Upload firmware</button></form>");
   page += F("<p><a class='btn secondary' href='/reboot'>Reboot</a></p>");
   page += F("<form method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset will delete Wi-Fi, template, MQTT, input, LED, light, device state enforcement, relay pulsing, iBeacon, and energy settings. Continue?')\"><button class='danger' type='submit'>Factory reset</button></form></section>");
   flushStreamChunk(page);
@@ -7768,9 +7788,16 @@ void handleUpdateUpload() {
     clearUpdateRuntime();
     update_ok = false;
     update_error = UPDATE_ERROR_OK;
+    if (upload.filename.length() == 0) {
+      update_error = UPDATE_ERROR_SIZE;
+      return;
+    }
+    if (truthyUpdateVerifyArg() && !firmwareFilenameMatchesTarget(upload.filename)) {
+      update_error = kUpdateErrorTargetMismatch;
+      return;
+    }
     persistEnergyTotal(true);
     persistLightConfig(true);
-    if (upload.filename.length() == 0) update_error = UPDATE_ERROR_SIZE;
     return;
   }
   if (upload.status == UPLOAD_FILE_WRITE && update_error != UPDATE_ERROR_OK) return;
