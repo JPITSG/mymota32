@@ -10,6 +10,7 @@
 #include <esp_partition.h>
 #include <esp_system.h>
 #include <esp_wifi.h>
+#include <string.h>
 #include <math.h>
 
 #ifndef MYMOTA32_VERSION
@@ -3457,6 +3458,83 @@ bool parseLightColor(const char *p, size_t len, uint8_t rgb[3]) {
   return false;
 }
 
+bool parseLightHsb(const char *p, size_t len, uint16_t &hue, uint8_t &sat, uint8_t &bri) {
+  if (!p || len == 0) return false;
+  uint16_t values[3]{};
+  uint8_t index = 0;
+  size_t start = 0;
+  while (start <= len) {
+    if (index >= 3) return false;
+    size_t end = start;
+    while (end < len && p[end] != ',') end++;
+    const char *token = p + start;
+    size_t token_len = end - start;
+    while (token_len > 0 && (*token == ' ' || *token == '\t')) {
+      token++;
+      token_len--;
+    }
+    while (token_len > 0) {
+      const char c = token[token_len - 1];
+      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+      token_len--;
+    }
+    uint16_t value = 0;
+    if (!parseUint16Token(token, token_len, 0, 360, value)) return false;
+    values[index++] = value;
+    if (end == len) break;
+    start = end + 1;
+  }
+  if (index != 3 || values[1] > 100 || values[2] > 100) return false;
+  hue = values[0];
+  sat = static_cast<uint8_t>(values[1]);
+  bri = static_cast<uint8_t>(values[2]);
+  return true;
+}
+
+void lightHsbToRgb(uint16_t hue, uint8_t sat, uint8_t rgb[3]) {
+  const uint16_t h = hue >= 360 ? 0 : hue;
+  const uint8_t s = static_cast<uint8_t>((static_cast<uint16_t>(sat) * 255U + 50U) / 100U);
+  const uint8_t region = h / 60U;
+  const uint8_t fraction = static_cast<uint8_t>(((h % 60U) * 255U + 30U) / 60U);
+  const uint8_t p = 255U - s;
+  const uint8_t q = 255U - static_cast<uint8_t>((static_cast<uint16_t>(s) * fraction) / 255U);
+  const uint8_t t = 255U - static_cast<uint8_t>((static_cast<uint16_t>(s) * (255U - fraction)) / 255U);
+  switch (region) {
+    case 0: rgb[0] = 255; rgb[1] = t; rgb[2] = p; break;
+    case 1: rgb[0] = q; rgb[1] = 255; rgb[2] = p; break;
+    case 2: rgb[0] = p; rgb[1] = 255; rgb[2] = t; break;
+    case 3: rgb[0] = p; rgb[1] = q; rgb[2] = 255; break;
+    case 4: rgb[0] = t; rgb[1] = p; rgb[2] = 255; break;
+    default: rgb[0] = 255; rgb[1] = p; rgb[2] = q; break;
+  }
+}
+
+void lightRgbToHsb(uint16_t &hue, uint8_t &sat, uint8_t &bri) {
+  const uint8_t r = light.rgb[0];
+  const uint8_t g = light.rgb[1];
+  const uint8_t b = light.rgb[2];
+  const uint8_t max_value = max(r, max(g, b));
+  const uint8_t min_value = min(r, min(g, b));
+  const uint8_t delta = max_value - min_value;
+  bri = light.power ? light.dimmer : 0;
+  if (max_value == 0 || delta == 0) {
+    hue = 0;
+    sat = max_value == 0 ? 0 : static_cast<uint8_t>((static_cast<uint16_t>(delta) * 100U + (max_value / 2U)) / max_value);
+    return;
+  }
+  sat = static_cast<uint8_t>((static_cast<uint16_t>(delta) * 100U + (max_value / 2U)) / max_value);
+  int16_t h = 0;
+  if (max_value == r) {
+    h = static_cast<int16_t>((60 * (static_cast<int16_t>(g) - static_cast<int16_t>(b))) / delta);
+  } else if (max_value == g) {
+    h = static_cast<int16_t>(120 + (60 * (static_cast<int16_t>(b) - static_cast<int16_t>(r))) / delta);
+  } else {
+    h = static_cast<int16_t>(240 + (60 * (static_cast<int16_t>(r) - static_cast<int16_t>(g))) / delta);
+  }
+  if (h < 0) h += 360;
+  hue = static_cast<uint16_t>(h);
+}
+
 void setLightColor(const uint8_t rgb[3], bool persist = true) {
   if (!light.present || !rgb) return;
   const bool any = rgb[0] || rgb[1] || rgb[2];
@@ -3466,6 +3544,25 @@ void setLightColor(const uint8_t rgb[3], bool persist = true) {
   if (any && light.dimmer == 0) light.dimmer = sanitizeLightDimmerValue(config.light_on_dimmer);
   light.power = any;
   if (!any) light.dimmer = kLightDimmerOff;
+  updateLightOutputs();
+  if (changed) scheduleMqttLightPublish(kMqttLightPendingColor | kMqttLightPendingDimmer);
+  if (persist && changed) scheduleLightConfigPersist();
+}
+
+void setLightHsb(uint16_t hue, uint8_t sat, uint8_t bri, bool persist = true) {
+  if (!light.present) return;
+  uint8_t rgb[3];
+  lightHsbToRgb(hue, sat, rgb);
+  const uint8_t dimmer = bri == 0 ? kLightDimmerOff : sanitizeLightDimmerValue(bri);
+  const bool any = dimmer > 0 && (rgb[0] || rgb[1] || rgb[2]);
+  const bool changed = light.mode != kLightModeRgb ||
+                       memcmp(light.rgb, rgb, sizeof(light.rgb)) != 0 ||
+                       light.power != any ||
+                       light.dimmer != dimmer;
+  memcpy(light.rgb, rgb, sizeof(light.rgb));
+  light.mode = kLightModeRgb;
+  light.power = any;
+  light.dimmer = dimmer;
   updateLightOutputs();
   if (changed) scheduleMqttLightPublish(kMqttLightPendingColor | kMqttLightPendingDimmer);
   if (persist && changed) scheduleLightConfigPersist();
@@ -4588,6 +4685,101 @@ bool mqttCommandFromTopic(const char *topic, size_t topic_len, const char *&comm
   return command_len > 0;
 }
 
+void trimCommandSpan(const char *&p, size_t &len) {
+  while (len > 0) {
+    const char c = p[0];
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+    p++;
+    len--;
+  }
+  while (len > 0) {
+    const char c = p[len - 1];
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+    len--;
+  }
+}
+
+bool parseBacklogCommand(const char *p, size_t len) {
+  constexpr size_t prefix_len = 7;
+  if (!p || len < prefix_len || strncasecmp(p, "backlog", prefix_len) != 0) return false;
+  for (size_t i = prefix_len; i < len; i++) {
+    const char c = p[i];
+    if (c < '0' || c > '9') return false;
+  }
+  return true;
+}
+
+void stripLeadingBacklogTokens(const char *&p, size_t &len) {
+  for (;;) {
+    trimCommandSpan(p, len);
+    size_t token_len = 0;
+    while (token_len < len) {
+      const char c = p[token_len];
+      if (c == ' ' || c == '\t' || c == '\r' || c == '\n') break;
+      token_len++;
+    }
+    if (token_len == 0 || !parseBacklogCommand(p, token_len)) return;
+    p += token_len;
+    len -= token_len;
+  }
+}
+
+bool executeBacklogCommands(const char *arg, size_t arg_len, String &out, String &error) {
+  const char *p = arg;
+  size_t len = arg_len;
+  stripLeadingBacklogTokens(p, len);
+  bool ran = false;
+  while (len > 0) {
+    size_t segment_len = 0;
+    while (segment_len < len && p[segment_len] != ';') segment_len++;
+    const char *segment = p;
+    size_t command_len = segment_len;
+    stripLeadingBacklogTokens(segment, command_len);
+    if (command_len > 0) {
+      String command;
+      command.reserve(command_len);
+      for (size_t i = 0; i < command_len; i++) command += segment[i];
+      String response;
+      if (!executeCmndString(command, response, error)) return false;
+      out = response;
+      ran = true;
+    }
+    if (segment_len == len) break;
+    p += segment_len + 1;
+    len -= segment_len + 1;
+  }
+  if (!ran) {
+    out = F("{\"Backlog\":\"Empty\"}");
+  } else if (out.length() == 0) {
+    out = F("{\"Backlog\":\"Done\"}");
+  }
+  return true;
+}
+
+#if MYMOTA32_LIGHT_SUPPORTED
+bool parseLightDimmerCommand(const char *p, size_t len, uint8_t &index, char *response_key, size_t key_size) {
+  constexpr size_t prefix_len = 6;
+  if (!p || len < prefix_len || strncasecmp(p, "dimmer", prefix_len) != 0) return false;
+  if (len == prefix_len) {
+    index = 0;
+    strlcpy(response_key, "Dimmer", key_size);
+    return true;
+  }
+  uint16_t dimmer_index = 0;
+  for (size_t i = prefix_len; i < len; i++) {
+    const char c = p[i];
+    if (c < '0' || c > '9') return false;
+    dimmer_index = (dimmer_index * 10U) + static_cast<uint16_t>(c - '0');
+    if (dimmer_index > 9) return false;
+  }
+  index = dimmer_index > 4 ? 1 : static_cast<uint8_t>(dimmer_index);
+  if (snprintf(response_key, key_size, "Dimmer%u", static_cast<unsigned>(dimmer_index)) >= static_cast<int>(key_size)) {
+    return false;
+  }
+  return dimmer_index > 0;
+}
+#endif
+
 bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size_t arg_len, String &out, String &error) {
   if (!raw || !arg || cmd_len == 0) {
     error = F("Invalid cmnd");
@@ -4604,6 +4796,10 @@ bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size
     const char c = arg[arg_len - 1];
     if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
     arg_len--;
+  }
+
+  if (parseBacklogCommand(raw, cmd_len)) {
+    return executeBacklogCommands(arg, arg_len, out, error);
   }
 
   uint8_t relay = 0;
@@ -4658,7 +4854,8 @@ bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size
   }
 
 #if MYMOTA32_LIGHT_SUPPORTED
-  if (commandEquals(raw, cmd_len, "dimmer")) {
+  uint8_t dimmer_index = 0;
+  if (parseLightDimmerCommand(raw, cmd_len, dimmer_index, response_key, sizeof(response_key))) {
     if (!light.present) {
       error = F("No light output is configured");
       return false;
@@ -4672,7 +4869,9 @@ bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size
       setLightDimmer(dimmer);
     }
     out.reserve(20);
-    out += F("{\"Dimmer\":");
+    out += F("{\"");
+    out += response_key;
+    out += F("\":");
     out += light.dimmer;
     out += F("}");
     return true;
@@ -4714,6 +4913,34 @@ bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size
     out.reserve(24);
     out += F("{\"Color\":\"");
     appendLightColorHex(out);
+    out += F("\"}");
+    return true;
+  }
+
+  if (commandEquals(raw, cmd_len, "hsbcolor")) {
+    if (!light.present) {
+      error = F("No light output is configured");
+      return false;
+    }
+    uint16_t hue = 0;
+    uint8_t sat = 0;
+    uint8_t bri = 0;
+    if (arg_len > 0) {
+      if (!parseLightHsb(arg, arg_len, hue, sat, bri)) {
+        error = F("Invalid HSB color");
+        return false;
+      }
+      setLightHsb(hue, sat, bri);
+    } else {
+      lightRgbToHsb(hue, sat, bri);
+    }
+    out.reserve(28);
+    out += F("{\"HSBColor\":\"");
+    out += hue;
+    out += ',';
+    out += sat;
+    out += ',';
+    out += bri;
     out += F("\"}");
     return true;
   }
