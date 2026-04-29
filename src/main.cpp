@@ -214,7 +214,22 @@ constexpr float kEnergyTotalOffsetMaxKwh = 1000000.0f;
 constexpr float kEnergyZeroPowerThreshold = 0.001f;
 constexpr uint8_t kEnergyDriverNone = 0;
 constexpr uint8_t kEnergyDriverBl0939 = 1;
+constexpr uint8_t kEnergyDriverHlw8012 = 2;
 constexpr uint8_t kEnergyMaxChannels = 2;
+constexpr uint32_t kHlwUpdateMs = 200;
+constexpr uint32_t kHlwPowerProbeUs = 10000000UL;
+constexpr uint8_t kHlwCf1CycleTicks = 8;
+constexpr uint8_t kHlwCf1SampleStartTick = 2;
+constexpr uint8_t kHlwCf1SampleEndTick = 8;
+constexpr uint32_t kHlwPowerRatio = 10000;
+constexpr uint32_t kHlwVoltageRatio = 2200;
+constexpr uint32_t kHlwCurrentRatio = 4545;
+constexpr uint32_t kHjlPowerRatio = 1362;
+constexpr uint32_t kHjlVoltageRatio = 822;
+constexpr uint32_t kHjlCurrentRatio = 3300;
+constexpr uint32_t kHlwPowerCalibration = 12530;
+constexpr uint32_t kHlwVoltageCalibration = 1950;
+constexpr uint32_t kHlwCurrentCalibration = 3500;
 constexpr uint32_t kBl0939PollMs = 1000;
 constexpr uint32_t kBl0939StaleMs = 5000;
 constexpr uint8_t kBl0939BufferSize = 35;
@@ -532,6 +547,11 @@ struct EnergyState {
   uint8_t channel_count;
   uint8_t rx_pin;
   uint8_t tx_pin;
+  uint8_t cf_pin;
+  uint8_t cf1_pin;
+  uint8_t sel_pin;
+  bool sel_inverted;
+  bool hjl;
   float voltage;
   float current;
   float power;
@@ -546,6 +566,26 @@ struct EnergyState {
   uint32_t last_poll_ms;
   uint32_t last_success_ms;
   uint32_t last_integrate_ms;
+  uint32_t last_hlw_update_ms;
+  volatile uint32_t hlw_cf_pulse_length;
+  volatile uint32_t hlw_cf_pulse_last_us;
+  volatile uint32_t hlw_cf_summed_pulse_length;
+  volatile uint32_t hlw_cf_pulse_counter;
+  volatile uint32_t hlw_cf1_pulse_length;
+  volatile uint32_t hlw_cf1_pulse_last_us;
+  volatile uint32_t hlw_cf1_summed_pulse_length;
+  volatile uint32_t hlw_cf1_pulse_counter;
+  volatile uint8_t hlw_cf1_timer;
+  volatile bool hlw_load_off;
+  uint32_t hlw_cf_power_pulse_length;
+  uint32_t hlw_cf1_voltage_pulse_length;
+  uint32_t hlw_cf1_current_pulse_length;
+  uint32_t hlw_power_ratio;
+  uint32_t hlw_voltage_ratio;
+  uint32_t hlw_current_ratio;
+  uint8_t hlw_power_retry;
+  bool hlw_select_ui_flag;
+  bool hlw_voltage_on_selected;
 };
 
 StoredConfig config{};
@@ -2886,6 +2926,7 @@ void updateEnergyAggregateFromChannels() {
 
 const __FlashStringHelper *energyDriverName() {
   if (energy.driver == kEnergyDriverBl0939) return F("BL0939");
+  if (energy.driver == kEnergyDriverHlw8012) return energy.hjl ? F("BL0937/HJL-01") : F("HLW8012");
   return F("none");
 }
 
@@ -2916,6 +2957,132 @@ void scheduleMqttRelayOffEnergyReport(uint8_t relay) {
   updateEnergyRelayOffZero(relay);
   mqtt_pending_energy_zero_relay_mask |= (1U << relay);
   scheduleMqttEnergyReport(kMqttEnergyReportReasonRelayOff);
+}
+
+bool energyDevicePowerOn() {
+  bool has_relay = false;
+  for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
+    if (!relayAvailable(i)) continue;
+    has_relay = true;
+    if (relay_state[i]) return true;
+  }
+  return !has_relay;
+}
+
+void IRAM_ATTR hlwCfInterrupt() {
+  const uint32_t us = micros();
+  if (energy.hlw_load_off) {
+    energy.hlw_cf_pulse_last_us = us;
+    energy.hlw_load_off = false;
+    return;
+  }
+  energy.hlw_cf_pulse_length = us - energy.hlw_cf_pulse_last_us;
+  energy.hlw_cf_pulse_last_us = us;
+  energy.hlw_cf_summed_pulse_length += energy.hlw_cf_pulse_length;
+  energy.hlw_cf_pulse_counter = energy.hlw_cf_pulse_counter + 1;
+}
+
+void IRAM_ATTR hlwCf1Interrupt() {
+  const uint32_t us = micros();
+  energy.hlw_cf1_pulse_length = us - energy.hlw_cf1_pulse_last_us;
+  energy.hlw_cf1_pulse_last_us = us;
+  if (energy.hlw_cf1_timer > kHlwCf1SampleStartTick &&
+      energy.hlw_cf1_timer < kHlwCf1SampleEndTick) {
+    energy.hlw_cf1_summed_pulse_length += energy.hlw_cf1_pulse_length;
+    energy.hlw_cf1_pulse_counter = energy.hlw_cf1_pulse_counter + 1;
+  }
+}
+
+void processHlwPulseEnergy(uint32_t now) {
+  if (now - energy.last_hlw_update_ms < kHlwUpdateMs) return;
+  energy.last_hlw_update_ms = now;
+
+  uint32_t cf_pulse_length = 0;
+  uint32_t cf_summed_pulse_length = 0;
+  uint32_t cf_pulse_counter = 0;
+  bool load_off = false;
+
+  if (micros() - energy.hlw_cf_pulse_last_us > kHlwPowerProbeUs) {
+    energy.hlw_cf_pulse_length = 0;
+    energy.hlw_load_off = true;
+  }
+
+  noInterrupts();
+  cf_pulse_length = energy.hlw_cf_pulse_length;
+  cf_summed_pulse_length = energy.hlw_cf_summed_pulse_length;
+  cf_pulse_counter = energy.hlw_cf_pulse_counter;
+  load_off = energy.hlw_load_off;
+  energy.hlw_cf_summed_pulse_length = 0;
+  energy.hlw_cf_pulse_counter = 0;
+  interrupts();
+
+  energy.hlw_cf_power_pulse_length = cf_pulse_length;
+  if (cf_pulse_counter && !load_off) {
+    energy.hlw_cf_power_pulse_length = cf_summed_pulse_length / cf_pulse_counter;
+  }
+
+  EnergyChannelState &channel = energy.channel[0];
+  const bool power_on = energyDevicePowerOn();
+  if (energy.hlw_cf_power_pulse_length && power_on && !load_off) {
+    const uint32_t watts_x10 = (energy.hlw_power_ratio * kHlwPowerCalibration) / energy.hlw_cf_power_pulse_length;
+    channel.power = static_cast<float>(watts_x10) / 10.0f;
+    energy.hlw_power_retry = 1;
+    energy.last_success_ms = now;
+  } else if (energy.hlw_power_retry) {
+    energy.hlw_power_retry--;
+  } else {
+    channel.power = 0.0f;
+  }
+
+  if (digitalPinSupported(energy.cf1_pin)) {
+    const uint8_t cf1_timer = energy.hlw_cf1_timer + 1;
+    energy.hlw_cf1_timer = cf1_timer;
+    if (cf1_timer >= kHlwCf1CycleTicks) {
+      energy.hlw_cf1_timer = 0;
+      energy.hlw_select_ui_flag = !energy.hlw_select_ui_flag;
+      if (digitalPinSupported(energy.sel_pin)) {
+        digitalWrite(energy.sel_pin, energy.hlw_select_ui_flag ? HIGH : LOW);
+      }
+
+      uint32_t cf1_summed_pulse_length = 0;
+      uint32_t cf1_pulse_counter = 0;
+      noInterrupts();
+      cf1_summed_pulse_length = energy.hlw_cf1_summed_pulse_length;
+      cf1_pulse_counter = energy.hlw_cf1_pulse_counter;
+      energy.hlw_cf1_summed_pulse_length = 0;
+      energy.hlw_cf1_pulse_counter = 0;
+      interrupts();
+
+      const uint32_t cf1_pulse_length = cf1_pulse_counter ? cf1_summed_pulse_length / cf1_pulse_counter : 0;
+      if (energy.hlw_select_ui_flag == energy.hlw_voltage_on_selected) {
+        energy.hlw_cf1_voltage_pulse_length = cf1_pulse_length;
+        energy.voltage_raw = cf1_pulse_length;
+        if (cf1_pulse_length && power_on) {
+          const uint32_t volts_x10 = (energy.hlw_voltage_ratio * kHlwVoltageCalibration) / cf1_pulse_length;
+          channel.voltage = static_cast<float>(volts_x10) / 10.0f;
+          energy.last_success_ms = now;
+        } else {
+          channel.voltage = 0.0f;
+        }
+      } else {
+        energy.hlw_cf1_current_pulse_length = cf1_pulse_length;
+        channel.current_raw = cf1_pulse_length;
+        if (cf1_pulse_length && channel.power > 0.0f) {
+          const uint32_t milliamps = (energy.hlw_current_ratio * kHlwCurrentCalibration) / cf1_pulse_length;
+          channel.current = static_cast<float>(milliamps) / 1000.0f;
+          energy.last_success_ms = now;
+        } else {
+          channel.current = 0.0f;
+        }
+      }
+    }
+  } else {
+    channel.voltage = 0.0f;
+    channel.current = 0.0f;
+  }
+
+  channel.power_raw = static_cast<int32_t>(energy.hlw_cf_power_pulse_length);
+  updateEnergyAggregateFromChannels();
 }
 
 uint32_t bl09xxRead24(uint8_t index) {
@@ -3023,25 +3190,60 @@ void setupEnergyMonitor() {
   energy.driver = kEnergyDriverNone;
   energy.rx_pin = kInvalidPin;
   energy.tx_pin = kInvalidPin;
+  energy.cf_pin = kInvalidPin;
+  energy.cf1_pin = kInvalidPin;
+  energy.sel_pin = kInvalidPin;
   energy.total_kwh = ukwhToKwh(energy_saved_ukwh);
   last_energy_persist_ms = millis();
   energy_persist_requested = false;
 
-  if (!digitalPinSupported(runtime_template.energy_bl0939_rx_pin) ||
-      !digitalPinSupported(runtime_template.energy_tx_pin)) {
+  if (digitalPinSupported(runtime_template.energy_bl0939_rx_pin) &&
+      digitalPinSupported(runtime_template.energy_tx_pin)) {
+    energy.present = true;
+    energy.driver = kEnergyDriverBl0939;
+    energy.channel_count = 2;
+    energy.rx_pin = runtime_template.energy_bl0939_rx_pin;
+    energy.tx_pin = runtime_template.energy_tx_pin;
+    energy.last_integrate_ms = millis();
+    energy.last_success_ms = millis();
+    bl0939_serial.setRxBufferSize(128);
+    bl0939_serial.begin(4800, SERIAL_8N1, energy.rx_pin, energy.tx_pin);
+    sendBl0939Init();
+    return;
+  }
+
+  if (!digitalPinSupported(runtime_template.energy_cf_pin)) {
     return;
   }
 
   energy.present = true;
-  energy.driver = kEnergyDriverBl0939;
-  energy.channel_count = 2;
-  energy.rx_pin = runtime_template.energy_bl0939_rx_pin;
-  energy.tx_pin = runtime_template.energy_tx_pin;
+  energy.driver = kEnergyDriverHlw8012;
+  energy.channel_count = 1;
+  energy.cf_pin = runtime_template.energy_cf_pin;
+  energy.cf1_pin = runtime_template.energy_cf1_pin;
+  energy.sel_pin = runtime_template.energy_sel_pin;
+  energy.sel_inverted = runtime_template.energy_sel_inverted;
+  energy.hjl = runtime_template.energy_hjl;
+  energy.hlw_power_ratio = energy.hjl ? kHjlPowerRatio : kHlwPowerRatio;
+  energy.hlw_voltage_ratio = energy.hjl ? kHjlVoltageRatio : kHlwVoltageRatio;
+  energy.hlw_current_ratio = energy.hjl ? kHjlCurrentRatio : kHlwCurrentRatio;
+  energy.hlw_voltage_on_selected = !energy.sel_inverted;
+  energy.hlw_select_ui_flag = false;
+  energy.hlw_load_off = true;
   energy.last_integrate_ms = millis();
   energy.last_success_ms = millis();
-  bl0939_serial.setRxBufferSize(128);
-  bl0939_serial.begin(4800, SERIAL_8N1, energy.rx_pin, energy.tx_pin);
-  sendBl0939Init();
+  energy.last_hlw_update_ms = millis();
+
+  if (digitalPinSupported(energy.sel_pin)) {
+    pinMode(energy.sel_pin, OUTPUT);
+    digitalWrite(energy.sel_pin, energy.hlw_select_ui_flag ? HIGH : LOW);
+  }
+  if (digitalPinSupported(energy.cf1_pin)) {
+    pinMode(energy.cf1_pin, INPUT_PULLUP);
+    attachInterrupt(energy.cf1_pin, hlwCf1Interrupt, FALLING);
+  }
+  pinMode(energy.cf_pin, INPUT_PULLUP);
+  attachInterrupt(energy.cf_pin, hlwCfInterrupt, FALLING);
 }
 
 void observeEnergyPowerForZeroReport() {
@@ -3070,6 +3272,8 @@ void maintainEnergy() {
       }
       updateEnergyAggregateFromChannels();
     }
+  } else if (energy.driver == kEnergyDriverHlw8012) {
+    processHlwPulseEnergy(now);
   }
   if (now - energy.last_integrate_ms >= kEnergyIntegrateMs) {
     const uint32_t elapsed = now - energy.last_integrate_ms;
@@ -5442,10 +5646,19 @@ void appendTemplateStatus(String &page) {
     if (energy.present) {
       page += F("<span>Energy</span><div><code>");
       page += energyDriverName();
-      page += F("</code> RX <code>");
-      page += pinName(energy.rx_pin);
-      page += F("</code>, TX <code>");
-      page += pinName(energy.tx_pin);
+      if (energy.driver == kEnergyDriverBl0939) {
+        page += F("</code> RX <code>");
+        page += pinName(energy.rx_pin);
+        page += F("</code>, TX <code>");
+        page += pinName(energy.tx_pin);
+      } else if (energy.driver == kEnergyDriverHlw8012) {
+        page += F("</code> CF <code>");
+        page += pinName(energy.cf_pin);
+        page += F("</code>, CF1 <code>");
+        page += pinName(energy.cf1_pin);
+        page += F("</code>, SEL <code>");
+        page += pinName(energy.sel_pin);
+      }
       page += F("</code>, channels <code>");
       page += String(energy.channel_count);
       page += F("</code></div>");
@@ -7283,7 +7496,9 @@ void handleHealth() {
 #endif
   if (energy.present) {
     out += F(",\"energy\":{\"driver\":\"");
-    out += energy.driver == kEnergyDriverBl0939 ? F("bl0939") : F("unknown");
+    if (energy.driver == kEnergyDriverBl0939) out += F("bl0939");
+    else if (energy.driver == kEnergyDriverHlw8012) out += energy.hjl ? F("bl0937") : F("hlw8012");
+    else out += F("unknown");
     out += F("\",\"voltage\":");
     appendFloatDecimal(out, energy.voltage, 1);
     out += F(",\"current\":");
@@ -7323,10 +7538,33 @@ void handleHealth() {
       }
       out += F("]");
     }
-    out += F(",\"debug\":{\"rx_pin\":");
-    out += energy.rx_pin;
-    out += F(",\"tx_pin\":");
-    out += energy.tx_pin;
+    out += F(",\"debug\":{");
+    if (energy.driver == kEnergyDriverBl0939) {
+      out += F("\"rx_pin\":");
+      out += energy.rx_pin;
+      out += F(",\"tx_pin\":");
+      out += energy.tx_pin;
+    } else if (energy.driver == kEnergyDriverHlw8012) {
+      out += F("\"cf_pin\":");
+      out += energy.cf_pin;
+      out += F(",\"cf1_pin\":");
+      out += energy.cf1_pin;
+      out += F(",\"sel_pin\":");
+      out += energy.sel_pin;
+      out += F(",\"sel_inverted\":");
+      out += energy.sel_inverted ? F("true") : F("false");
+      out += F(",\"load_off\":");
+      out += energy.hlw_load_off ? F("true") : F("false");
+      out += F(",\"cf_power_pulse_us\":");
+      out += energy.hlw_cf_power_pulse_length;
+      out += F(",\"cf1_voltage_pulse_us\":");
+      out += energy.hlw_cf1_voltage_pulse_length;
+      out += F(",\"cf1_current_pulse_us\":");
+      out += energy.hlw_cf1_current_pulse_length;
+    } else {
+      out += F("\"driver_id\":");
+      out += energy.driver;
+    }
     out += F(",\"last_success_ms_ago\":");
     out += millis() - energy.last_success_ms;
     out += F(",\"voltage_raw\":");
