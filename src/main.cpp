@@ -332,6 +332,12 @@ const uint8_t kEsp32TemplateToPhy[kTemplateGpioCount] = {
 };
 #endif
 
+#if CONFIG_IDF_TARGET_ESP32C3
+const char kTemplateSwitchbotW1401400Json[] PROGMEM =
+  "{\"NAME\":\"Switchbot W1401400\",\"GPIO\":[0,0,0,0,9128,9088,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1,\"CMND\":\"SetOption37 25\"}";
+const char kTemplateGenericC3RelayJson[] PROGMEM =
+  "{\"NAME\":\"Generic C3 Relay\",\"GPIO\":[32,0,0,0,224,288,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
+#else
 const char kTemplateShellyPlusPlugSJson[] PROGMEM =
   "{\"NAME\":\"Shelly Plus Plug S\",\"GPIO\":[0,0,0,0,224,0,32,2720,0,0,0,0,0,0,0,2624,0,0,2656,0,0,288,289,0,0,0,0,0,0,4736,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateShellyPlus2PmPcb019Json[] PROGMEM =
@@ -352,12 +358,7 @@ const char kTemplateSonoffDualR3V2Json[] PROGMEM =
   "{\"NAME\":\"Sonoff Dual R3 v2\",\"GPIO\":[32,0,0,0,0,0,0,0,0,576,225,0,0,0,0,0,0,0,0,0,0,3200,8128,224,0,0,0,0,160,161,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 const char kTemplateSonoffMinir4Json[] PROGMEM =
   "{\"NAME\":\"Sonoff MINIR4\",\"GPIO\":[32,0,0,0,0,0,0,0,0,0,0,0,0,0,0,576,0,0,0,0,0,0,224,160,0,0,0,0,0,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
-#if CONFIG_IDF_TARGET_ESP32C3
-const char kTemplateSwitchbotW1401400Json[] PROGMEM =
-  "{\"NAME\":\"Switchbot W1401400\",\"GPIO\":[0,0,0,0,9128,9088,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1,\"CMND\":\"SetOption37 25\"}";
 #endif
-const char kTemplateGenericC3RelayJson[] PROGMEM =
-  "{\"NAME\":\"Generic C3 Relay\",\"GPIO\":[32,0,0,0,224,288,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],\"FLAG\":0,\"BASE\":1}";
 
 struct PinAssignment {
   uint8_t pin;
@@ -1095,15 +1096,6 @@ bool hasConfigurableButtons() {
     if (hasPin(runtime_template.buttons[i])) return true;
   }
   return false;
-}
-
-bool templateEnergyUsesUart0Pins() {
-  return digitalPinSupported(runtime_template.energy_bl0939_rx_pin) &&
-         digitalPinSupported(runtime_template.energy_tx_pin) &&
-         (runtime_template.energy_bl0939_rx_pin == 1 ||
-          runtime_template.energy_bl0939_rx_pin == 3 ||
-          runtime_template.energy_tx_pin == 1 ||
-          runtime_template.energy_tx_pin == 3);
 }
 
 void addUnsupportedTemplatePin(RuntimeTemplate &target, uint8_t pin, uint16_t code) {
@@ -5468,7 +5460,7 @@ void appendHeader(String &page, const __FlashStringHelper *title, bool show_spin
   page += F(".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}.wide{grid-column:1/-1}");
   page += F(".panel h2{font-size:17px;margin:0 0 12px}.panel h3{font-size:14px;margin:0 0 10px}.panel-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px}.panel-title h2{margin:0}.kv{display:grid;grid-template-columns:minmax(110px,42%) 1fr;gap:8px 12px}.kv span,.hint{color:var(--muted)}.kv div{min-width:0}");
   page += F("code{background:#eef2f6;border:1px solid #dce3ea;border-radius:4px;padding:1px 4px;word-break:break-word}.pill{display:inline-block;border-radius:999px;padding:2px 8px;background:#eef2f6;color:#364152}.pill.ok{background:var(--ok);color:#fff}.pill.bad{background:var(--bad);color:#fff}.panel h2 .pill{font-size:13px;font-weight:400;vertical-align:1px}.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}");
-  page += F(".button-block{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}.action-extra,.mode-extra{display:none}.action-extra.show,.mode-extra.show{display:block}.hidden{display:none}");
+  page += F(".tokens{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.tokens div{display:flex;flex-direction:column;gap:3px}.help{position:relative;margin-left:auto}.help-q{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:1px solid var(--line);border-radius:50%;background:#eef2f6;color:var(--accent2);font-size:14px;font-weight:700;cursor:help}.help-box{display:none;position:absolute;right:0;top:30px;z-index:30;width:520px;max-width:calc(100vw - 48px);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);color:var(--text);font-size:14px;font-weight:400;line-height:1.4}.help:hover .help-box,.help:focus-within .help-box{display:block}.help-box p{margin:0 0 8px}.bb{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}.ae,.me{display:none}.ae.show,.me.show{display:block}.hidden{display:none}");
   page += F("form{margin:0}.row{margin:10px 0}label{display:block;font-weight:600;color:#344054}input,button,select,textarea{font:inherit}input,select,textarea{width:100%;margin-top:4px;padding:9px;border:1px solid #b9c4d0;border-radius:6px;background:#fff}input[type=checkbox]{width:auto;margin:0 6px 0 0;padding:0;vertical-align:-1px}textarea{min-height:92px;resize:vertical}");
   page += F("button,.btn{display:inline-block;margin:4px 4px 0 0;padding:8px 12px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff;text-decoration:none;cursor:pointer}.secondary{background:#fff;color:var(--accent2);border-color:#9eb7cf}.danger{background:#fff;color:var(--bad);border-color:#d4aaa7}.inline{display:inline}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.inline button{margin:0 4px 0 0}.list{margin:0;padding-left:18px}@media(max-width:520px){.kv{grid-template-columns:1fr}.brand{font-size:24px}}</style></head><body>");
   page += F("<header class='top'><div class='topin'><div><a class='brand' href='/'>my<span>Mota32</span></a><div class='sub'>ESP32 firmware</div></div><div class='sub meta'><span>");
@@ -5503,21 +5495,21 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
   page += F("function fmt(v,d,s){return v==null?'n/a':Number(v).toFixed(d)+s;}if(d.energy){t('live-energy-power',fmt(d.energy.power,1,' W'));t('live-energy-voltage',fmt(d.energy.voltage,1,' V'));t('live-energy-current',fmt(d.energy.current,3,' A'));t('live-energy-total',fmt(d.energy.total_kwh,4,' kWh'));t('live-energy-offset',fmt(d.energy.offset_kwh,4,' kWh'));t('live-energy-mqtt-age',d.energy.last_mqtt_report_ms_ago==null?'n/a':d.energy.last_mqtt_report_ms_ago+' ms ago');t('live-energy-mqtt-reason',d.energy.last_mqtt_report_reason||'n/a');if(d.energy.channels){for(var e=0;e<d.energy.channels.length;e++){t('live-energy-ch'+e+'-power',fmt(d.energy.channels[e].power,1,' W'));t('live-energy-ch'+e+'-current',fmt(d.energy.channels[e].current,3,' A'));}}}");
   page += F("}).catch(function(){});}");
-  page += F("function ba(s){var k=s.getAttribute('data-key'),v=s.value,b=document.getElementById('extra-'+k);if(!b)return;var t=b.querySelector('.target-input'),p=b.querySelector('.payload-input'),rr=b.querySelector('.relay-row'),tr=b.querySelector('.target-row'),pr=b.querySelector('.payload-row'),tl=b.querySelector('.target-label'),h=b.querySelector('.action-hint'),off=s.disabled;b.className=(v=='1'||v=='2'||v=='3')?'action-extra show':'action-extra';if(rr)rr.className=v=='1'?'row relay-row':'row relay-row hidden';if(tr)tr.className=(v=='2'||v=='3')?'row target-row':'row target-row hidden';if(pr)pr.className=(v=='2')?'row payload-row':'row payload-row hidden';sd(rr,off||v!='1');sd(tr,off||!(v=='2'||v=='3'));sd(pr,off||v!='2');if(v=='1'){if(h)h.textContent='Toggles the configured relay.';}else if(v=='2'){if(t&&(!t.value||t.value.indexOf('http://')==0))t.value=t.getAttribute('data-default-topic');if(p&&!p.value)p.value=p.getAttribute('data-default-payload');if(tl)tl.textContent='MQTT topic';if(h)h.textContent='Publishes this topic and payload through the configured MQTT broker.';}else if(v=='3'){if(tl)tl.textContent='Webhook URL';if(h)h.textContent='Executes an HTTP GET request; only http:// URLs are supported.';}}");
-  page += F("function im(s){var k=s.getAttribute('data-input'),v=s.value,b=document.getElementById('input-button-'+k),w=document.getElementById('input-switch-'+k);if(b)b.className=v=='0'?'mode-extra show':'mode-extra';if(w)w.className=v=='1'?'mode-extra show':'mode-extra';sd(b,v!='0');sd(w,v!='1');if(b){var a=b.querySelectorAll('.button-action');for(var i=0;i<a.length;i++)ba(a[i]);}}");
+  page += F("function ba(s){var k=s.getAttribute('data-key'),v=s.value,b=document.getElementById('extra-'+k);if(!b)return;var t=b.querySelector('.ti'),p=b.querySelector('.pi'),rr=b.querySelector('.rr'),tr=b.querySelector('.tr'),pr=b.querySelector('.pr'),tl=b.querySelector('.tl'),off=s.disabled;b.className=(v=='1'||v=='2'||v=='3')?'ae show':'ae';if(rr)rr.className=v=='1'?'row rr':'row rr hidden';if(tr)tr.className=(v=='2'||v=='3')?'row tr':'row tr hidden';if(pr)pr.className=v=='2'?'row pr':'row pr hidden';sd(rr,off||v!='1');sd(tr,off||!(v=='2'||v=='3'));sd(pr,off||v!='2');if(v=='2'){if(t&&(!t.value||t.value.indexOf('http://')==0))t.value=t.getAttribute('data-default-topic');if(p&&!p.value)p.value=p.getAttribute('data-default-payload');if(tl)tl.textContent='MQTT topic';}else if(v=='3'&&tl)tl.textContent='Webhook URL';}");
+  page += F("function im(s){var k=s.getAttribute('data-input'),v=s.value,b=document.getElementById('input-button-'+k),w=document.getElementById('input-switch-'+k);if(b)b.className=v=='0'?'me show':'me';if(w)w.className=v=='1'?'me show':'me';sd(b,v!='0');sd(w,v!='1');if(b){var a=b.querySelectorAll('.ba');for(var i=0;i<a.length;i++)ba(a[i]);}}");
   page += F("function rb(s){var k=s.getAttribute('data-relay'),o=document.getElementById('relay_on_boot'+k),r=document.getElementById('relay_restore_boot'+k);if(!o||!r||!s.checked)return;if(s==r)o.checked=false;else if(s==o)r.checked=false;}");
 #if MYMOTA32_LIGHT_SUPPORTED
   page += F("function lv(i){return i.type=='checkbox'?(i.checked?'1':'0'):i.value;}function lu(i){var e=i.getAttribute('data-live'),s=i.getAttribute('data-suffix')||'',v=lv(i);if(i.type=='checkbox')v=i.checked?(i.getAttribute('data-on')||'on'):(i.getAttribute('data-off')||'off');if(e)t(e,v+s);}function la(i){lu(i);var body=new URLSearchParams();body.append(i.name,lv(i));body.append('_inline','1');fetch('/light',{method:'POST',body:body,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});live();}).catch(function(x){alert(x.message||x);});}");
 #endif
   page += F("function ts(){var s=document.getElementById('known-template'),t=document.getElementById('template-json');if(!s||!t)return;var v=t.value.trim(),m=0;for(var i=1;i<s.options.length;i++){if(s.options[i].getAttribute('data-json')==v){m=i;break;}}s.selectedIndex=m;}");
   page += F("function tp(s){var o=s.options[s.selectedIndex],t=document.getElementById('template-json');if(o&&t&&o.getAttribute('data-json')){t.value=o.getAttribute('data-json');ts();}}");
-  page += F("function vf(f){var t=(f.getAttribute('data-target')||'').toLowerCase(),i=f.querySelector('input[type=file]'),c=f.querySelector('.firmware-verify');if(!i||!t)return true;if(c&&!c.checked){i.setCustomValidity('');return true;}var n=i.files&&i.files[0]?i.files[0].name.toLowerCase():'';var o=!n||n.indexOf(t)>=0;i.setCustomValidity(o?'':'Firmware file name must include '+t);return o;}");
-  page += F("function fu(f){var c=f.querySelector('.firmware-verify');f.action='/update?verify='+(!c||c.checked?'1':'0');}");
-  page += F("function fw(){var a=document.querySelectorAll('.firmware-upload');for(var i=0;i<a.length;i++){(function(f){var x=f.querySelector('input[type=file]'),c=f.querySelector('.firmware-verify');fu(f);if(x)x.onchange=function(){vf(f);this.reportValidity();};if(c)c.onchange=function(){fu(f);vf(f);if(x)x.reportValidity();};f.addEventListener('submit',function(e){fu(f);if(!vf(f)){e.preventDefault();if(x)x.reportValidity();}},true);})(a[i]);}}");
+  page += F("function vf(f){var t=(f.getAttribute('data-target')||'').toLowerCase(),i=f.querySelector('input[type=file]'),c=f.querySelector('.fv');if(!i||!t)return true;if(c&&!c.checked){i.setCustomValidity('');return true;}var n=i.files&&i.files[0]?i.files[0].name.toLowerCase():'';var o=!n||n.indexOf(t)>=0;i.setCustomValidity(o?'':'Firmware file name must include '+t);return o;}");
+  page += F("function fu(f){var c=f.querySelector('.fv');f.action='/update?verify='+(!c||c.checked?'1':'0');}");
+  page += F("function fw(){var a=document.querySelectorAll('.fu');for(var i=0;i<a.length;i++){(function(f){var x=f.querySelector('input[type=file]'),c=f.querySelector('.fv');fu(f);if(x)x.onchange=function(){vf(f);this.reportValidity();};if(c)c.onchange=function(){fu(f);vf(f);if(x)x.reportValidity();};f.addEventListener('submit',function(e){fu(f);if(!vf(f)){e.preventDefault();if(x)x.reportValidity();}},true);})(a[i]);}}");
 #if MYMOTA32_LIGHT_SUPPORTED
-  page += F("function bi(){var a=document.querySelectorAll('.button-action');for(var i=0;i<a.length;i++){a[i].onchange=function(){ba(this)};ba(a[i]);}var m=document.querySelectorAll('.input-mode');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var c=document.querySelectorAll('.relay-boot-choice');for(var k=0;k<c.length;k++){c[k].onchange=function(){rb(this)};rb(c[k]);}var l=document.querySelectorAll('.light-auto');for(var n=0;n<l.length;n++){l[n].oninput=function(){lu(this)};l[n].onchange=function(){la(this)};}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ts();}bi();fw();");
+  page += F("function bi(){var a=document.querySelectorAll('.ba');for(var i=0;i<a.length;i++){a[i].onchange=function(){ba(this)};ba(a[i]);}var m=document.querySelectorAll('.im');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var c=document.querySelectorAll('.rbc');for(var k=0;k<c.length;k++){c[k].onchange=function(){rb(this)};rb(c[k]);}var l=document.querySelectorAll('.la');for(var n=0;n<l.length;n++){l[n].oninput=function(){lu(this)};l[n].onchange=function(){la(this)};}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ts();}bi();fw();");
 #else
-  page += F("function bi(){var a=document.querySelectorAll('.button-action');for(var i=0;i<a.length;i++){a[i].onchange=function(){ba(this)};ba(a[i]);}var m=document.querySelectorAll('.input-mode');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var c=document.querySelectorAll('.relay-boot-choice');for(var k=0;k<c.length;k++){c[k].onchange=function(){rb(this)};rb(c[k]);}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ts();}bi();fw();");
+  page += F("function bi(){var a=document.querySelectorAll('.ba');for(var i=0;i<a.length;i++){a[i].onchange=function(){ba(this)};ba(a[i]);}var m=document.querySelectorAll('.im');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var c=document.querySelectorAll('.rbc');for(var k=0;k<c.length;k++){c[k].onchange=function(){rb(this)};rb(c[k]);}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ts();}bi();fw();");
 #endif
   page += F("document.addEventListener('click',function(e){var b=e.target;while(b&&b.tagName!='BUTTON'&&b.tagName!='INPUT')b=b.parentNode;if(!b||!b.form)return;var t=(b.type||'').toLowerCase();if(t=='submit'||t=='image')b.form._s=b;},true);");
   page += F("document.addEventListener('submit',function(e){var f=e.target;if(!f||f.getAttribute('data-inline')!='1')return;e.preventDefault();var fd=new FormData(f),b=e.submitter||f._s;if(b&&b.name)fd.append(b.name,b.value);fd.append('_inline','1');var body=new URLSearchParams();fd.forEach(function(v,k){body.append(k,v);});fetch(f.getAttribute('action')||location.pathname,{method:(f.method||'POST').toUpperCase(),body:body,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});live();}).catch(function(x){alert(x.message||x);});},true);");
@@ -5533,6 +5525,27 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
 void sendHtml(String &page) {
   server.sendHeader(F("Cache-Control"), F("no-store"));
   server.send(200, F("text/html"), page);
+}
+
+void __attribute__((noinline)) sendPlain(uint16_t status, const __FlashStringHelper *message) {
+  server.send(status, F("text/plain"), message);
+}
+
+void __attribute__((noinline)) sendPlain(uint16_t status, const char *message) {
+  server.send(status, F("text/plain"), message);
+}
+
+void __attribute__((noinline)) sendPlain(uint16_t status, const String &message) {
+  server.send(status, F("text/plain"), message);
+}
+
+void sendInlineOkOrHome() {
+  if (server.hasArg("_inline")) {
+    sendPlain(204, "");
+    return;
+  }
+  server.sendHeader(F("Location"), F("/"), true);
+  sendPlain(303, "");
 }
 
 void beginStreamedResponse(const char *content_type) {
@@ -5764,7 +5777,7 @@ void appendDeviceControls(String &page) {
     page += String(config.light_speed);
     page += F("</code></div></div>");
     page += F("<form class='inline' data-inline='1' method='post' action='/light'><span class='actions'><button name='power' value='toggle'>Toggle</button><button name='power' value='on'>On</button><button class='secondary' name='power' value='off'>Off</button></span></form>");
-    page += F("<div class='row'><label>Dimmer<br><input class='light-auto' data-live='live-light-dimmer' data-suffix='%' name='dimmer' type='range' min='0' max='100' step='1' value='");
+    page += F("<div class='row'><label>Dimmer<br><input class='la' data-live='live-light-dimmer' data-suffix='%' name='dimmer' type='range' min='0' max='100' step='1' value='");
     page += String(light.dimmer);
     page += F("'></label></div><div class='row'><label>Color temperature<br><input name='ct' type='range' min='");
     page += String(kLightCtMin);
@@ -5772,13 +5785,13 @@ void appendDeviceControls(String &page) {
     page += String(kLightCtMax);
     page += F("' step='1' value='");
     page += String(light.ct);
-    page += F("' class='light-auto' data-live='live-light-ct' data-suffix=' mired'></label></div><div class='row'><label>Color RGB<br><input class='light-auto' data-live='live-light-color' name='color' maxlength='6' value='");
+    page += F("' class='la' data-live='live-light-ct' data-suffix=' mired'></label></div><div class='row'><label>Color RGB<br><input class='la' data-live='live-light-color' name='color' maxlength='6' value='");
     appendLightColorHex(page);
-    page += F("'></label></div><div class='row'><label>ON dimmer<br><input class='light-auto' data-live='live-light-on-dimmer' data-suffix='%' name='on_dimmer' type='number' min='1' max='100' step='1' value='");
+    page += F("'></label></div><div class='row'><label>ON dimmer<br><input class='la' data-live='live-light-on-dimmer' data-suffix='%' name='on_dimmer' type='number' min='1' max='100' step='1' value='");
     page += String(config.light_on_dimmer);
-    page += F("'></label></div><div class='row'><label><input class='light-auto' data-live='live-light-fade' data-on='on' data-off='off' name='fade' type='checkbox' value='1'");
+    page += F("'></label></div><div class='row'><label><input class='la' data-live='live-light-fade' data-on='on' data-off='off' name='fade' type='checkbox' value='1'");
     if (config.light_fade) page += F(" checked");
-    page += F(">Fade</label></div><div class='row'><label>Speed<br><input class='light-auto' data-live='live-light-speed' name='speed' type='number' min='");
+    page += F(">Fade</label></div><div class='row'><label>Speed<br><input class='la' data-live='live-light-speed' name='speed' type='number' min='");
     page += String(kLightSpeedMin);
     page += F("' max='");
     page += String(kLightSpeedMax);
@@ -5804,7 +5817,7 @@ void appendDeviceControls(String &page) {
     page += F("'><span class='actions'><button name='state' value='toggle'>Toggle</button><button name='state' value='on'>On</button><button class='secondary' name='state' value='off'>Off</button></span></form></div>");
   }
   if (energy.present) {
-    page += F("<div class='button-block'><strong>Energy</strong><div class='kv'><span>Power</span><div><code id='live-energy-power'>");
+    page += F("<div class='bb'><strong>Energy</strong><div class='kv'><span>Power</span><div><code id='live-energy-power'>");
     appendFloatDecimal(page, energy.power, 1);
     page += F(" W</code></div><span>Voltage</span><div><code id='live-energy-voltage'>");
     appendFloatDecimal(page, energy.voltage, 1);
@@ -5921,11 +5934,11 @@ void appendDeviceStateEnforcementSettings(String &page) {
   page += F("<section class='panel'><h2>Device State Enforcement</h2><form data-inline='1' method='post' action='/relay-enforcement'>");
   for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
     if (!relayAvailable(i)) continue;
-    page += F("<div class='button-block'><strong>Relay ");
+    page += F("<div class='bb'><strong>Relay ");
     page += String(i + 1);
     page += F("</strong> <span class='hint'>");
     page += pinName(runtime_template.relays[i].pin);
-    page += F("</span><div class='row'><label><input class='relay-boot-choice' id='relay_on_boot");
+    page += F("</span><div class='row'><label><input class='rbc' id='relay_on_boot");
     page += String(i);
     page += F("' data-relay='");
     page += String(i);
@@ -5933,7 +5946,7 @@ void appendDeviceStateEnforcementSettings(String &page) {
     page += String(i);
     page += F("' value='1'");
     if (config.relay_on_boot[i]) page += F(" checked");
-    page += F(">Turn on at boot</label></div><div class='row'><label><input class='relay-boot-choice' id='relay_restore_boot");
+    page += F(">Turn on at boot</label></div><div class='row'><label><input class='rbc' id='relay_restore_boot");
     page += String(i);
     page += F("' data-relay='");
     page += String(i);
@@ -5959,7 +5972,7 @@ void appendDeviceStateEnforcementSettings(String &page) {
   }
 #if MYMOTA32_LIGHT_SUPPORTED
   if (light.present) {
-    page += F("<div class='button-block'><strong>Light</strong><div class='row'><label><input type='checkbox' name='light_restore_boot' value='1'");
+    page += F("<div class='bb'><strong>Light</strong><div class='row'><label><input type='checkbox' name='light_restore_boot' value='1'");
     if (config.light_restore_boot) page += F(" checked");
     page += F(">Restore last state at boot</label><span class='hint'>Power, dimmer, color temperature, and color</span></div></div>");
   }
@@ -5973,7 +5986,7 @@ void appendRelayPulseSettings(String &page) {
   page += F("<section class='panel'><h2>Relay Pulsing</h2><form data-inline='1' method='post' action='/relay-pulsing'>");
   for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
     if (!relayAvailable(i)) continue;
-    page += F("<div class='button-block'><strong>Relay ");
+    page += F("<div class='bb'><strong>Relay ");
     page += String(i + 1);
     page += F("</strong> <span class='hint'>");
     page += pinName(runtime_template.relays[i].pin);
@@ -6025,7 +6038,7 @@ void appendButtonActionOption(String &page, uint8_t value, const __FlashStringHe
 }
 
 void appendButtonActionSelect(String &page, uint8_t button, const char *name, uint8_t selected) {
-  page += F("<select class='button-action' data-key='");
+  page += F("<select class='ba' data-key='");
   page += name;
   page += String(button);
   page += F("' name='");
@@ -6047,9 +6060,9 @@ void appendButtonActionExtra(String &page, uint8_t button, const char *name, boo
   page += F("<div id='extra-");
   page += name;
   page += String(button);
-  page += F("' class='action-extra'>");
+  page += F("' class='ae'>");
   if (has_relay_target) {
-    page += F("<div class='row relay-row'><label>Target relay<br><select name='");
+    page += F("<div class='row rr'><label>Target relay<br><select name='");
     page += name;
     page += F("_relay");
     page += String(button);
@@ -6060,9 +6073,9 @@ void appendButtonActionExtra(String &page, uint8_t button, const char *name, boo
     }
     page += F("</select></label></div>");
   } else {
-    page += F("<div class='row relay-row'><span class='hint'>No relay available.</span></div>");
+    page += F("<div class='row rr'><span class='hint'>No relay available.</span></div>");
   }
-  page += F("<div class='row target-row'><label><span class='target-label'>MQTT topic</span><br><input class='target-input' name='");
+  page += F("<div class='row tr'><label><span class='tl'>MQTT topic</span><br><input class='ti' name='");
   page += name;
   page += F("_target");
   page += String(button);
@@ -6072,7 +6085,7 @@ void appendButtonActionExtra(String &page, uint8_t button, const char *name, boo
   page += htmlEscape(kDefaultButtonMqttTopic);
   page += F("' value='");
   page += htmlEscape(buttonActionTarget(button, hold));
-  page += F("'></label></div><div class='row payload-row'><label>MQTT payload<br><textarea class='payload-input' name='");
+  page += F("'></label></div><div class='row pr'><label>MQTT payload<br><textarea class='pi' name='");
   page += name;
   page += F("_payload");
   page += String(button);
@@ -6082,7 +6095,7 @@ void appendButtonActionExtra(String &page, uint8_t button, const char *name, boo
   page += htmlEscape(hold ? kDefaultButtonMqttHoldPayload : kDefaultButtonMqttPressPayload);
   page += F("'>");
   page += htmlEscape(buttonActionPayload(button, hold));
-  page += F("</textarea></label></div><p class='hint action-hint'></p></div>");
+  page += F("</textarea></label></div></div>");
 }
 
 bool inputCanFollowOutput(uint8_t input) {
@@ -6108,7 +6121,12 @@ String inputStateName(uint8_t input, bool active) {
 void appendButtonSettings(String &page) {
   if (!runtime_template.enabled || !hasConfigurableButtons()) return;
 
-  page += F("<section class='panel'><h2>Inputs</h2><form data-inline='1' method='post' action='/buttons'>");
+  page += F("<section class='panel'><div class='panel-title'><h2>Inputs</h2><div class='help' tabindex='0'><span class='help-q'>?</span><div class='help-box'><p><strong>Action placeholders</strong></p><div class='tokens'>");
+  page += F("<div><code>{BUTTONID}</code><span class='hint'>input number, starting at 1</span></div>");
+  page += F("<div><code>{TYPE}</code><span class='hint'>TOGGLE on press, HOLD on hold</span></div>");
+  page += F("<div><code>{TOPIC}</code><span class='hint'>current MQTT topic</span></div>");
+  page += F("<div><code>{RELAYX_STATE}</code><span class='hint'>relay state, for example {RELAY1_STATE}</span></div>");
+  page += F("</div><p class='hint'>MQTT broadcast sends a topic and payload through the configured broker.</p></div></div></div><form data-inline='1' method='post' action='/buttons'>");
   page += F("<div class='row'><label>Hold time ms<br><input name='hold_ms' type='number' min='");
   page += String(kButtonHoldMinMs);
   page += F("' max='");
@@ -6129,7 +6147,7 @@ void appendButtonSettings(String &page) {
     const uint8_t on_level = effectiveInputOnLevel(i);
     uint8_t target_relay = 0;
     inputRelayTarget(i, target_relay);
-    page += F("<div class='button-block'><strong>");
+    page += F("<div class='bb'><strong>");
     page += htmlEscape(inputDisplayName(i));
     page += F("</strong> <span class='hint'>");
     page += pinName(runtime_template.buttons[i].pin);
@@ -6142,7 +6160,7 @@ void appendButtonSettings(String &page) {
     page += htmlEscape(inputStateName(i, button_state[i].stable_pressed));
     page += F("</span>");
 
-    page += F("<div class='row'><label>Kind<br><select class='input-mode' data-input='");
+    page += F("<div class='row'><label>Kind<br><select class='im' data-input='");
     page += String(i);
     page += F("' name='mode");
     page += String(i);
@@ -6155,7 +6173,7 @@ void appendButtonSettings(String &page) {
 
     page += F("<div id='input-switch-");
     page += String(i);
-    page += F("' class='mode-extra");
+    page += F("' class='me");
     if (mode == kInputModeSwitch) page += F(" show");
     page += F("'>");
     uint8_t unused_relay = 0;
@@ -6179,7 +6197,7 @@ void appendButtonSettings(String &page) {
 
     page += F("<div id='input-button-");
     page += String(i);
-    page += F("' class='mode-extra");
+    page += F("' class='me");
     if (mode == kInputModeButton) page += F(" show");
     page += F("'><div class='row'><label>Press<br>");
     appendButtonActionSelect(page, i, "press", config.button_press_action[i]);
@@ -6197,9 +6215,14 @@ void appendButtonSettings(String &page) {
 void appendTemplateForm(String &page) {
   page += F("<section class='panel wide'><h2>Template Selection</h2><form method='post' action='/template'>");
   page += F("<div class='row'><label>Known template<br><select id='known-template' onchange='tp(this)'><option value=''>Select a template</option>");
+#if CONFIG_IDF_TARGET_ESP32C3
   page += F("<option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateGenericC3RelayJson)));
   page += F("'>Generic C3 Relay</option><option data-json='");
+  page += htmlEscape(String(FPSTR(kTemplateSwitchbotW1401400Json)));
+  page += F("'>Switchbot W1401400</option>");
+#else
+  page += F("<option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateNousA8tJson)));
   page += F("'>NOUS A8T</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateNousB1tJson)));
@@ -6220,10 +6243,6 @@ void appendTemplateForm(String &page) {
   page += F("'>Sonoff Dual R3 v2</option><option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateSonoffMinir4Json)));
   page += F("'>Sonoff MINIR4</option>");
-#if CONFIG_IDF_TARGET_ESP32C3
-  page += F("<option data-json='");
-  page += htmlEscape(String(FPSTR(kTemplateSwitchbotW1401400Json)));
-  page += F("'>Switchbot W1401400</option>");
 #endif
   page += F("</select></label></div>");
   page += F("<div class='row'><label>Tasmota ESP32 template JSON<br><textarea id='template-json' name='template' rows='6' maxlength='");
@@ -6382,16 +6401,16 @@ void handleRoot() {
   appendMqttForm(page);
   flushStreamChunk(page);
 
-  page += F("<section class='panel'><h2>System</h2><h3>Firmware</h3><form class='firmware-upload' method='post' action='/update?verify=1' enctype='multipart/form-data' data-target='");
+  page += F("<section class='panel'><h2>System</h2><h3>Firmware</h3><form class='fu' method='post' action='/update?verify=1' enctype='multipart/form-data' data-target='");
   page += F(MYMOTA32_TARGET);
   page += F("'>");
   page += F("<input type='file' name='firmware' accept='.bin' required>");
-  page += F("<div class='row'><label><input class='firmware-verify' type='checkbox' checked>Verify target</label></div>");
+  page += F("<div class='row'><label><input class='fv' type='checkbox' checked>Verify target</label></div>");
   page += F("<button type='submit'>Upload</button></form>");
-  page += F("<div class='button-block'><h3>Power Saving</h3><form method='post' action='/system'>");
+  page += F("<div class='bb'><h3>Power Saving</h3><form method='post' action='/system'>");
   appendPowerSavingSelect(page);
   page += F("<button type='submit'>Save</button></form></div>");
-  page += F("<div class='button-block'><h3>Reboot</h3><div class='actions'><a class='btn secondary' href='/reboot'>Reboot</a></div>");
+  page += F("<div class='bb'><h3>Reboot</h3><div class='actions'><a class='btn secondary' href='/reboot'>Reboot</a></div>");
   page += F("<div class='actions'><form class='inline' method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset?')\"><button class='danger' type='submit'>Factory Reset</button></form></div></div></section>");
   flushStreamChunk(page);
 
@@ -6472,7 +6491,7 @@ void handleWifiSave() {
   char password_to_save[sizeof(config.password)];
 
   if (ssid.length() == 0 || ssid.length() > 32 || password.length() > 64 || hostname.length() > 32) {
-    server.send(400, F("text/plain"), F("Invalid Wi-Fi settings"));
+    sendPlain(400, F("Invalid Wi-Fi settings"));
     return;
   }
   if (server.hasArg("phy_mode")) {
@@ -6484,7 +6503,7 @@ void handleWifiSave() {
     strlcpy(password_to_save, password.c_str(), sizeof(password_to_save));
   }
   if (!saveWifiConfig(ssid.c_str(), password_to_save, hostname.c_str(), phy_mode)) {
-    server.send(500, F("text/plain"), F("Could not save Wi-Fi settings"));
+    sendPlain(500, F("Could not save Wi-Fi settings"));
     return;
   }
   String page;
@@ -6503,7 +6522,7 @@ void handleTemplateSave() {
     StoredConfig candidate = config;
     clearTemplateConfig(candidate);
     if (!saveTemplateConfig(candidate)) {
-      server.send(500, F("text/plain"), F("Could not clear template"));
+      sendPlain(500, F("Could not clear template"));
       return;
     }
     decodeTemplateConfig();
@@ -6521,7 +6540,7 @@ void handleTemplateSave() {
   String template_json = server.arg("template");
   template_json.trim();
   if (template_json.length() == 0) {
-    server.send(400, F("text/plain"), F("Template JSON is empty"));
+    sendPlain(400, F("Template JSON is empty"));
     return;
   }
   StoredConfig candidate = config;
@@ -6530,11 +6549,11 @@ void handleTemplateSave() {
     String msg = F("Invalid template: ");
     msg += error;
     msg += '\n';
-    server.send(400, F("text/plain"), msg);
+    sendPlain(400, msg);
     return;
   }
   if (!saveTemplateConfig(candidate)) {
-    server.send(500, F("text/plain"), F("Could not save template"));
+    sendPlain(500, F("Could not save template"));
     return;
   }
   decodeTemplateConfig();
@@ -6554,29 +6573,27 @@ void handleTemplateSave() {
 
 void handlePowerSave() {
   if (!server.hasArg("relay") || !server.hasArg("state")) {
-    server.send(400, F("text/plain"), F("Missing relay or state"));
+    sendPlain(400, F("Missing relay or state"));
     return;
   }
   const int relay = server.arg("relay").toInt();
   const String state = server.arg("state");
   if (relay < 1 || relay > kMaxRelays || !hasPin(runtime_template.relays[relay - 1])) {
-    server.send(400, F("text/plain"), F("Invalid relay"));
+    sendPlain(400, F("Invalid relay"));
     return;
   }
   if (state == "on") setRelay(relay - 1, true);
   else if (state == "off") setRelay(relay - 1, false);
   else if (state == "toggle") toggleRelay(relay - 1);
-  else { server.send(400, F("text/plain"), F("Invalid relay state")); return; }
+  else { sendPlain(400, F("Invalid relay state")); return; }
   updateDeviceLeds(true);
-  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
-  server.sendHeader(F("Location"), F("/"), true);
-  server.send(303, F("text/plain"), "");
+  sendInlineOkOrHome();
 }
 
 #if MYMOTA32_LIGHT_SUPPORTED
 void handleLightSave() {
   if (!light.present) {
-    server.send(400, F("text/plain"), F("No light output is configured"));
+    sendPlain(400, F("No light output is configured"));
     return;
   }
 
@@ -6585,12 +6602,12 @@ void handleLightSave() {
     if (state == "on") setLightPower(true);
     else if (state == "off") setLightPower(false);
     else if (state == "toggle") toggleLightPower();
-    else { server.send(400, F("text/plain"), F("Invalid light power state")); return; }
+    else { sendPlain(400, F("Invalid light power state")); return; }
   }
   if (server.hasArg("dimmer")) {
     uint16_t dimmer = 0;
     if (!parseUint16Input(server.arg("dimmer"), kLightDimmerOff, kLightDimmerMax, dimmer)) {
-      server.send(400, F("text/plain"), F("Invalid dimmer"));
+      sendPlain(400, F("Invalid dimmer"));
       return;
     }
     setLightDimmer(dimmer);
@@ -6598,7 +6615,7 @@ void handleLightSave() {
   if (server.hasArg("ct")) {
     uint16_t ct = 0;
     if (!parseUint16Input(server.arg("ct"), kLightCtMin, kLightCtMax, ct)) {
-      server.send(400, F("text/plain"), F("Invalid color temperature"));
+      sendPlain(400, F("Invalid color temperature"));
       return;
     }
     setLightCt(ct);
@@ -6608,7 +6625,7 @@ void handleLightSave() {
     color.trim();
     uint8_t rgb[3];
     if (!parseLightColor(color.c_str(), color.length(), rgb)) {
-      server.send(400, F("text/plain"), F("Invalid color"));
+      sendPlain(400, F("Invalid color"));
       return;
     }
     setLightColor(rgb);
@@ -6616,7 +6633,7 @@ void handleLightSave() {
   if (server.hasArg("on_dimmer")) {
     uint16_t on_dimmer = 0;
     if (!parseUint16Input(server.arg("on_dimmer"), kLightDimmerMin, kLightDimmerMax, on_dimmer)) {
-      server.send(400, F("text/plain"), F("Invalid ON dimmer"));
+      sendPlain(400, F("Invalid ON dimmer"));
       return;
     }
     const uint8_t next_on_dimmer = static_cast<uint8_t>(on_dimmer);
@@ -6629,7 +6646,7 @@ void handleLightSave() {
   if (server.hasArg("fade")) {
     const String value = server.arg("fade");
     if (value != "0" && value != "1") {
-      server.send(400, F("text/plain"), F("Invalid fade"));
+      sendPlain(400, F("Invalid fade"));
       return;
     }
     setLightFadeEnabled(value == "1");
@@ -6637,22 +6654,20 @@ void handleLightSave() {
   if (server.hasArg("speed")) {
     uint16_t speed = 0;
     if (!parseUint16Input(server.arg("speed"), kLightSpeedMin, kLightSpeedMax, speed)) {
-      server.send(400, F("text/plain"), F("Invalid speed"));
+      sendPlain(400, F("Invalid speed"));
       return;
     }
     setLightSpeed(speed);
   }
   persistLightConfig(true);
 
-  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
-  server.sendHeader(F("Location"), F("/"), true);
-  server.send(303, F("text/plain"), "");
+  sendInlineOkOrHome();
 }
 #endif
 
 void handleLedSave() {
   if (!hasConfigurableLedOutputs()) {
-    server.send(400, F("text/plain"), F("No configurable LEDs are available"));
+    sendPlain(400, F("No configurable LEDs are available"));
     return;
   }
   uint8_t attachments[kMaxLedOutputs];
@@ -6662,34 +6677,32 @@ void handleLedSave() {
     String arg_name = F("led");
     arg_name += String(i);
     if (!server.hasArg(arg_name)) {
-      server.send(400, F("text/plain"), F("Missing LED setting"));
+      sendPlain(400, F("Missing LED setting"));
       return;
     }
     const long raw_value = server.arg(arg_name).toInt();
     if (raw_value < 0 || raw_value > 255) {
-      server.send(400, F("text/plain"), F("Invalid LED setting"));
+      sendPlain(400, F("Invalid LED setting"));
       return;
     }
     const uint8_t attachment = static_cast<uint8_t>(raw_value);
     if (!ledAttachmentAvailable(attachment)) {
-      server.send(400, F("text/plain"), F("Invalid LED attachment"));
+      sendPlain(400, F("Invalid LED attachment"));
       return;
     }
     attachments[i] = attachment;
   }
   if (!saveLedAttachments(attachments)) {
-    server.send(500, F("text/plain"), F("Could not save LED settings"));
+    sendPlain(500, F("Could not save LED settings"));
     return;
   }
   updateDeviceLeds(true);
-  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
-  server.sendHeader(F("Location"), F("/"), true);
-  server.send(303, F("text/plain"), "");
+  sendInlineOkOrHome();
 }
 
 void handleDeviceStateEnforcementSave() {
   if (!deviceStateEnforcementAvailable()) {
-    server.send(400, F("text/plain"), F("No configurable device state settings are available"));
+    sendPlain(400, F("No configurable device state settings are available"));
     return;
   }
 
@@ -6726,7 +6739,7 @@ void handleDeviceStateEnforcementSave() {
     if (time_enabled[i]) {
       uint16_t seconds = 0;
       if (!parseUint16Input(seconds_text, kRelayEnforcementMinSeconds, kRelayEnforcementMaxSeconds, seconds)) {
-        server.send(400, F("text/plain"), F("Invalid relay enforcement seconds"));
+        sendPlain(400, F("Invalid relay enforcement seconds"));
         return;
       }
       time_seconds[i] = seconds;
@@ -6747,23 +6760,16 @@ void handleDeviceStateEnforcementSave() {
 #endif
 
   if (!saveDeviceStateEnforcementConfig(restore_boot, on_boot, time_enabled, time_seconds, light_restore_boot)) {
-    server.send(500, F("text/plain"), F("Could not save device state enforcement settings"));
+    sendPlain(500, F("Could not save device state enforcement settings"));
     return;
   }
 
-  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
-  String page;
-  page.reserve(700);
-  appendHeader(page, F("myMota32 Device State Enforcement"));
-  page += F("<p class='ok'>Device state enforcement settings saved.</p>");
-  page += F("<p><a href='/'>Back</a></p>");
-  appendFooter(page);
-  sendHtml(page);
+  sendInlineOkOrHome();
 }
 
 void handleRelayPulseSave() {
   if (!hasConfigurableRelays()) {
-    server.send(400, F("text/plain"), F("No configurable relays are available"));
+    sendPlain(400, F("No configurable relays are available"));
     return;
   }
 
@@ -6785,7 +6791,7 @@ void handleRelayPulseSave() {
     seconds_text.trim();
     if (seconds_text.length() > 0 &&
         !parseUint16Input(seconds_text, 0, kRelayPulseMaxSeconds, seconds)) {
-      server.send(400, F("text/plain"), F("Invalid relay pulse seconds"));
+      sendPlain(400, F("Invalid relay pulse seconds"));
       return;
     }
 
@@ -6794,18 +6800,11 @@ void handleRelayPulseSave() {
   }
 
   if (!saveRelayPulseConfig(pulse_enabled, pulse_seconds)) {
-    server.send(500, F("text/plain"), F("Could not save relay pulsing settings"));
+    sendPlain(500, F("Could not save relay pulsing settings"));
     return;
   }
 
-  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
-  String page;
-  page.reserve(700);
-  appendHeader(page, F("myMota32 Relay Pulsing"));
-  page += F("<p class='ok'>Relay pulsing settings saved.</p>");
-  page += F("<p><a href='/'>Back</a></p>");
-  appendFooter(page);
-  sendHtml(page);
+  sendInlineOkOrHome();
 }
 
 bool isValidWebhookUrlTemplate(const String &url) {
@@ -6895,18 +6894,18 @@ bool readButtonEventText(uint8_t button, const char *prefix, bool hold, uint8_t 
 
 void handleButtonSave() {
   if (!hasConfigurableButtons()) {
-    server.send(400, F("text/plain"), F("No configurable inputs are available"));
+    sendPlain(400, F("No configurable inputs are available"));
     return;
   }
 
   uint16_t hold_ms = kButtonHoldDefaultMs;
   if (!parseUint16Input(server.arg("hold_ms"), kButtonHoldMinMs, kButtonHoldMaxMs, hold_ms)) {
-    server.send(400, F("text/plain"), F("Invalid input hold time"));
+    sendPlain(400, F("Invalid input hold time"));
     return;
   }
   uint16_t debounce_ms = kButtonDebounceDefaultMs;
   if (!parseUint16Input(server.arg("debounce_ms"), kButtonDebounceMinMs, kButtonDebounceMaxMs, debounce_ms)) {
-    server.send(400, F("text/plain"), F("Invalid input debounce time"));
+    sendPlain(400, F("Invalid input debounce time"));
     return;
   }
 
@@ -6920,12 +6919,12 @@ void handleButtonSave() {
     String mode_arg = F("mode");
     mode_arg += String(i);
     if (!server.hasArg(mode_arg)) {
-      server.send(400, F("text/plain"), F("Missing input mode"));
+      sendPlain(400, F("Missing input mode"));
       return;
     }
     uint16_t mode_value = 0;
     if (!parseUint16Input(server.arg(mode_arg), 0, 1, mode_value)) {
-      server.send(400, F("text/plain"), F("Invalid input mode"));
+      sendPlain(400, F("Invalid input mode"));
       return;
     }
     const uint8_t input_mode = static_cast<uint8_t>(mode_value);
@@ -6939,25 +6938,25 @@ void handleButtonSave() {
       uint8_t unused_relay = 0;
       const bool has_relay_target = defaultButtonRelayTarget(i, unused_relay);
       if ((has_relay_target && !server.hasArg(relay_arg)) || !server.hasArg(reverse_arg)) {
-        server.send(400, F("text/plain"), F("Missing switch setting"));
+        sendPlain(400, F("Missing switch setting"));
         return;
       }
       uint16_t relay_value = 0;
       uint16_t reverse_value = 0;
       if ((has_relay_target && !parseUint16Input(server.arg(relay_arg), 0, kMaxRelays - 1, relay_value)) ||
           !parseUint16Input(server.arg(reverse_arg), 0, 1, reverse_value)) {
-        server.send(400, F("text/plain"), F("Invalid switch setting"));
+        sendPlain(400, F("Invalid switch setting"));
         return;
       }
       if (has_relay_target) {
         const uint8_t relay = static_cast<uint8_t>(relay_value);
         if (!relayAvailable(relay)) {
-          server.send(400, F("text/plain"), F("Invalid switch relay"));
+          sendPlain(400, F("Invalid switch relay"));
           return;
         }
         candidate.input_relay[i] = relay;
       } else {
-        server.send(400, F("text/plain"), F("Invalid switch target"));
+        sendPlain(400, F("Invalid switch target"));
         return;
       }
       candidate.input_on_level[i] = reverse_value ? kInputOnLevelLow : kInputOnLevelHigh;
@@ -6972,14 +6971,14 @@ void handleButtonSave() {
     String hold_arg = F("hold");
     hold_arg += String(i);
     if (!server.hasArg(press_arg) || !server.hasArg(hold_arg)) {
-      server.send(400, F("text/plain"), F("Missing button action setting"));
+      sendPlain(400, F("Missing button action setting"));
       return;
     }
     uint16_t press_value = 0;
     uint16_t hold_value = 0;
     if (!parseUint16Input(server.arg(press_arg), 0, 255, press_value) ||
         !parseUint16Input(server.arg(hold_arg), 0, 255, hold_value)) {
-      server.send(400, F("text/plain"), F("Invalid button action setting"));
+      sendPlain(400, F("Invalid button action setting"));
       return;
     }
 
@@ -6987,7 +6986,7 @@ void handleButtonSave() {
     const uint8_t hold_action = static_cast<uint8_t>(hold_value);
     if (!isButtonActionEncoding(press_action) || !isButtonActionEncoding(hold_action) ||
         !buttonActionAvailable(i, press_action) || !buttonActionAvailable(i, hold_action)) {
-      server.send(400, F("text/plain"), F("Invalid button action"));
+      sendPlain(400, F("Invalid button action"));
       return;
     }
     candidate.button_press_action[i] = press_action;
@@ -6998,13 +6997,13 @@ void handleButtonSave() {
         !readButtonRelayTargetInput(i, "hold", hold_action, candidate.button_hold_relay, error) ||
         !readButtonEventText(i, "press", false, press_action, candidate.button_press_target, candidate.button_press_payload, error) ||
         !readButtonEventText(i, "hold", true, hold_action, candidate.button_hold_target, candidate.button_hold_payload, error)) {
-      server.send(400, F("text/plain"), error);
+      sendPlain(400, error);
       return;
     }
   }
 
   if (!saveInputConfig(candidate)) {
-    server.send(500, F("text/plain"), F("Could not save input settings"));
+    sendPlain(500, F("Could not save input settings"));
     return;
   }
   for (uint8_t i = 0; i < runtime_template.button_count; i++) {
@@ -7014,9 +7013,7 @@ void handleButtonSave() {
     }
   }
   updateDeviceLeds(true);
-  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
-  server.sendHeader(F("Location"), F("/"), true);
-  server.send(303, F("text/plain"), "");
+  sendInlineOkOrHome();
 }
 
 struct ApiSettingsStats {
@@ -7293,40 +7290,33 @@ void handleMqttSave() {
   uint16_t port = kMqttDefaultPort;
   uint16_t keepalive = 0;
   if (!isValidMqttHost(host)) {
-    server.send(400, F("text/plain"), F("Invalid MQTT host"));
+    sendPlain(400, F("Invalid MQTT host"));
     return;
   }
   if (!parseUint16Input(port_arg, 1, 65535U, port)) {
-    server.send(400, F("text/plain"), F("Invalid MQTT port"));
+    sendPlain(400, F("Invalid MQTT port"));
     return;
   }
   if (!isValidMqttTopic(topic)) {
-    server.send(400, F("text/plain"), F("Invalid MQTT topic"));
+    sendPlain(400, F("Invalid MQTT topic"));
     return;
   }
   if (!parseUint16Input(keepalive_arg, 0, kMqttKeepaliveMax, keepalive)) {
-    server.send(400, F("text/plain"), F("Invalid MQTT keepalive"));
+    sendPlain(400, F("Invalid MQTT keepalive"));
     return;
   }
 
   if (!saveMqttConfig(host.c_str(), port, topic.c_str(), keepalive)) {
-    server.send(500, F("text/plain"), F("Could not save MQTT settings"));
+    sendPlain(500, F("Could not save MQTT settings"));
     return;
   }
 
-  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
-  String page;
-  page.reserve(700);
-  appendHeader(page, F("myMota32 MQTT"));
-  page += F("<p class='ok'>MQTT settings saved.</p>");
-  page += F("<p><a href='/'>Back</a></p>");
-  appendFooter(page);
-  sendHtml(page);
+  sendInlineOkOrHome();
 }
 
 void handleEnergySave() {
   if (!energy.present) {
-    server.send(400, F("text/plain"), F("No energy monitor is configured"));
+    sendPlain(400, F("No energy monitor is configured"));
     return;
   }
 
@@ -7338,13 +7328,13 @@ void handleEnergySave() {
   if (!parseUnsignedScaledDecimalInput(server.arg("total_offset_kwh"), 4,
                                        static_cast<uint64_t>(kEnergyTotalOffsetMaxKwh) * 10000ULL,
                                        total_offset_scaled)) {
-    server.send(400, F("text/plain"), F("Invalid total kWh offset"));
+    sendPlain(400, F("Invalid total kWh offset"));
     return;
   }
   total_offset_kwh = static_cast<float>(total_offset_scaled) / 10000.0f;
   if (server.hasArg("energy_report_interval") &&
       !parseUint16Input(server.arg("energy_report_interval"), 0, kMqttEnergyIntervalMax, energy_report_interval)) {
-    server.send(400, F("text/plain"), F("Invalid energy report interval"));
+    sendPlain(400, F("Invalid energy report interval"));
     return;
   }
   if (server.hasArg("energy_report_change_percent")) {
@@ -7352,37 +7342,30 @@ void handleEnergySave() {
     if (!parseUnsignedScaledDecimalInput(server.arg("energy_report_change_percent"), 1,
                                          static_cast<uint64_t>(kMqttEnergyChangeMaxPercent * 10.0f),
                                          percent_scaled)) {
-      server.send(400, F("text/plain"), F("Invalid energy report change percent"));
+      sendPlain(400, F("Invalid energy report change percent"));
       return;
     }
     energy_report_change_percent_x10 = static_cast<uint16_t>(percent_scaled);
   }
   if (server.hasArg("energy_report_change_watts") &&
       !parseUint16Input(server.arg("energy_report_change_watts"), 0, kMqttEnergyChangeMaxWatts, energy_report_change_watts)) {
-    server.send(400, F("text/plain"), F("Invalid energy report change watts"));
+    sendPlain(400, F("Invalid energy report change watts"));
     return;
   }
 
   if (!saveEnergyConfig(total_offset_kwh, energy_report_interval, energy_report_change_percent_x10,
                         energy_report_change_watts)) {
-    server.send(500, F("text/plain"), F("Could not save energy settings"));
+    sendPlain(500, F("Could not save energy settings"));
     return;
   }
 
-  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
-  String page;
-  page.reserve(700);
-  appendHeader(page, F("myMota32 Energy"));
-  page += F("<p class='ok'>Energy settings saved.</p>");
-  page += F("<p><a href='/'>Back</a></p>");
-  appendFooter(page);
-  sendHtml(page);
+  sendInlineOkOrHome();
 }
 
 void handleIBeaconSave() {
   const bool enabled = server.hasArg("enabled") && server.arg("enabled") == "1";
   if (enabled && !iBeaconCaptureSupported()) {
-    server.send(400, F("text/plain"), F("unsupported"));
+    sendPlain(400, F("unsupported"));
     return;
   }
 
@@ -7394,7 +7377,7 @@ void handleIBeaconSave() {
       !parseUint16Input(server.hasArg("i2") ? server.arg("i2") : String(kIBeaconFilter2DefaultSec),
                         1, 600, filter2_interval) ||
       !isIBeaconFilterInterval(filter2_interval)) {
-    server.send(400, F("text/plain"), F("invalid interval"));
+    sendPlain(400, F("invalid interval"));
     return;
   }
 
@@ -7404,12 +7387,12 @@ void handleIBeaconSave() {
                                filter1_macs, sizeof(filter1_macs)) ||
       !normalizeIBeaconMacList(server.hasArg("f2") ? server.arg("f2") : String(),
                                filter2_macs, sizeof(filter2_macs))) {
-    server.send(400, F("text/plain"), F("invalid mac"));
+    sendPlain(400, F("invalid mac"));
     return;
   }
 
   if (!saveIBeaconConfig(enabled, filter1_interval, filter1_macs, filter2_interval, filter2_macs)) {
-    server.send(500, F("text/plain"), F("save failed"));
+    sendPlain(500, F("save failed"));
     return;
   }
 
@@ -7417,31 +7400,22 @@ void handleIBeaconSave() {
   if (config.ibeacon_enabled) startIBeaconCapture();
   else stopIBeaconCapture();
 
-  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
-  String page;
-  page.reserve(700);
-  appendHeader(page, F("myMota32 iBeacon"));
-  page += F("<p class='ok'>iBeacon settings saved.</p>");
-  page += F("<p><a href='/'>Back</a></p>");
-  appendFooter(page);
-  sendHtml(page);
+  sendInlineOkOrHome();
 }
 
 void handleSystemSave() {
   uint8_t mode = kPowerSavingOff;
   if (!parsePowerSavingMode(server.arg("power_saving"), mode)) {
-    server.send(400, F("text/plain"), F("Invalid power saving"));
+    sendPlain(400, F("Invalid power saving"));
     return;
   }
 
   if (!savePowerSavingConfig(mode)) {
-    server.send(500, F("text/plain"), F("Save failed"));
+    sendPlain(500, F("Save failed"));
     return;
   }
 
-  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
-  server.sendHeader(F("Location"), F("/"), true);
-  server.send(303, F("text/plain"), "");
+  sendInlineOkOrHome();
 }
 
 void handleReboot() {
@@ -7457,7 +7431,7 @@ void handleReboot() {
 
 void handleFactoryReset() {
   if (!factoryResetConfig()) {
-    server.send(500, F("text/plain"), F("Could not factory reset settings"));
+    sendPlain(500, F("Could not factory reset settings"));
     return;
   }
   energy.present = false;
@@ -7721,14 +7695,14 @@ void handleHealth() {
 
 void handleCmnd() {
   if (!server.hasArg("cmnd")) {
-    server.send(400, F("text/plain"), F("Missing cmnd"));
+    sendPlain(400, F("Missing cmnd"));
     return;
   }
 
   String out;
   String error;
   if (!executeCmndString(server.arg("cmnd"), out, error)) {
-    server.send(400, F("text/plain"), error);
+    sendPlain(400, error);
     return;
   }
 
@@ -7911,7 +7885,7 @@ void handleUpdateUpload() {
 
 void handleNotFound() {
   server.sendHeader(F("Location"), F("/"), true);
-  server.send(302, F("text/plain"), "");
+  sendPlain(302, "");
 }
 
 void setupRoutes() {
@@ -7953,7 +7927,6 @@ void idleAfterLoopWork() {
 }
 
 void setup() {
-  Serial.begin(115200);
   delay(20);
   boot_started_ms = millis();
   loadBootRecoveryState();
@@ -7961,17 +7934,6 @@ void setup() {
   decodeTemplateConfig();
   loadGracefulRelaySnapshot();
   loadLastRelaySnapshot();
-  const bool serial_logs_ok = !templateEnergyUsesUart0Pins();
-  if (serial_logs_ok) {
-    Serial.println();
-    Serial.printf("myMota32 %s %s chip %s\n", MYMOTA32_VERSION, MYMOTA32_TARGET, chipDisplayName().c_str());
-    if (runtime_template.enabled) {
-      Serial.printf("Template '%s' base %u relays %u buttons %u leds %u unsupported %u\n",
-                    runtime_template.name, runtime_template.base, runtime_template.relay_count,
-                    runtime_template.button_count, runtime_template.led_count,
-                    runtime_template.unsupported_count);
-    }
-  }
   setupDevicePins();
   setupLightRuntime();
   setupEnergyMonitor();
@@ -7979,11 +7941,6 @@ void setup() {
   boot_id = makeBootId();
   setupRoutes();
   server.begin();
-  if (serial_logs_ok) {
-    Serial.printf("HTTP server started; STA %s AP %s\n",
-                  WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "not-connected",
-                  ap_started ? WiFi.softAPIP().toString().c_str() : "off");
-  }
 }
 
 void loop() {

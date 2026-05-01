@@ -215,6 +215,8 @@ build_target() {
   local boot_app0="$BOOT_APP0"
   local safeboot_offset="0x10000"
   local safeboot_size="$((0xD0000))"
+  local safeboot_margin="$((4096))"
+  local safeboot_limit="$((safeboot_size - safeboot_margin))"
   local app0_offset="0xe0000"
 
   echo "==> Building $display_name ($env_name)"
@@ -233,7 +235,7 @@ build_target() {
   cmp -s "$build_dir/firmware.bin" "$raw_bin" || fail "copy failed for $raw_bin"
   local raw_size
   raw_size="$(stat -c '%s' "$raw_bin")"
-  (( raw_size <= safeboot_size )) || fail "$raw_bin is $raw_size bytes; must fit in 0xD0000 safeboot partition"
+  (( raw_size <= safeboot_limit )) || fail "$raw_bin is $raw_size bytes; must stay at least 4096 bytes below the 0xD0000 safeboot partition"
 
   esptool --chip "$chip" merge_bin \
     -o "$factory_bin" \
@@ -275,6 +277,7 @@ build_target() {
   echo "    target:  $display_name"
   echo "    OTA:     ${raw_bin#$ROOT_DIR/}"
   echo "    factory: ${factory_bin#$ROOT_DIR/}"
+  echo "    margin:  $((safeboot_size - raw_size)) bytes below safeboot"
 }
 
 purge_gzip_artifacts() {
