@@ -125,6 +125,14 @@ c2a9b3b818a0153d73f5167a287e2882927322a600a6c96ea5ca2fd09b89807a  dist/mymota32-
 49848e6b4f1f119ca8d9d284715eb72dea45dd960a9639f906fbbc7445bbeffc  dist/mymota32-0.3.11-esp32-u4wdh-d-4m.bin
 4044c8fdd8ae2181fbfb14a40420efe79b0cfacd9c6ca1a7c8bff76807890512  dist/mymota32-0.3.11-esp32-u4wdh-s-4m-factory.bin
 a69fe6b947184e5e4727d2b642e254cc9707e6c46543dac0cbb0762b4376aa7f  dist/mymota32-0.3.11-esp32-u4wdh-s-4m.bin
+c1511fbb82164c554dafc0e1f2625538ea8cbfada22d0a620ef9f0cdf8b47b61  dist/mymota32-0.3.12-esp32-c3-4m-factory.bin
+f33c4e52a252e68f6318b3f1f0a8e6b74b6183af7760d758a174a4c30ae0df79  dist/mymota32-0.3.12-esp32-c3-4m.bin
+e15620975b66a2bd95552e1b0d1c1fd767c2a5eb99af45e1095c7c1cdc631a98  dist/mymota32-0.3.12-esp32-d0wd-v3-4m-factory.bin
+4e30664db307da2330e6018e3f4c139a01755b1d7c63bd088ff1f8a9e4cdd36c  dist/mymota32-0.3.12-esp32-d0wd-v3-4m.bin
+ceb82315228fcd78d5696c93a8d40eebc37a56c297e99f99fb013f9296651eff  dist/mymota32-0.3.12-esp32-u4wdh-d-4m-factory.bin
+f2ba540793e554719ec5dca4221c7efc3630ccea1af3906556da8b628787eac2  dist/mymota32-0.3.12-esp32-u4wdh-d-4m.bin
+fec20a50d362d5a0f1dbe107df456526d9bc69490cb9ab906323e34358c520c7  dist/mymota32-0.3.12-esp32-u4wdh-s-4m-factory.bin
+028f4a4ba304173f2593bc66e030956c0e2b1ec4994f32a7cff1cd41f81eabf7  dist/mymota32-0.3.12-esp32-u4wdh-s-4m.bin
 0cf70e144a315aa97f0a11211d8bb6bed55497b67b4b221b17bc73ce0798ebc0  dist/mymota32-0.3.2-esp32-c3-4m-factory.bin
 77550adbf78ad466634f07de682f658f65f52b649582473f10bc6fa4ffe21c61  dist/mymota32-0.3.2-esp32-c3-4m.bin
 eb7466aaec4c69555ed0c937f34022cad53d495dd53c80f368d70682d008528b  dist/mymota32-0.3.2-esp32-d0wd-v3-4m-factory.bin

@@ -43,6 +43,14 @@ constexpr uint32_t kConnectTimeoutMs = 20000;
 constexpr uint32_t kWifiReconnectBeginMs = 60000;
 constexpr uint32_t kInitialFallbackApMs = 300000;
 constexpr uint32_t kApRetryMs = 10000;
+constexpr uint32_t kWifiDynamicPowerSettleMs = 30000;
+constexpr uint32_t kWifiDynamicPowerSampleMs = 2000;
+constexpr uint8_t kWifiDynamicPowerSampleCount = 5;
+constexpr uint8_t kWifiDynamicPowerDisconnectLimit = 2;
+constexpr uint8_t kWifiDynamicPowerDefault = 1;
+constexpr int8_t kWifiTxPowerMaxQdbm = 82;     // 20.5 dBm
+constexpr int8_t kWifiTxPowerMediumQdbm = 52;  // 13.0 dBm
+constexpr int8_t kWifiTxPowerStrongQdbm = 40;  // 10.0 dBm
 constexpr uint32_t kBootRecoveryStableMs = 30000;
 constexpr uint8_t kBootRecoveryLimit = 5;
 constexpr size_t kUpdateSectorSize = 4096;
@@ -509,6 +517,7 @@ struct StoredConfig {
   char ibeacon_filter2_macs[kIBeaconFilterListMaxLen + 1];
 
   uint16_t power_saving_mode;
+  uint8_t wifi_dynamic_power;
 };
 
 struct IBeaconObservation {
@@ -619,6 +628,12 @@ uint32_t last_ap_attempt = 0;
 uint32_t last_wifi_begin_attempt = 0;
 uint32_t disconnected_since = 0;
 bool disconnected_timer_active = false;
+uint32_t wifi_dynamic_power_connected_since = 0;
+uint32_t wifi_dynamic_power_last_sample = 0;
+uint8_t wifi_dynamic_power_samples = 0;
+uint8_t wifi_dynamic_power_disconnects = 0;
+int16_t wifi_dynamic_power_rssi_sum = 0;
+int8_t wifi_tx_power_qdbm = kWifiTxPowerMaxQdbm;
 
 uint32_t boot_recovery_count = 0;
 bool boot_recovery_factory_reset = false;
@@ -1599,6 +1614,7 @@ void setDefaultConfig() {
   config.ibeacon_filter1_macs[0] = '\0';
   config.ibeacon_filter2_macs[0] = '\0';
   config.power_saving_mode = kPowerSavingOff;
+  config.wifi_dynamic_power = kWifiDynamicPowerDefault;
 }
 
 template <size_t N>
@@ -1726,6 +1742,7 @@ bool loadConfig() {
   String ibeacon_filter1_macs = prefs.getString("ib_f1_mac", "");
   String ibeacon_filter2_macs = prefs.getString("ib_f2_mac", "");
   uint16_t power_saving_mode = prefs.getUShort("pwr_save", kPowerSavingOff);
+  uint8_t wifi_dynamic_power = prefs.getUChar("wifi_dyn", kWifiDynamicPowerDefault);
   prefs.end();
 
   strlcpy(config.ssid, ssid.c_str(), sizeof(config.ssid));
@@ -1841,18 +1858,21 @@ bool loadConfig() {
     config.ibeacon_filter2_macs[0] = '\0';
   }
   config.power_saving_mode = sanitizePowerSavingMode(power_saving_mode);
+  config.wifi_dynamic_power = wifi_dynamic_power ? 1 : 0;
 
   config_ok = config.ssid[0] != '\0';
   return config_ok;
 }
 
-bool saveWifiConfig(const char *ssid, const char *password, const char *hostname, uint8_t phy_mode) {
+bool saveWifiConfig(const char *ssid, const char *password, const char *hostname, uint8_t phy_mode,
+                    bool dynamic_power) {
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putString("ssid", ssid);
   prefs.putString("password", password);
   if (hostname && hostname[0]) prefs.putString("hostname", hostname);
   else prefs.putString("hostname", defaultHostname());
   prefs.putUChar("phy", sanitizePhyMode(phy_mode));
+  prefs.putUChar("wifi_dyn", dynamic_power ? 1 : 0);
   prefs.end();
   return loadConfig();
 }
@@ -2059,6 +2079,89 @@ void maintainBootRecovery() {
   }
 }
 
+bool wifiTxPowerIsMax() {
+  return wifi_tx_power_qdbm >= kWifiTxPowerMaxQdbm;
+}
+
+bool wifiDynamicPowerApplied() {
+  return wifi_dynamic_power_samples >= kWifiDynamicPowerSampleCount;
+}
+
+void setWifiTxPowerQdbm(int8_t qdbm) {
+  if (esp_wifi_set_max_tx_power(qdbm) == ESP_OK) {
+    wifi_tx_power_qdbm = qdbm;
+  }
+}
+
+void resetWifiDynamicPowerRuntime(bool restore_max) {
+  wifi_dynamic_power_connected_since = WiFi.status() == WL_CONNECTED ? millis() : 0;
+  wifi_dynamic_power_last_sample = 0;
+  wifi_dynamic_power_samples = 0;
+  wifi_dynamic_power_disconnects = 0;
+  wifi_dynamic_power_rssi_sum = 0;
+  if (restore_max) setWifiTxPowerQdbm(kWifiTxPowerMaxQdbm);
+}
+
+int8_t wifiDynamicPowerTargetQdbm(int16_t rssi) {
+  if (rssi >= -40) return kWifiTxPowerStrongQdbm;
+  if (rssi >= -50) return kWifiTxPowerMediumQdbm;
+  return kWifiTxPowerMaxQdbm;
+}
+
+void prepareWifiTxPowerForConnect() {
+  setWifiTxPowerQdbm(kWifiTxPowerMaxQdbm);
+  wifi_dynamic_power_connected_since = 0;
+  wifi_dynamic_power_last_sample = 0;
+  wifi_dynamic_power_samples = 0;
+  wifi_dynamic_power_rssi_sum = 0;
+}
+
+void maintainWifiDynamicPower() {
+  const bool connected = WiFi.status() == WL_CONNECTED;
+  const uint32_t now = millis();
+
+  if (!config.wifi_dynamic_power) {
+    if (!wifiTxPowerIsMax()) setWifiTxPowerQdbm(kWifiTxPowerMaxQdbm);
+    if (!connected) wifi_dynamic_power_connected_since = 0;
+    wifi_dynamic_power_samples = 0;
+    return;
+  }
+
+  if (!connected) {
+    if (wifi_dynamic_power_connected_since && wifiDynamicPowerApplied() && !wifiTxPowerIsMax()) {
+      wifi_dynamic_power_disconnects++;
+      setWifiTxPowerQdbm(kWifiTxPowerMaxQdbm);
+    }
+    wifi_dynamic_power_connected_since = 0;
+    wifi_dynamic_power_last_sample = 0;
+    wifi_dynamic_power_samples = 0;
+    wifi_dynamic_power_rssi_sum = 0;
+    return;
+  }
+
+  if (!wifi_dynamic_power_connected_since) {
+    wifi_dynamic_power_connected_since = now;
+    wifi_dynamic_power_last_sample = 0;
+    wifi_dynamic_power_samples = 0;
+    wifi_dynamic_power_rssi_sum = 0;
+    setWifiTxPowerQdbm(kWifiTxPowerMaxQdbm);
+    return;
+  }
+
+  if (wifi_dynamic_power_disconnects >= kWifiDynamicPowerDisconnectLimit || wifiDynamicPowerApplied()) return;
+  if (now - wifi_dynamic_power_connected_since < kWifiDynamicPowerSettleMs) return;
+  if (wifi_dynamic_power_last_sample && now - wifi_dynamic_power_last_sample < kWifiDynamicPowerSampleMs) return;
+
+  const int16_t rssi = static_cast<int16_t>(WiFi.RSSI());
+  wifi_dynamic_power_last_sample = now;
+  wifi_dynamic_power_rssi_sum += rssi;
+  wifi_dynamic_power_samples++;
+  if (wifi_dynamic_power_samples < kWifiDynamicPowerSampleCount) return;
+
+  const int16_t avg_rssi = wifi_dynamic_power_rssi_sum / static_cast<int16_t>(wifi_dynamic_power_samples);
+  setWifiTxPowerQdbm(wifiDynamicPowerTargetQdbm(avg_rssi));
+}
+
 void applyPhyMode(uint8_t phy_mode) {
   phy_mode = sanitizePhyMode(phy_mode);
   uint8_t protocol = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N;
@@ -2084,6 +2187,7 @@ bool connectWifiWithPhy(uint8_t phy_mode, uint32_t timeout_ms) {
   delay(100);
   WiFi.mode(WIFI_STA);
   applyPhyMode(phy_mode);
+  prepareWifiTxPowerForConnect();
   WiFi.begin(config.ssid, config.password);
   last_wifi_begin_attempt = millis();
   return waitForWifi(timeout_ms);
@@ -2111,6 +2215,7 @@ void beginWifiReconnect(uint32_t now) {
   if (!config_ok || WiFi.status() == WL_CONNECTED) return;
   WiFi.mode(ap_started ? WIFI_AP_STA : WIFI_STA);
   applyPhyMode(config.phy_mode);
+  prepareWifiTxPowerForConnect();
   WiFi.begin(config.ssid, config.password);
   last_wifi_begin_attempt = now;
 }
@@ -2120,6 +2225,7 @@ void prepareWifi() {
   WiFi.setAutoReconnect(true);
   WiFi.setHostname(config.hostname);
   WiFi.setSleep(false);
+  resetWifiDynamicPowerRuntime(false);
 }
 
 void connectWifi() {
@@ -5616,7 +5722,6 @@ void appendStatusBlock(String &page) {
     page += F("<span>Wi-Fi</span><div><span id='live-wifi' class='pill bad'>disconnected</span> <code id='live-ssid'>n/a</code></div>");
     page += F("<span>IP</span><div><code id='live-ip'>n/a</code></div><span>RSSI</span><div><code id='live-rssi'>n/a</code></div>");
   }
-
   if (ap_started) {
     page += F("<span>Setup AP</span><div><code>");
     page += htmlEscape(WiFi.softAPSSID());
@@ -6350,6 +6455,26 @@ void appendPowerSavingSelect(String &page) {
   page += F("</select></div>");
 }
 
+void appendPhyModeSelect(String &page) {
+  page += F("<div class='row'><label>PHY mode<br><select name='phy_mode'>");
+  for (uint8_t mode = 0; mode <= kPhyModeN; mode++) {
+    page += F("<option value='");
+    page += String(mode);
+    page += F("'");
+    if (config.phy_mode == mode) page += F(" selected");
+    page += F(">");
+    page += phyModeName(mode);
+    page += F("</option>");
+  }
+  page += F("</select></label></div>");
+}
+
+void appendWifiDynamicPowerCheckbox(String &page) {
+  page += F("<div class='row'><label><input type='checkbox' name='wifi_dynamic_power' value='1'");
+  if (config.wifi_dynamic_power) page += F(" checked");
+  page += F(">Dynamic Wi-Fi power</label></div>");
+}
+
 void handleRoot() {
   String page;
   page.reserve(10800);
@@ -6383,17 +6508,8 @@ void handleRoot() {
   page += F("<div class='row'><label>Hostname<br><input name='hostname' maxlength='32' value='");
   page += htmlEscape(config.hostname);
   page += F("'></label></div>");
-  page += F("<div class='row'><label>PHY mode<br><select name='phy_mode'>");
-  for (uint8_t mode = 0; mode <= kPhyModeN; mode++) {
-    page += F("<option value='");
-    page += String(mode);
-    page += F("'");
-    if (config.phy_mode == mode) page += F(" selected");
-    page += F(">");
-    page += phyModeName(mode);
-    page += F("</option>");
-  }
-  page += F("</select></label></div>");
+  appendPhyModeSelect(page);
+  appendWifiDynamicPowerCheckbox(page);
   page += F("<button type='submit'>Save Wi-Fi</button></form>");
   page += F("<p><a class='btn secondary' href='/scan'>Scan networks</a></p></section>");
   flushStreamChunk(page);
@@ -6452,17 +6568,8 @@ void handleScan() {
     page += F("<div class='row'><label>Hostname<br><input name='hostname' maxlength='32' value='");
     page += htmlEscape(config.hostname);
     page += F("'></label></div>");
-    page += F("<div class='row'><label>PHY mode<br><select name='phy_mode'>");
-    for (uint8_t mode = 0; mode <= kPhyModeN; mode++) {
-      page += F("<option value='");
-      page += String(mode);
-      page += F("'");
-      if (config.phy_mode == mode) page += F(" selected");
-      page += F(">");
-      page += phyModeName(mode);
-      page += F("</option>");
-    }
-    page += F("</select></label></div>");
+    appendPhyModeSelect(page);
+    appendWifiDynamicPowerCheckbox(page);
     page += F("<ul class='list'>");
     for (int i = 0; i < count; i++) {
       page += F("<li><label><input type='radio' name='ssid' required value='");
@@ -6488,6 +6595,7 @@ void handleWifiSave() {
   const String password = server.arg("password");
   const String hostname = server.arg("hostname");
   uint8_t phy_mode = config.phy_mode;
+  const bool dynamic_power = server.hasArg("wifi_dynamic_power");
   char password_to_save[sizeof(config.password)];
 
   if (ssid.length() == 0 || ssid.length() > 32 || password.length() > 64 || hostname.length() > 32) {
@@ -6502,16 +6610,16 @@ void handleWifiSave() {
   } else {
     strlcpy(password_to_save, password.c_str(), sizeof(password_to_save));
   }
-  if (!saveWifiConfig(ssid.c_str(), password_to_save, hostname.c_str(), phy_mode)) {
+  if (!saveWifiConfig(ssid.c_str(), password_to_save, hostname.c_str(), phy_mode, dynamic_power)) {
     sendPlain(500, F("Could not save Wi-Fi settings"));
     return;
   }
   String page;
   page.reserve(800);
   appendHeader(page, F("myMota32 Wi-Fi"));
-  page += F("<p class='ok'>Wi-Fi settings saved. Rebooting.</p>");
-  page += F("<p>The page will return to the dashboard when the device is reachable again.</p>");
-  page += F("<p class='muted'>If Wi-Fi or IP changed, reconnect to the device manually.</p>");
+  page += F("<p class='ok'>Saved. Rebooting.</p>");
+  page += F("<p>Returning when reachable.</p>");
+  page += F("<p class='muted'>If IP changed, reconnect manually.</p>");
   appendFooter(page, false, true);
   sendHtml(page);
   scheduleRestart(1200, true);
@@ -7948,6 +8056,7 @@ void loop() {
   server.handleClient();
   maintainBootRecovery();
   maintainWifi();
+  maintainWifiDynamicPower();
   server.handleClient();
   maintainDevice();
   maintainLight();
