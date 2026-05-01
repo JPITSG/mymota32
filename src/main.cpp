@@ -119,6 +119,9 @@ constexpr uint16_t kButtonDebounceDefaultMs = 50;
 constexpr uint16_t kButtonDebounceMinMs = 5;
 constexpr uint16_t kButtonDebounceMaxMs = 200;
 constexpr uint32_t kLedUpdateMs = 50;
+constexpr uint8_t kPowerSavingOff = 0;
+constexpr uint8_t kPowerSavingLight = 1;
+constexpr uint8_t kPowerSavingDeep = 2;
 constexpr uint16_t kRelayEnforcementMinSeconds = 1;
 constexpr uint16_t kRelayEnforcementMaxSeconds = 65535U;
 constexpr uint16_t kRelayPulseMinSeconds = 1;
@@ -503,6 +506,8 @@ struct StoredConfig {
   uint16_t ibeacon_filter2_interval_sec;
   char ibeacon_filter1_macs[kIBeaconFilterListMaxLen + 1];
   char ibeacon_filter2_macs[kIBeaconFilterListMaxLen + 1];
+
+  uint16_t power_saving_mode;
 };
 
 struct IBeaconObservation {
@@ -733,6 +738,28 @@ const __FlashStringHelper *phyModeName(uint8_t mode) {
     case kPhyModeN: return F("11n");
     default: return F("auto");
   }
+}
+
+uint8_t sanitizePowerSavingMode(uint16_t mode) {
+  return mode <= kPowerSavingDeep ? static_cast<uint8_t>(mode) : kPowerSavingOff;
+}
+
+bool parsePowerSavingMode(String value, uint8_t &mode) {
+  value.trim();
+  value.toLowerCase();
+  if (value == F("0") || value == F("off")) {
+    mode = kPowerSavingOff;
+    return true;
+  }
+  if (value == F("1") || value == F("light")) {
+    mode = kPowerSavingLight;
+    return true;
+  }
+  if (value == F("2") || value == F("deep")) {
+    mode = kPowerSavingDeep;
+    return true;
+  }
+  return false;
 }
 
 uint8_t activePhyMode() {
@@ -1579,6 +1606,7 @@ void setDefaultConfig() {
   config.ibeacon_filter2_interval_sec = kIBeaconFilter2DefaultSec;
   config.ibeacon_filter1_macs[0] = '\0';
   config.ibeacon_filter2_macs[0] = '\0';
+  config.power_saving_mode = kPowerSavingOff;
 }
 
 template <size_t N>
@@ -1705,6 +1733,7 @@ bool loadConfig() {
   uint16_t ibeacon_filter2_interval = prefs.getUShort("ib_f2_int", kIBeaconFilter2DefaultSec);
   String ibeacon_filter1_macs = prefs.getString("ib_f1_mac", "");
   String ibeacon_filter2_macs = prefs.getString("ib_f2_mac", "");
+  uint16_t power_saving_mode = prefs.getUShort("pwr_save", kPowerSavingOff);
   prefs.end();
 
   strlcpy(config.ssid, ssid.c_str(), sizeof(config.ssid));
@@ -1819,6 +1848,7 @@ bool loadConfig() {
   if (!normalizeIBeaconMacList(ibeacon_filter2_macs, config.ibeacon_filter2_macs, sizeof(config.ibeacon_filter2_macs))) {
     config.ibeacon_filter2_macs[0] = '\0';
   }
+  config.power_saving_mode = sanitizePowerSavingMode(power_saving_mode);
 
   config_ok = config.ssid[0] != '\0';
   return config_ok;
@@ -1910,6 +1940,13 @@ bool saveIBeaconConfig(bool enabled, uint16_t filter1_interval, const char *filt
   prefs.putString("ib_f1_mac", filter1_macs ? filter1_macs : "");
   prefs.putUShort("ib_f2_int", sanitizeIBeaconFilterInterval(filter2_interval, kIBeaconFilter2DefaultSec));
   prefs.putString("ib_f2_mac", filter2_macs ? filter2_macs : "");
+  prefs.end();
+  return loadConfig();
+}
+
+bool savePowerSavingConfig(uint8_t mode) {
+  if (!prefs.begin("mymota32", false)) return false;
+  prefs.putUShort("pwr_save", sanitizePowerSavingMode(mode));
   prefs.end();
   return loadConfig();
 }
@@ -5429,11 +5466,11 @@ void appendHeader(String &page, const __FlashStringHelper *title, bool show_spin
   page += F(".brand{font-size:28px;font-weight:700;letter-spacing:0;color:inherit;text-decoration:none}.brand span{color:#7dd3aa}.sub{color:#c7d0dc;font-size:13px}.meta{display:flex;align-items:center;gap:8px}");
   page += F(".spin{width:13px;height:13px;border:2px solid rgba(255,255,255,.35);border-top-color:#7dd3aa;border-radius:50%;opacity:.55}.spin.active{opacity:1;animation:rot .7s linear infinite}@keyframes rot{to{transform:rotate(360deg)}}main{max-width:1080px;margin:18px auto 28px;padding:0 14px}");
   page += F(".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}.wide{grid-column:1/-1}");
-  page += F(".panel h2{font-size:17px;margin:0 0 12px}.panel-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px}.panel-title h2{margin:0}.kv{display:grid;grid-template-columns:minmax(110px,42%) 1fr;gap:8px 12px}.kv span,.hint{color:var(--muted)}.kv div{min-width:0}");
+  page += F(".panel h2{font-size:17px;margin:0 0 12px}.panel h3{font-size:14px;margin:0 0 10px}.panel-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px}.panel-title h2{margin:0}.kv{display:grid;grid-template-columns:minmax(110px,42%) 1fr;gap:8px 12px}.kv span,.hint{color:var(--muted)}.kv div{min-width:0}");
   page += F("code{background:#eef2f6;border:1px solid #dce3ea;border-radius:4px;padding:1px 4px;word-break:break-word}.pill{display:inline-block;border-radius:999px;padding:2px 8px;background:#eef2f6;color:#364152}.pill.ok{background:var(--ok);color:#fff}.pill.bad{background:var(--bad);color:#fff}.panel h2 .pill{font-size:13px;font-weight:400;vertical-align:1px}.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}");
-  page += F(".tokens{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.tokens div{display:flex;flex-direction:column;gap:3px}.help{position:relative;margin-left:auto}.help-q{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:1px solid var(--line);border-radius:50%;background:#eef2f6;color:var(--accent2);font-size:14px;font-weight:700;cursor:help}.help-box{display:none;position:absolute;right:0;top:30px;z-index:30;width:520px;max-width:calc(100vw - 48px);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);color:var(--text);font-size:14px;font-weight:400;line-height:1.4}.help:hover .help-box,.help:focus-within .help-box{display:block}.help-box p{margin:0 0 8px}.button-block{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}.action-extra,.mode-extra{display:none}.action-extra.show,.mode-extra.show{display:block}.hidden{display:none}");
+  page += F(".button-block{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}.action-extra,.mode-extra{display:none}.action-extra.show,.mode-extra.show{display:block}.hidden{display:none}");
   page += F("form{margin:0}.row{margin:10px 0}label{display:block;font-weight:600;color:#344054}input,button,select,textarea{font:inherit}input,select,textarea{width:100%;margin-top:4px;padding:9px;border:1px solid #b9c4d0;border-radius:6px;background:#fff}input[type=checkbox]{width:auto;margin:0 6px 0 0;padding:0;vertical-align:-1px}textarea{min-height:92px;resize:vertical}");
-  page += F("button,.btn{display:inline-block;margin:4px 4px 0 0;padding:8px 12px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff;text-decoration:none;cursor:pointer}.secondary{background:#fff;color:var(--accent2);border-color:#9eb7cf}.danger{background:#fff;color:var(--bad);border-color:#d4aaa7}.inline{display:inline}.actions{display:flex;flex-wrap:wrap;gap:6px}.inline button{margin:0 4px 0 0}.list{margin:0;padding-left:18px}@media(max-width:520px){.kv{grid-template-columns:1fr}.brand{font-size:24px}}</style></head><body>");
+  page += F("button,.btn{display:inline-block;margin:4px 4px 0 0;padding:8px 12px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff;text-decoration:none;cursor:pointer}.secondary{background:#fff;color:var(--accent2);border-color:#9eb7cf}.danger{background:#fff;color:var(--bad);border-color:#d4aaa7}.inline{display:inline}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.inline button{margin:0 4px 0 0}.list{margin:0;padding-left:18px}@media(max-width:520px){.kv{grid-template-columns:1fr}.brand{font-size:24px}}</style></head><body>");
   page += F("<header class='top'><div class='topin'><div><a class='brand' href='/'>my<span>Mota32</span></a><div class='sub'>ESP32 firmware</div></div><div class='sub meta'><span>");
   page += F(MYMOTA32_VERSION);
   page += F(" / ");
@@ -6071,12 +6108,7 @@ String inputStateName(uint8_t input, bool active) {
 void appendButtonSettings(String &page) {
   if (!runtime_template.enabled || !hasConfigurableButtons()) return;
 
-  page += F("<section class='panel'><div class='panel-title'><h2>Inputs</h2><div class='help' tabindex='0'><span class='help-q'>?</span><div class='help-box'><p><strong>Action placeholders</strong></p><div class='tokens'>");
-  page += F("<div><code>{BUTTONID}</code><span class='hint'>input number, starting at 1</span></div>");
-  page += F("<div><code>{TYPE}</code><span class='hint'>TOGGLE on press, HOLD on hold</span></div>");
-  page += F("<div><code>{TOPIC}</code><span class='hint'>current MQTT topic</span></div>");
-  page += F("<div><code>{RELAYX_STATE}</code><span class='hint'>relay state, for example {RELAY1_STATE}</span></div>");
-  page += F("</div><p class='hint'>MQTT broadcast sends a topic and payload through the configured broker.</p></div></div></div><form data-inline='1' method='post' action='/buttons'>");
+  page += F("<section class='panel'><h2>Inputs</h2><form data-inline='1' method='post' action='/buttons'>");
   page += F("<div class='row'><label>Hold time ms<br><input name='hold_ms' type='number' min='");
   page += String(kButtonHoldMinMs);
   page += F("' max='");
@@ -6281,6 +6313,24 @@ void appendIBeaconForm(String &page) {
   page += F(">Save iBeacon</button></form></section>");
 }
 
+void appendPowerSavingOption(String &page, uint8_t mode, const __FlashStringHelper *label) {
+  page += F("<option value='");
+  page += mode;
+  page += F("'");
+  if (sanitizePowerSavingMode(config.power_saving_mode) == mode) page += F(" selected");
+  page += F(">");
+  page += label;
+  page += F("</option>");
+}
+
+void appendPowerSavingSelect(String &page) {
+  page += F("<div class='row'><select name='power_saving'>");
+  appendPowerSavingOption(page, kPowerSavingOff, F("Off"));
+  appendPowerSavingOption(page, kPowerSavingLight, F("Light"));
+  appendPowerSavingOption(page, kPowerSavingDeep, F("Deep"));
+  page += F("</select></div>");
+}
+
 void handleRoot() {
   String page;
   page.reserve(10800);
@@ -6332,14 +6382,17 @@ void handleRoot() {
   appendMqttForm(page);
   flushStreamChunk(page);
 
-  page += F("<section class='panel'><h2>Firmware</h2><form class='firmware-upload' method='post' action='/update?verify=1' enctype='multipart/form-data' data-target='");
+  page += F("<section class='panel'><h2>System</h2><h3>Firmware</h3><form class='firmware-upload' method='post' action='/update?verify=1' enctype='multipart/form-data' data-target='");
   page += F(MYMOTA32_TARGET);
   page += F("'>");
   page += F("<input type='file' name='firmware' accept='.bin' required>");
-  page += F("<div class='row'><label><input class='firmware-verify' type='checkbox' checked>Verify firmware target on device</label></div>");
-  page += F("<button type='submit'>Upload firmware</button></form>");
-  page += F("<p><a class='btn secondary' href='/reboot'>Reboot</a></p>");
-  page += F("<form method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset will delete Wi-Fi, template, MQTT, input, LED, light, device state enforcement, relay pulsing, iBeacon, and energy settings. Continue?')\"><button class='danger' type='submit'>Factory reset</button></form></section>");
+  page += F("<div class='row'><label><input class='firmware-verify' type='checkbox' checked>Verify target</label></div>");
+  page += F("<button type='submit'>Upload</button></form>");
+  page += F("<div class='button-block'><h3>Power Saving</h3><form method='post' action='/system'>");
+  appendPowerSavingSelect(page);
+  page += F("<button type='submit'>Save</button></form></div>");
+  page += F("<div class='button-block'><h3>Reboot</h3><div class='actions'><a class='btn secondary' href='/reboot'>Reboot</a></div>");
+  page += F("<div class='actions'><form class='inline' method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset?')\"><button class='danger' type='submit'>Factory Reset</button></form></div></div></section>");
   flushStreamChunk(page);
 
   appendTemplateForm(page);
@@ -7195,6 +7248,20 @@ void finishApiSettingsUpdate(const StoredConfig &candidate, const ApiSettingsSta
 }
 
 void handleApiSettingsGet() {
+  if (server.hasArg("power_saving")) {
+    uint8_t mode = kPowerSavingOff;
+    if (!parsePowerSavingMode(server.arg("power_saving"), mode)) {
+      sendApiSettingsError(400, F("Invalid power saving"));
+      return;
+    }
+    if (!savePowerSavingConfig(mode)) {
+      sendApiSettingsError(500, F("Could not save settings"));
+      return;
+    }
+    server.send(200, F("application/json"), F("{\"ok\":true}"));
+    return;
+  }
+
   if (!apiSettingsGetHasUpdateArgs()) {
     String out;
     out.reserve(1800);
@@ -7358,6 +7425,23 @@ void handleIBeaconSave() {
   page += F("<p><a href='/'>Back</a></p>");
   appendFooter(page);
   sendHtml(page);
+}
+
+void handleSystemSave() {
+  uint8_t mode = kPowerSavingOff;
+  if (!parsePowerSavingMode(server.arg("power_saving"), mode)) {
+    server.send(400, F("text/plain"), F("Invalid power saving"));
+    return;
+  }
+
+  if (!savePowerSavingConfig(mode)) {
+    server.send(500, F("text/plain"), F("Save failed"));
+    return;
+  }
+
+  if (server.hasArg("_inline")) { server.send(204, F("text/plain"), ""); return; }
+  server.sendHeader(F("Location"), F("/"), true);
+  server.send(303, F("text/plain"), "");
 }
 
 void handleReboot() {
@@ -7846,6 +7930,7 @@ void setupRoutes() {
   server.on("/mqtt", HTTP_POST, handleMqttSave);
   server.on("/energy", HTTP_POST, handleEnergySave);
   server.on("/ibeacon", HTTP_POST, handleIBeaconSave);
+  server.on("/system", HTTP_POST, handleSystemSave);
   server.on("/reboot", HTTP_GET, handleReboot);
   server.on("/factory-reset", HTTP_POST, handleFactoryReset);
   server.on("/health", HTTP_GET, handleHealth);
@@ -7856,6 +7941,16 @@ void setupRoutes() {
 }
 
 }  // namespace
+
+void idleAfterLoopWork() {
+  uint8_t delay_ms = sanitizePowerSavingMode(config.power_saving_mode);
+  if (delay_ms == kPowerSavingDeep) delay_ms = 10;
+  if (delay_ms > 0 && restart_due_ms == 0 && !update_started) {
+    delay(delay_ms);
+  } else {
+    yield();
+  }
+}
 
 void setup() {
   Serial.begin(115200);
@@ -7917,5 +8012,5 @@ void loop() {
     ESP.restart();
   }
   recordLoopPerf(loop_started_us, micros());
-  yield();
+  idleAfterLoopWork();
 }
