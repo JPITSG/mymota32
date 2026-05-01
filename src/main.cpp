@@ -2087,6 +2087,12 @@ bool wifiDynamicPowerApplied() {
   return wifi_dynamic_power_samples >= kWifiDynamicPowerSampleCount;
 }
 
+void appendWifiTxPowerDbm(String &out) {
+  out += String(wifi_tx_power_qdbm / 4);
+  out += '.';
+  out += static_cast<char>('0' + (((wifi_tx_power_qdbm & 3) * 10 + 2) / 4));
+}
+
 void setWifiTxPowerQdbm(int8_t qdbm) {
   if (esp_wifi_set_max_tx_power(qdbm) == ESP_OK) {
     wifi_tx_power_qdbm = qdbm;
@@ -5589,7 +5595,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("t('live-heap',d.heap+' bytes');t('live-uptime',d.uptime+'s');t('live-active-phy',d.active_phy);");
   page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',Number(d.perf.loop_max_us/1000).toFixed(1)+' ms');}");
   page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);");
-  page += F("p('live-wifi',d.wifi?'connected':'disconnected',d.wifi?'pill ok':'pill bad');t('live-ssid',d.wifi_ssid||'n/a');t('live-ip',d.ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');");
+  page += F("p('live-wifi',d.wifi?'connected':'disconnected',d.wifi?'pill ok':'pill bad');t('live-ssid',d.wifi_ssid||'n/a');t('live-ip',d.ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');t('live-txp',d.wifi_tx_power+' dBm');");
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
   page += F("if(d.mqtt){t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',d.mqtt.last_attempt_ms_ago==null?'n/a':d.mqtt.last_attempt_ms_ago+' ms ago');}");
 #if MYMOTA32_LIGHT_SUPPORTED
@@ -5722,6 +5728,9 @@ void appendStatusBlock(String &page) {
     page += F("<span>Wi-Fi</span><div><span id='live-wifi' class='pill bad'>disconnected</span> <code id='live-ssid'>n/a</code></div>");
     page += F("<span>IP</span><div><code id='live-ip'>n/a</code></div><span>RSSI</span><div><code id='live-rssi'>n/a</code></div>");
   }
+  page += F("<span>Tx power</span><div><code id='live-txp'>");
+  appendWifiTxPowerDbm(page);
+  page += F(" dBm</code></div>");
   if (ap_started) {
     page += F("<span>Setup AP</span><div><code>");
     page += htmlEscape(WiFi.softAPSSID());
@@ -7590,6 +7599,8 @@ void handleHealth() {
   out += F("\",\"rssi\":");
   if (WiFi.status() == WL_CONNECTED) out += WiFi.RSSI();
   else out += F("null");
+  out += F(",\"wifi_tx_power\":");
+  appendWifiTxPowerDbm(out);
   out += F(",\"ap\":");
   out += (ap_started ? F("true") : F("false"));
   out += F(",\"configured_phy_mode\":");
