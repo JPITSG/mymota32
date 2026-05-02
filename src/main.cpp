@@ -7166,6 +7166,8 @@ bool apiSettingsButtonAvailable(uint8_t input) {
 void appendApiSettingsJson(String &out) {
   out += F("{\"format\":\"mymota-api-settings\",\"api_version\":");
   out += kApiSettingsVersion;
+  out += F(",\"hold_ms\":");
+  out += config.button_hold_ms;
   out += F(",\"inputs\":[");
   bool first = true;
   for (uint8_t i = 0; i < runtime_template.button_count && i < kMaxButtons; i++) {
@@ -7279,6 +7281,7 @@ bool apiSettingsIndexedArgPresent(uint8_t input_number, const char *primary_suff
 }
 
 bool apiSettingsGetHasUpdateArgs() {
+  if (server.hasArg("hold_ms")) return true;
   if (server.hasArg("input") || server.hasArg("id")) return true;
   for (uint8_t input_number = 1; input_number <= kMaxButtons; input_number++) {
     if (apiSettingsIndexedArgPresent(input_number, "_mqtt_topic", "_topic") ||
@@ -7291,6 +7294,17 @@ bool apiSettingsGetHasUpdateArgs() {
 
 bool applyApiSettingsGetArgs(StoredConfig &target, ApiSettingsStats &stats) {
   bool saw_setting_arg = false;
+
+  if (server.hasArg("hold_ms")) {
+    saw_setting_arg = true;
+    uint16_t hold_ms = kButtonHoldDefaultMs;
+    if (parseUint16Input(server.arg("hold_ms"), kButtonHoldMinMs, kButtonHoldMaxMs, hold_ms)) {
+      target.button_hold_ms = hold_ms;
+      recordApiSettingsApplied(stats);
+    } else {
+      recordApiSettingsSkipped(stats);
+    }
+  }
 
   if (server.hasArg("input") || server.hasArg("id")) {
     saw_setting_arg = true;
