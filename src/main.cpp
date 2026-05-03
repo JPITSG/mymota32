@@ -2972,16 +2972,26 @@ void maintainButtons() {
       } else if (raw) {
         button_state[i].pressed_at = now;
         button_state[i].hold_emitted = false;
-      } else if (!button_state[i].hold_emitted) {
-        const uint8_t action = config.button_press_action[i];
-        if (action != kButtonActionNone) runButtonAction(i, action, false);
+        if (config.button_hold_action[i] == kButtonActionNone) {
+          const uint8_t action = config.button_press_action[i];
+          if (action != kButtonActionNone) runButtonAction(i, action, false);
+          button_state[i].hold_emitted = true;
+        }
+      } else {
+        if (!button_state[i].hold_emitted) {
+          const uint8_t action = config.button_press_action[i];
+          if (action != kButtonActionNone) runButtonAction(i, action, false);
+        }
+        button_state[i].hold_emitted = false;
       }
     }
-    if (effectiveInputMode(i) == kInputModeButton && button_state[i].stable_pressed && !button_state[i].hold_emitted) {
+    if (effectiveInputMode(i) == kInputModeButton &&
+        button_state[i].stable_pressed &&
+        !button_state[i].hold_emitted &&
+        config.button_hold_action[i] != kButtonActionNone) {
       if ((now - button_state[i].pressed_at) >= config.button_hold_ms) {
         button_state[i].hold_emitted = true;
-        const uint8_t action = config.button_hold_action[i];
-        if (action != kButtonActionNone) runButtonAction(i, action, true);
+        runButtonAction(i, config.button_hold_action[i], true);
       }
     }
   }
