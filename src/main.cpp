@@ -631,6 +631,7 @@ uint32_t wifi_dynamic_power_connected_since = 0;
 uint32_t wifi_dynamic_power_last_sample = 0;
 uint8_t wifi_dynamic_power_samples = 0;
 int16_t wifi_dynamic_power_rssi_sum = 0;
+int16_t wifi_dynamic_power_last_rssi = 0;
 int8_t wifi_tx_power_qdbm = kWifiTxPowerMaxQdbm;
 
 uint32_t boot_recovery_count = 0;
@@ -2091,6 +2092,23 @@ void appendWifiTxPowerDbm(String &out) {
   out += static_cast<char>('0' + (((wifi_tx_power_qdbm & 3) * 10 + 2) / 4));
 }
 
+const __FlashStringHelper *wifiTxPowerStatusName() {
+  if (!config.wifi_dynamic_power) return F("max");
+  if (!wifiDynamicPowerApplied()) return WiFi.status() == WL_CONNECTED ? F("settling") : F("pending");
+  return wifiTxPowerIsMax() ? F("max-dynamic") : F("dynamic");
+}
+
+void appendWifiTxPowerText(String &out) {
+  appendWifiTxPowerDbm(out);
+  out += F(" dBm ");
+  out += wifiTxPowerStatusName();
+  if (wifiDynamicPowerApplied() && wifi_dynamic_power_last_rssi != 0) {
+    out += F(" @ ");
+    out += String(wifi_dynamic_power_last_rssi);
+    out += F(" dBm");
+  }
+}
+
 void setWifiTxPowerQdbm(int8_t qdbm) {
   if (esp_wifi_set_max_tx_power(qdbm) == ESP_OK) {
     wifi_tx_power_qdbm = qdbm;
@@ -2102,6 +2120,7 @@ void resetWifiDynamicPowerRuntime(bool restore_max) {
   wifi_dynamic_power_last_sample = 0;
   wifi_dynamic_power_samples = 0;
   wifi_dynamic_power_rssi_sum = 0;
+  wifi_dynamic_power_last_rssi = 0;
   if (restore_max) setWifiTxPowerQdbm(kWifiTxPowerMaxQdbm);
 }
 
@@ -2117,6 +2136,7 @@ void prepareWifiTxPowerForConnect() {
   wifi_dynamic_power_last_sample = 0;
   wifi_dynamic_power_samples = 0;
   wifi_dynamic_power_rssi_sum = 0;
+  wifi_dynamic_power_last_rssi = 0;
 }
 
 void maintainWifiDynamicPower() {
@@ -2127,6 +2147,7 @@ void maintainWifiDynamicPower() {
     if (!wifiTxPowerIsMax()) setWifiTxPowerQdbm(kWifiTxPowerMaxQdbm);
     if (!connected) wifi_dynamic_power_connected_since = 0;
     wifi_dynamic_power_samples = 0;
+    wifi_dynamic_power_last_rssi = 0;
     return;
   }
 
@@ -2136,6 +2157,7 @@ void maintainWifiDynamicPower() {
     wifi_dynamic_power_last_sample = 0;
     wifi_dynamic_power_samples = 0;
     wifi_dynamic_power_rssi_sum = 0;
+    wifi_dynamic_power_last_rssi = 0;
     return;
   }
 
@@ -2144,6 +2166,7 @@ void maintainWifiDynamicPower() {
     wifi_dynamic_power_last_sample = 0;
     wifi_dynamic_power_samples = 0;
     wifi_dynamic_power_rssi_sum = 0;
+    wifi_dynamic_power_last_rssi = 0;
     setWifiTxPowerQdbm(kWifiTxPowerMaxQdbm);
     return;
   }
@@ -2158,8 +2181,8 @@ void maintainWifiDynamicPower() {
   wifi_dynamic_power_samples++;
   if (wifi_dynamic_power_samples < kWifiDynamicPowerSampleCount) return;
 
-  const int16_t avg_rssi = wifi_dynamic_power_rssi_sum / static_cast<int16_t>(wifi_dynamic_power_samples);
-  setWifiTxPowerQdbm(wifiDynamicPowerTargetQdbm(avg_rssi));
+  wifi_dynamic_power_last_rssi = wifi_dynamic_power_rssi_sum / static_cast<int16_t>(wifi_dynamic_power_samples);
+  setWifiTxPowerQdbm(wifiDynamicPowerTargetQdbm(wifi_dynamic_power_last_rssi));
 }
 
 void applyPhyMode(uint8_t phy_mode) {
@@ -5599,7 +5622,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("t('live-heap',d.heap+' bytes');t('live-uptime',d.uptime+'s');t('live-active-phy',d.active_phy);");
   page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',Number(d.perf.loop_max_us/1000).toFixed(1)+' ms');}");
   page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);");
-  page += F("p('live-wifi',d.wifi?'connected':'disconnected',d.wifi?'pill ok':'pill bad');t('live-ssid',d.wifi_ssid||'n/a');t('live-ip',d.ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');t('live-txp',d.wifi_tx_power+' dBm');");
+  page += F("p('live-wifi',d.wifi?'connected':'disconnected',d.wifi?'pill ok':'pill bad');t('live-ssid',d.wifi_ssid||'n/a');t('live-ip',d.ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
   page += F("if(d.mqtt){t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',d.mqtt.last_attempt_ms_ago==null?'n/a':d.mqtt.last_attempt_ms_ago+' ms ago');}");
 #if MYMOTA32_LIGHT_SUPPORTED
@@ -5732,9 +5755,9 @@ void appendStatusBlock(String &page) {
     page += F("<span>Wi-Fi</span><div><span id='live-wifi' class='pill bad'>disconnected</span> <code id='live-ssid'>n/a</code></div>");
     page += F("<span>IP</span><div><code id='live-ip'>n/a</code></div><span>RSSI</span><div><code id='live-rssi'>n/a</code></div>");
   }
-  page += F("<span>Tx power</span><div><code id='live-txp'>");
-  appendWifiTxPowerDbm(page);
-  page += F(" dBm</code></div>");
+  page += F("<span>Tx power</span><div><code id='live-wifi-tx-power'>");
+  appendWifiTxPowerText(page);
+  page += F("</code></div>");
   if (ap_started) {
     page += F("<span>Setup AP</span><div><code>");
     page += htmlEscape(WiFi.softAPSSID());
@@ -7617,8 +7640,16 @@ void handleHealth() {
   out += F("\",\"rssi\":");
   if (WiFi.status() == WL_CONNECTED) out += WiFi.RSSI();
   else out += F("null");
-  out += F(",\"wifi_tx_power\":");
+  out += F(",\"wifi_tx_power\":{\"dynamic\":");
+  out += config.wifi_dynamic_power ? F("true") : F("false");
+  out += F(",\"status\":\"");
+  out += wifiTxPowerStatusName();
+  out += F("\",\"dbm\":");
   appendWifiTxPowerDbm(out);
+  out += F(",\"sample_rssi\":");
+  if (wifiDynamicPowerApplied() && wifi_dynamic_power_last_rssi != 0) out += wifi_dynamic_power_last_rssi;
+  else out += F("null");
+  out += F("}");
   out += F(",\"ap\":");
   out += (ap_started ? F("true") : F("false"));
   out += F(",\"configured_phy_mode\":");
