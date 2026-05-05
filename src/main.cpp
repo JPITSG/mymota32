@@ -172,13 +172,14 @@ constexpr size_t kMqttHostMaxLen = 64;
 constexpr size_t kMqttTopicMaxLen = 32;
 constexpr uint16_t kMqttDefaultPort = 1883;
 constexpr uint16_t kMqttKeepaliveMax = 65535U;
-constexpr uint16_t kMqttProtocolKeepaliveSec = 30;
+constexpr uint16_t kMqttProtocolKeepaliveDefaultSec = 30;
+constexpr uint16_t kMqttProtocolKeepaliveMinSec = 5;
+constexpr uint16_t kMqttProtocolKeepaliveMaxSec = 65535U;
 constexpr uint32_t kMqttReconnectMs = 5000;
 constexpr uint32_t kMqttConnectTimeoutMs = 650;
 constexpr uint32_t kMqttConnackTimeoutMs = 500;
 constexpr uint32_t kMqttIoTimeoutMs = 250;
 constexpr uint32_t kMqttInboundReadTimeoutMs = 20;
-constexpr uint32_t kMqttBrokerSilenceTimeoutMs = static_cast<uint32_t>(kMqttProtocolKeepaliveSec) * 2000UL;
 constexpr uint32_t kMqttConnackMaxRemainingLength = 2;
 constexpr uint32_t kMqttSubackMaxRemainingLength = 16;
 constexpr uint32_t kMqttInboundMaxRemainingLength = 512;
@@ -485,6 +486,7 @@ struct StoredConfig {
   char mqtt_host[kMqttHostMaxLen + 1];
   uint16_t mqtt_port;
   char mqtt_topic[kMqttTopicMaxLen + 1];
+  uint16_t mqtt_protocol_keepalive;
   uint16_t mqtt_keepalive;
 
   float energy_total_offset_kwh;
@@ -1587,6 +1589,7 @@ void setDefaultConfig() {
   }
   config.mqtt_port = kMqttDefaultPort;
   strlcpy(config.mqtt_topic, defaultMqttTopic().c_str(), sizeof(config.mqtt_topic));
+  config.mqtt_protocol_keepalive = kMqttProtocolKeepaliveDefaultSec;
   config.mqtt_keepalive = 0;
   config.energy_total_offset_kwh = 0.0f;
   config.energy_mqtt_interval = 0;
@@ -1704,6 +1707,7 @@ bool loadConfig() {
   String mqtt_host = prefs.getString("mqtt_host", "");
   uint16_t mqtt_port = prefs.getUShort("mqtt_port", kMqttDefaultPort);
   String mqtt_topic = prefs.getString("mqtt_topic", "");
+  uint16_t mqtt_protocol_keepalive = prefs.getUShort("mqtt_pkeep", kMqttProtocolKeepaliveDefaultSec);
   uint16_t mqtt_keepalive = prefs.getUShort("mqtt_keep", 0);
   float energy_total_offset_kwh = prefs.getFloat("en_offset", 0.0f);
   uint16_t energy_mqtt_interval = prefs.getUShort("en_int", 0);
@@ -1800,6 +1804,11 @@ bool loadConfig() {
   } else {
     strlcpy(config.mqtt_topic, mqtt_topic.c_str(), sizeof(config.mqtt_topic));
   }
+  if (mqtt_protocol_keepalive < kMqttProtocolKeepaliveMinSec ||
+      mqtt_protocol_keepalive > kMqttProtocolKeepaliveMaxSec) {
+    mqtt_protocol_keepalive = kMqttProtocolKeepaliveDefaultSec;
+  }
+  config.mqtt_protocol_keepalive = mqtt_protocol_keepalive;
   config.mqtt_keepalive = mqtt_keepalive;
   if (isnan(energy_total_offset_kwh) ||
       energy_total_offset_kwh < kEnergyTotalOffsetMinKwh ||
@@ -1914,12 +1923,14 @@ void resetMqttRuntimeState() {
   last_mqtt_energy_report_reason = kMqttEnergyReportReasonNone;
 }
 
-bool saveMqttConfig(const char *host, uint16_t port, const char *topic, uint16_t keepalive) {
+bool saveMqttConfig(const char *host, uint16_t port, const char *topic, uint16_t protocol_keepalive,
+                    uint16_t state_keepalive) {
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putString("mqtt_host", host ? host : "");
   prefs.putUShort("mqtt_port", port);
   prefs.putString("mqtt_topic", topic ? topic : "");
-  prefs.putUShort("mqtt_keep", keepalive);
+  prefs.putUShort("mqtt_pkeep", protocol_keepalive);
+  prefs.putUShort("mqtt_keep", state_keepalive);
   prefs.end();
   resetMqttRuntimeState();
   if (mqtt_client.connected()) mqtt_client.stop();
@@ -2010,6 +2021,7 @@ bool saveLightConfig() {
 }
 
 bool saveInputConfig(const StoredConfig &source) {
+  const bool mqtt_protocol_changed = source.mqtt_protocol_keepalive != config.mqtt_protocol_keepalive;
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putUShort("btn_hold", source.button_hold_ms);
   prefs.putUShort("btn_db", source.button_debounce_ms);
@@ -2024,8 +2036,14 @@ bool saveInputConfig(const StoredConfig &source) {
   prefs.putBytes("bp_pld", source.button_press_payload, sizeof(source.button_press_payload));
   prefs.putBytes("bh_tgt", source.button_hold_target, sizeof(source.button_hold_target));
   prefs.putBytes("bh_pld", source.button_hold_payload, sizeof(source.button_hold_payload));
+  prefs.putUShort("mqtt_pkeep", source.mqtt_protocol_keepalive);
   prefs.end();
-  return loadConfig();
+  if (!loadConfig()) return false;
+  if (mqtt_protocol_changed) {
+    resetMqttRuntimeState();
+    if (mqtt_client.connected()) mqtt_client.stop();
+  }
+  return true;
 }
 
 bool factoryResetConfig() {
@@ -4019,6 +4037,22 @@ bool mqttConfigured() {
   return config.mqtt_host[0] != '\0' && config.mqtt_topic[0] != '\0' && config.mqtt_port != 0;
 }
 
+uint16_t mqttProtocolKeepaliveSec() {
+  if (config.mqtt_protocol_keepalive < kMqttProtocolKeepaliveMinSec ||
+      config.mqtt_protocol_keepalive > kMqttProtocolKeepaliveMaxSec) {
+    return kMqttProtocolKeepaliveDefaultSec;
+  }
+  return config.mqtt_protocol_keepalive;
+}
+
+uint32_t mqttProtocolKeepaliveMs() {
+  return static_cast<uint32_t>(mqttProtocolKeepaliveSec()) * 1000UL;
+}
+
+uint32_t mqttBrokerSilenceTimeoutMs() {
+  return mqttProtocolKeepaliveMs() * 2UL;
+}
+
 const __FlashStringHelper *mqttConnectResultName(uint8_t result) {
   switch (result) {
     case kMqttConnectOk: return F("ok");
@@ -4240,14 +4274,15 @@ bool mqttConnect() {
   mqtt_client.setTimeout(kMqttIoTimeoutMs);
 
   const String client_id = mqttClientId();
+  const uint16_t protocol_keepalive = mqttProtocolKeepaliveSec();
   const uint32_t remaining_length = 10U + 2U + client_id.length();
   bool ok = mqttWriteByte(0x10) &&
             mqttWriteRemainingLength(remaining_length) &&
             mqttWriteString("MQTT") &&
             mqttWriteByte(0x04) &&
             mqttWriteByte(0x02) &&
-            mqttWriteByte(static_cast<uint8_t>(kMqttProtocolKeepaliveSec >> 8)) &&
-            mqttWriteByte(static_cast<uint8_t>(kMqttProtocolKeepaliveSec & 0xffU)) &&
+            mqttWriteByte(static_cast<uint8_t>(protocol_keepalive >> 8)) &&
+            mqttWriteByte(static_cast<uint8_t>(protocol_keepalive & 0xffU)) &&
             mqttWriteString(client_id.c_str());
   if (!ok) {
     mqttStop();
@@ -5485,13 +5520,14 @@ void maintainMqtt() {
   if (!mqttProcessInbound()) return;
 
   uint32_t now = millis();
-  if ((last_mqtt_rx && now - last_mqtt_rx >= kMqttBrokerSilenceTimeoutMs) ||
-      (mqtt_ping_pending && last_mqtt_ping && now - last_mqtt_ping >= kMqttBrokerSilenceTimeoutMs)) {
+  const uint32_t broker_silence_timeout_ms = mqttBrokerSilenceTimeoutMs();
+  if ((last_mqtt_rx && now - last_mqtt_rx >= broker_silence_timeout_ms) ||
+      (mqtt_ping_pending && last_mqtt_ping && now - last_mqtt_ping >= broker_silence_timeout_ms)) {
     mqttStop();
     return;
   }
 
-  if (now - last_mqtt_io >= (static_cast<uint32_t>(kMqttProtocolKeepaliveSec) * 1000UL)) {
+  if (now - last_mqtt_io >= mqttProtocolKeepaliveMs()) {
     if (mqttWriteByte(kMqttPacketPingreq) && mqttWriteByte(0x00)) {
       last_mqtt_io = now;
       last_mqtt_ping = now;
@@ -5789,6 +5825,8 @@ void appendStatusBlock(String &page) {
   page += F("</div><span>MQTT topic</span><div><code>");
   page += htmlEscape(config.mqtt_topic);
   page += F("</code></div><span>MQTT keepalive</span><div><code>");
+  page += String(config.mqtt_protocol_keepalive);
+  page += F("s</code></div><span>State keepalive</span><div><code>");
   if (config.mqtt_keepalive == 0) {
     page += F("disabled");
   } else {
@@ -6406,6 +6444,12 @@ void appendMqttForm(String &page) {
   page += String(kMqttTopicMaxLen);
   page += F("' required value='");
   page += htmlEscape(config.mqtt_topic);
+  page += F("'></label></div><div class='row'><label>MQTT keepalive seconds<br><input name='protocol_keepalive' type='number' min='");
+  page += String(kMqttProtocolKeepaliveMinSec);
+  page += F("' max='");
+  page += String(kMqttProtocolKeepaliveMaxSec);
+  page += F("' value='");
+  page += String(config.mqtt_protocol_keepalive);
   page += F("'></label></div><div class='row'><label>State keepalive seconds<br><input name='keepalive' type='number' min='0' max='");
   page += String(kMqttKeepaliveMax);
   page += F("' value='");
@@ -7195,7 +7239,17 @@ void appendApiSettingsJson(String &out) {
   out += kApiSettingsVersion;
   out += F(",\"hold_ms\":");
   out += config.button_hold_ms;
-  out += F(",\"inputs\":[");
+  out += F(",\"mqtt\":{\"host\":\"");
+  out += jsonEscape(config.mqtt_host);
+  out += F("\",\"port\":");
+  out += config.mqtt_port;
+  out += F(",\"topic\":\"");
+  out += jsonEscape(config.mqtt_topic);
+  out += F("\",\"protocol_keepalive\":");
+  out += config.mqtt_protocol_keepalive;
+  out += F(",\"state_keepalive\":");
+  out += config.mqtt_keepalive;
+  out += F("},\"inputs\":[");
   bool first = true;
   for (uint8_t i = 0; i < runtime_template.button_count && i < kMaxButtons; i++) {
     if (!first) out += ',';
@@ -7309,6 +7363,9 @@ bool apiSettingsIndexedArgPresent(uint8_t input_number, const char *primary_suff
 
 bool apiSettingsGetHasUpdateArgs() {
   if (server.hasArg("hold_ms")) return true;
+  if (server.hasArg("mqtt_protocol_keepalive") ||
+      server.hasArg("protocol_keepalive") ||
+      server.hasArg("mqtt_keepalive")) return true;
   if (server.hasArg("input") || server.hasArg("id")) return true;
   for (uint8_t input_number = 1; input_number <= kMaxButtons; input_number++) {
     if (apiSettingsIndexedArgPresent(input_number, "_mqtt_topic", "_topic") ||
@@ -7327,6 +7384,24 @@ bool applyApiSettingsGetArgs(StoredConfig &target, ApiSettingsStats &stats) {
     uint16_t hold_ms = kButtonHoldDefaultMs;
     if (parseUint16Input(server.arg("hold_ms"), kButtonHoldMinMs, kButtonHoldMaxMs, hold_ms)) {
       target.button_hold_ms = hold_ms;
+      recordApiSettingsApplied(stats);
+    } else {
+      recordApiSettingsSkipped(stats);
+    }
+  }
+
+  String protocol_keepalive;
+  bool has_protocol_keepalive = apiSettingsGetArg(F("mqtt_protocol_keepalive"), F("protocol_keepalive"),
+                                                  protocol_keepalive);
+  if (!has_protocol_keepalive && server.hasArg(F("mqtt_keepalive"))) {
+    protocol_keepalive = server.arg(F("mqtt_keepalive"));
+    has_protocol_keepalive = true;
+  }
+  if (has_protocol_keepalive) {
+    saw_setting_arg = true;
+    uint16_t keepalive = kMqttProtocolKeepaliveDefaultSec;
+    if (parseUint16Input(protocol_keepalive, kMqttProtocolKeepaliveMinSec, kMqttProtocolKeepaliveMaxSec, keepalive)) {
+      target.mqtt_protocol_keepalive = keepalive;
       recordApiSettingsApplied(stats);
     } else {
       recordApiSettingsSkipped(stats);
@@ -7439,14 +7514,17 @@ void handleMqttSave() {
   String host = server.arg("host");
   String port_arg = server.arg("port");
   String topic = server.arg("topic");
+  String protocol_keepalive_arg = server.arg("protocol_keepalive");
   String keepalive_arg = server.arg("keepalive");
   host.trim();
   port_arg.trim();
   topic.trim();
+  protocol_keepalive_arg.trim();
   keepalive_arg.trim();
 
   uint16_t port = kMqttDefaultPort;
-  uint16_t keepalive = 0;
+  uint16_t protocol_keepalive = kMqttProtocolKeepaliveDefaultSec;
+  uint16_t state_keepalive = 0;
   if (!isValidMqttHost(host)) {
     sendPlain(400, F("Invalid MQTT host"));
     return;
@@ -7459,12 +7537,17 @@ void handleMqttSave() {
     sendPlain(400, F("Invalid MQTT topic"));
     return;
   }
-  if (!parseUint16Input(keepalive_arg, 0, kMqttKeepaliveMax, keepalive)) {
-    sendPlain(400, F("Invalid MQTT keepalive"));
+  if (!parseUint16Input(protocol_keepalive_arg, kMqttProtocolKeepaliveMinSec, kMqttProtocolKeepaliveMaxSec,
+                        protocol_keepalive)) {
+    sendPlain(400, F("Invalid MQTT protocol keepalive"));
+    return;
+  }
+  if (!parseUint16Input(keepalive_arg, 0, kMqttKeepaliveMax, state_keepalive)) {
+    sendPlain(400, F("Invalid MQTT state keepalive"));
     return;
   }
 
-  if (!saveMqttConfig(host.c_str(), port, topic.c_str(), keepalive)) {
+  if (!saveMqttConfig(host.c_str(), port, topic.c_str(), protocol_keepalive, state_keepalive)) {
     sendPlain(500, F("Could not save MQTT settings"));
     return;
   }
@@ -7845,7 +7928,11 @@ void handleHealth() {
   out += config.mqtt_port;
   out += F(",\"topic\":\"");
   out += jsonEscape(config.mqtt_topic);
-  out += F("\",\"keepalive\":");
+  out += F("\",\"protocol_keepalive\":");
+  out += config.mqtt_protocol_keepalive;
+  out += F(",\"keepalive\":");
+  out += config.mqtt_keepalive;
+  out += F(",\"state_keepalive\":");
   out += config.mqtt_keepalive;
   out += F(",\"pending\":");
   out += static_cast<unsigned>(mqtt_pending_relay_mask) + static_cast<unsigned>(mqtt_pending_light_mask);
