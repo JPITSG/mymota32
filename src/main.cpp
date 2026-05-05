@@ -46,7 +46,6 @@ constexpr uint32_t kApRetryMs = 10000;
 constexpr uint32_t kWifiDynamicPowerSettleMs = 30000;
 constexpr uint32_t kWifiDynamicPowerSampleMs = 2000;
 constexpr uint8_t kWifiDynamicPowerSampleCount = 5;
-constexpr uint8_t kWifiDynamicPowerDisconnectLimit = 2;
 constexpr uint8_t kWifiDynamicPowerDefault = 1;
 constexpr int8_t kWifiTxPowerMaxQdbm = 82;     // 20.5 dBm
 constexpr int8_t kWifiTxPowerMediumQdbm = 52;  // 13.0 dBm
@@ -631,7 +630,6 @@ bool disconnected_timer_active = false;
 uint32_t wifi_dynamic_power_connected_since = 0;
 uint32_t wifi_dynamic_power_last_sample = 0;
 uint8_t wifi_dynamic_power_samples = 0;
-uint8_t wifi_dynamic_power_disconnects = 0;
 int16_t wifi_dynamic_power_rssi_sum = 0;
 int8_t wifi_tx_power_qdbm = kWifiTxPowerMaxQdbm;
 
@@ -2103,7 +2101,6 @@ void resetWifiDynamicPowerRuntime(bool restore_max) {
   wifi_dynamic_power_connected_since = WiFi.status() == WL_CONNECTED ? millis() : 0;
   wifi_dynamic_power_last_sample = 0;
   wifi_dynamic_power_samples = 0;
-  wifi_dynamic_power_disconnects = 0;
   wifi_dynamic_power_rssi_sum = 0;
   if (restore_max) setWifiTxPowerQdbm(kWifiTxPowerMaxQdbm);
 }
@@ -2134,10 +2131,7 @@ void maintainWifiDynamicPower() {
   }
 
   if (!connected) {
-    if (wifi_dynamic_power_connected_since && wifiDynamicPowerApplied() && !wifiTxPowerIsMax()) {
-      wifi_dynamic_power_disconnects++;
-      setWifiTxPowerQdbm(kWifiTxPowerMaxQdbm);
-    }
+    if (!wifiTxPowerIsMax()) setWifiTxPowerQdbm(kWifiTxPowerMaxQdbm);
     wifi_dynamic_power_connected_since = 0;
     wifi_dynamic_power_last_sample = 0;
     wifi_dynamic_power_samples = 0;
@@ -2154,7 +2148,7 @@ void maintainWifiDynamicPower() {
     return;
   }
 
-  if (wifi_dynamic_power_disconnects >= kWifiDynamicPowerDisconnectLimit || wifiDynamicPowerApplied()) return;
+  if (wifiDynamicPowerApplied()) return;
   if (now - wifi_dynamic_power_connected_since < kWifiDynamicPowerSettleMs) return;
   if (wifi_dynamic_power_last_sample && now - wifi_dynamic_power_last_sample < kWifiDynamicPowerSampleMs) return;
 
