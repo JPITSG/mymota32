@@ -148,6 +148,7 @@ constexpr uint32_t kLedUpdateMs = 50;
 constexpr uint8_t kPowerSavingOff = 0;
 constexpr uint8_t kPowerSavingLight = 1;
 constexpr uint8_t kPowerSavingDeep = 2;
+constexpr uint8_t kPowerSavingOffLocked = 3;
 constexpr uint16_t kRelayEnforcementMinSeconds = 1;
 constexpr uint16_t kRelayEnforcementMaxSeconds = 65535U;
 constexpr uint16_t kRelayPulseMinSeconds = 1;
@@ -948,7 +949,7 @@ const __FlashStringHelper *phyModeName(uint8_t mode) {
 }
 
 uint8_t sanitizePowerSavingMode(uint16_t mode) {
-  return mode <= kPowerSavingDeep ? static_cast<uint8_t>(mode) : kPowerSavingOff;
+  return mode <= kPowerSavingOffLocked ? static_cast<uint8_t>(mode) : kPowerSavingOff;
 }
 
 bool parsePowerSavingMode(String value, uint8_t &mode) {
@@ -966,6 +967,11 @@ bool parsePowerSavingMode(String value, uint8_t &mode) {
     mode = kPowerSavingDeep;
     return true;
   }
+  if (value == F("3") || value == F("off_locked") || value == F("off-locked") ||
+      value == F("off locked") || value == F("locked")) {
+    mode = kPowerSavingOffLocked;
+    return true;
+  }
   return false;
 }
 
@@ -973,7 +979,16 @@ const __FlashStringHelper *powerSavingModeName(uint8_t mode) {
   switch (sanitizePowerSavingMode(mode)) {
     case kPowerSavingLight: return F("light");
     case kPowerSavingDeep: return F("deep");
+    case kPowerSavingOffLocked: return F("off_locked");
     default: return F("off");
+  }
+}
+
+uint8_t powerSavingDelayMs(uint16_t mode) {
+  switch (sanitizePowerSavingMode(mode)) {
+    case kPowerSavingLight: return 1;
+    case kPowerSavingDeep: return 10;
+    default: return 0;
   }
 }
 
@@ -2384,6 +2399,10 @@ bool savePowerSavingConfig(uint8_t mode) {
   prefs.putUShort("pwr_save", sanitizePowerSavingMode(mode));
   prefs.end();
   return loadConfig();
+}
+
+bool powerSavingApiLocked() {
+  return sanitizePowerSavingMode(config.power_saving_mode) == kPowerSavingOffLocked;
 }
 
 bool saveDeviceStateEnforcementConfig(const uint8_t *restore_boot, const uint8_t *on_boot,
@@ -8752,6 +8771,7 @@ void appendPowerSavingOption(String &page, uint8_t mode, const __FlashStringHelp
 void appendPowerSavingSelect(String &page) {
   page += F("<div class='row'><select name='power_saving'>");
   appendPowerSavingOption(page, kPowerSavingOff, F("Off"));
+  appendPowerSavingOption(page, kPowerSavingOffLocked, F("Off - Locked"));
   appendPowerSavingOption(page, kPowerSavingLight, F("Light"));
   appendPowerSavingOption(page, kPowerSavingDeep, F("Deep"));
   page += F("</select></div>");
@@ -9713,6 +9733,10 @@ void handleApiSettingsGet() {
       sendApiSettingsError(400, F("Invalid power saving"));
       return;
     }
+    if (powerSavingApiLocked()) {
+      server.send(200, F("application/json"), F("{\"ok\":true,\"power_saving\":\"off_locked\",\"locked\":true}"));
+      return;
+    }
     if (!savePowerSavingConfig(mode)) {
       sendApiSettingsError(500, F("Could not save settings"));
       return;
@@ -10218,7 +10242,7 @@ bool settingsReadPowerSavingMode(const cJSON *value, uint8_t &mode) {
   String text;
   if (settingsReadString(value, text, 12)) return parsePowerSavingMode(text, mode);
   uint16_t raw = 0;
-  if (!settingsReadUint16(value, kPowerSavingOff, kPowerSavingDeep, raw)) return false;
+  if (!settingsReadUint16(value, kPowerSavingOff, kPowerSavingOffLocked, raw)) return false;
   mode = sanitizePowerSavingMode(raw);
   return true;
 }
@@ -12364,8 +12388,7 @@ void setupRoutes() {
 }  // namespace
 
 void idleAfterLoopWork() {
-  uint8_t delay_ms = sanitizePowerSavingMode(config.power_saving_mode);
-  if (delay_ms == kPowerSavingDeep) delay_ms = 10;
+  uint8_t delay_ms = powerSavingDelayMs(config.power_saving_mode);
   if (delay_ms > 0 && restart_due_ms == 0 && !update_started) {
     delay(delay_ms);
   } else {
