@@ -210,6 +210,11 @@ aa41529747a513c73b60c862c53cf3d2  dist/mymota32-0.3.21-esp32-c3-4m.bin
 beed8bad1f170472e25f2fee1337b9bc  dist/mymota32-0.3.21-esp32-u4wdh-d-4m.bin
 3071a24163dfc977397361b2877f368a  dist/mymota32-0.3.21-esp32-u4wdh-s-4m-factory.bin
 8362d5274e1139ffed8cf6468fb912fb  dist/mymota32-0.3.21-esp32-u4wdh-s-4m.bin
+ee2391dafe268988c81efa6743f143ce  dist/mymota32-0.3.22-esp32-c3-4m.bin
+b60d19a338ec79e9aa41ea93898a3534  dist/mymota32-0.3.22-esp32-d0wd-v3-4m.bin
+e2e6ca29abf0f5e507bcfce3dc4da72e  dist/mymota32-0.3.22-esp32-u4wdh-d-4m.bin
+5a43b89159e5d47161a46d1f06e1edc0  dist/mymota32-0.3.22-esp32-u4wdh-s-4m-factory.bin
+fbf2eb1210ee5c50fca817c808e28977  dist/mymota32-0.3.22-esp32-u4wdh-s-4m.bin
 2182a55dde4e521634bb329b37fca62e  dist/mymota32-0.3.3-esp32-c3-4m-factory.bin
 6fffa0f382433aba6f6d6d78cf7ed817  dist/mymota32-0.3.3-esp32-c3-4m.bin
 6444c7c8164d6ce7fb247eb11348467b  dist/mymota32-0.3.3-esp32-d0wd-v3-4m-factory.bin

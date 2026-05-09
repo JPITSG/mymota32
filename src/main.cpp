@@ -5665,7 +5665,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("function p(i,v,c){var e=document.getElementById(i);if(e){e.textContent=v;e.className=c;}}");
   page += F("function sd(e,d){if(!e)return;var q=e.querySelectorAll('input,select,textarea,button');for(var i=0;i<q.length;i++)q[i].disabled=d;}");
   page += F("function live(){fh().then(function(d){");
-  page += F("t('live-heap',d.heap+' bytes');t('live-uptime',d.uptime+'s');t('live-active-phy',d.active_phy);");
+  page += F("t('live-heap',d.heap+' bytes');if(d.flash){t('live-flash-used',d.flash.used+' bytes');t('live-flash-total',d.flash.total+' bytes');t('live-flash-free',d.flash.free+' bytes');}t('live-uptime',d.uptime+'s');t('live-active-phy',d.active_phy);");
   page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',Number(d.perf.loop_max_us/1000).toFixed(1)+' ms');}");
   page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);");
   page += F("p('live-wifi',d.wifi?'connected':'disconnected',d.wifi?'pill ok':'pill bad');t('live-ssid',d.wifi_ssid||'n/a');t('live-ip',d.ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
@@ -5754,7 +5754,30 @@ void appendMillisTenthsFromMicros(String &out, uint32_t micros_value) {
   out += static_cast<char>('0' + (tenths % 10));
 }
 
+uint32_t flashUsedBytes() {
+  return ESP.getSketchSize();
+}
+
+uint32_t flashTotalBytes() {
+  const esp_partition_t *partition = esp_ota_get_running_partition();
+  if (partition) return partition->size;
+  return flashUsedBytes() + ESP.getFreeSketchSpace();
+}
+
+uint32_t flashFreeBytes() {
+  const uint32_t used = flashUsedBytes();
+  const uint32_t total = flashTotalBytes();
+  return total > used ? total - used : 0;
+}
+
+uint8_t otaAppPartitionCount();
+
 void appendStatusBlock(String &page) {
+  const esp_partition_t *running_partition = esp_ota_get_running_partition();
+  const esp_partition_t *next_update_partition = esp_ota_get_next_update_partition(nullptr);
+  const esp_partition_t *factory_partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+                                                                      ESP_PARTITION_SUBTYPE_APP_FACTORY,
+                                                                      nullptr);
   page += F("<section class='panel wide'><h2>System Status</h2><div class='kv'>");
   page += F("<span>Version</span><div><code>");
   page += F(MYMOTA32_VERSION);
@@ -5766,7 +5789,39 @@ void appendStatusBlock(String &page) {
   page += htmlEscape(config.hostname);
   page += F("</code></div><span>Heap</span><div><code id='live-heap'>");
   page += String(ESP.getFreeHeap());
-  page += F(" bytes</code></div><span>Uptime</span><div><code id='live-uptime'>");
+  page += F(" bytes</code></div><span>Flash</span><div><code id='live-flash-used'>");
+  page += String(flashUsedBytes());
+  page += F(" bytes</code> (used) / <code id='live-flash-total'>");
+  page += String(flashTotalBytes());
+  page += F(" bytes</code> (app slot) / <code id='live-flash-free'>");
+  page += String(flashFreeBytes());
+  page += F(" bytes</code> (free)</div><span>Partitions</span><div>running <code>");
+  page += running_partition ? htmlEscape(running_partition->label) : String(F("n/a"));
+  page += F("</code>");
+  if (running_partition) {
+    page += F(" <code>");
+    page += String(running_partition->size);
+    page += F(" bytes</code>");
+  }
+  page += F(" / update <code>");
+  page += next_update_partition ? htmlEscape(next_update_partition->label) : String(F("n/a"));
+  page += F("</code>");
+  if (next_update_partition) {
+    page += F(" <code>");
+    page += String(next_update_partition->size);
+    page += F(" bytes</code>");
+  }
+  page += F(" / factory <code>");
+  page += factory_partition ? htmlEscape(factory_partition->label) : String(F("none"));
+  page += F("</code>");
+  if (factory_partition) {
+    page += F(" <code>");
+    page += String(factory_partition->size);
+    page += F(" bytes</code>");
+  }
+  page += F(" / OTA slots <code>");
+  page += String(otaAppPartitionCount());
+  page += F("</code></div><span>Uptime</span><div><code id='live-uptime'>");
   page += String(millis() / 1000);
   page += F("s</code></div><span>Loop load</span><div><code id='live-loop-load'>");
   page += String(perf_last_loop_load);
@@ -9099,6 +9154,15 @@ void handleHealth() {
   out += boot_id;
   out += F(",\"heap\":");
   out += ESP.getFreeHeap();
+  out += F(",\"flash\":{\"used\":");
+  out += flashUsedBytes();
+  out += F(",\"total\":");
+  out += flashTotalBytes();
+  out += F(",\"free\":");
+  out += flashFreeBytes();
+  out += F(",\"chip_size\":");
+  out += ESP.getFlashChipSize();
+  out += F("}");
   appendHealthPartitionsJson(out);
   out += F(",\"uptime\":");
   out += millis() / 1000;
