@@ -215,8 +215,9 @@ build_target() {
   local boot_app0="$BOOT_APP0"
   local safeboot_offset="0x10000"
   local safeboot_size="$((0xD0000))"
-  local safeboot_margin="$((4096))"
-  local safeboot_limit="$((safeboot_size - safeboot_margin))"
+  local ota_slot_size="$((0x1D0000))"
+  local ota_slot_margin="$((10 * 1024))"
+  local ota_slot_limit="$((ota_slot_size - ota_slot_margin))"
   local app0_offset="0xe0000"
 
   echo "==> Building $display_name ($env_name)"
@@ -235,27 +236,35 @@ build_target() {
   cmp -s "$build_dir/firmware.bin" "$raw_bin" || fail "copy failed for $raw_bin"
   local raw_size
   raw_size="$(stat -c '%s' "$raw_bin")"
-  (( raw_size <= safeboot_limit )) || fail "$raw_bin is $raw_size bytes; must stay at least 4096 bytes below the 0xD0000 safeboot partition"
-
-  esptool --chip "$chip" merge_bin \
-    -o "$factory_bin" \
-    --flash_mode dio \
-    --flash_freq "$flash_freq" \
-    --flash_size 4MB \
-    "$bootloader_offset" "$build_dir/bootloader.bin" \
-    0x8000 "$build_dir/partitions.bin" \
-    0xe000 "$boot_app0" \
-    "$safeboot_offset" "$raw_bin" \
-    "$app0_offset" "$raw_bin"
+  (( raw_size <= ota_slot_limit )) || fail "$raw_bin is $raw_size bytes; must stay at least 10240 bytes below the 0x1D0000 dual-OTA slot"
 
   verify_app_image "$raw_bin" "$image_type" "$flash_freq" "$image_info_file"
   verify_first_bytes "$raw_bin" "e9"
-  verify_merged_layout "$factory_bin" \
-    "$bootloader_offset" "$build_dir/bootloader.bin" \
-    0x8000 "$build_dir/partitions.bin" \
-    0xe000 "$boot_app0" \
-    "$safeboot_offset" "$raw_bin" \
-    "$app0_offset" "$raw_bin"
+
+  local factory_status
+  if (( raw_size <= safeboot_size )); then
+    esptool --chip "$chip" merge_bin \
+      -o "$factory_bin" \
+      --flash_mode dio \
+      --flash_freq "$flash_freq" \
+      --flash_size 4MB \
+      "$bootloader_offset" "$build_dir/bootloader.bin" \
+      0x8000 "$build_dir/partitions.bin" \
+      0xe000 "$boot_app0" \
+      "$safeboot_offset" "$raw_bin" \
+      "$app0_offset" "$raw_bin"
+
+    verify_merged_layout "$factory_bin" \
+      "$bootloader_offset" "$build_dir/bootloader.bin" \
+      0x8000 "$build_dir/partitions.bin" \
+      0xe000 "$boot_app0" \
+      "$safeboot_offset" "$raw_bin" \
+      "$app0_offset" "$raw_bin"
+    factory_status="${factory_bin#$ROOT_DIR/}"
+  else
+    rm -f "$factory_bin"
+    factory_status="skipped; raw image exceeds 0xD0000 safeboot slot"
+  fi
 
   if [[ "$target_name" == "esp32-d0wd-v3-4m" || "$target_name" == "esp32-u4wdh-d-4m" ]]; then
     local esp32_sdkconfig="$HOME/.platformio/packages/framework-arduinoespressif32/tools/esp32-arduino-libs/esp32/sdkconfig"
@@ -276,8 +285,13 @@ build_target() {
 
   echo "    target:  $display_name"
   echo "    OTA:     ${raw_bin#$ROOT_DIR/}"
-  echo "    factory: ${factory_bin#$ROOT_DIR/}"
-  echo "    margin:  $((safeboot_size - raw_size)) bytes below safeboot"
+  echo "    factory: $factory_status"
+  echo "    margin:  $((ota_slot_size - raw_size)) bytes below 0x1D0000 OTA slot"
+  if (( raw_size <= safeboot_size )); then
+    echo "    safeboot: $((safeboot_size - raw_size)) bytes below 0xD0000"
+  else
+    echo "    safeboot: exceeds 0xD0000 by $((raw_size - safeboot_size)) bytes"
+  fi
 }
 
 purge_gzip_artifacts() {
