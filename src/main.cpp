@@ -5713,7 +5713,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("t('live-heap',d.heap+' bytes');if(d.flash){t('live-flash-used',d.flash.used+' bytes');t('live-flash-total',d.flash.total+' bytes');t('live-flash-free',d.flash.free+' bytes');}t('live-uptime',d.uptime+'s');t('live-active-phy',d.active_phy);");
   page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',Number(d.perf.loop_max_us/1000).toFixed(1)+' ms');}");
   page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);");
-  page += F("var wu=d.wifi_usable!=null?d.wifi_usable:d.wifi,ws=!!d.wifi_sdk_connected,wl=ws?'connected':(wu?'usable':'disconnected'),wc=ws?'pill ok':(wu?'pill warn':'pill bad');p('live-wifi',wl,wc);t('live-ssid',d.wifi_ssid||'n/a');t('live-wifi-sdk',(d.wifi_status_name||'unknown')+' ('+(d.wifi_status==null?'?':d.wifi_status)+')');t('live-ip',d.ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
+  page += F("var wu=d.wifi_usable!=null?d.wifi_usable:d.wifi,ws=!!d.wifi_sdk_connected,wl=ws?'connected':(wu?'usable':'disconnected'),wc=ws?'pill ok':(wu?'pill warn':'pill bad');p('live-wifi',wl,wc);t('live-ssid',d.wifi_ssid||'n/a');t('live-wifi-sdk',(d.wifi_status_name||'unknown')+' ('+(d.wifi_status==null?'?':d.wifi_status)+')');t('live-ip',d.ip||'n/a');t('live-gateway',d.gateway_ip||'n/a');t('live-dns',d.dns_ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
   page += F("if(d.mqtt){t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',d.mqtt.last_attempt_ms_ago==null?'n/a':d.mqtt.last_attempt_ms_ago+' ms ago');}");
 #if MYMOTA32_LIGHT_SUPPORTED
@@ -5908,6 +5908,10 @@ void appendStatusBlock(String &page) {
   page += String(static_cast<uint8_t>(wifi_status));
   page += F(")</code></div><span>IP</span><div><code id='live-ip'>");
   page += station_has_ip ? ipToString(station_ip) : String(F("n/a"));
+  page += F("</code></div><span>Gateway</span><div><code id='live-gateway'>");
+  page += station_has_ip ? ipToString(WiFi.gatewayIP()) : String(F("n/a"));
+  page += F("</code></div><span>DNS</span><div><code id='live-dns'>");
+  page += station_has_ip ? ipToString(WiFi.dnsIP()) : String(F("n/a"));
   page += F("</code></div><span>RSSI</span><div><code id='live-rssi'>");
   if (wifi_usable) {
     page += String(WiFi.RSSI());
@@ -9253,6 +9257,10 @@ void handleHealth() {
   }
   out += F("\",\"ip\":\"");
   if (station_has_ip) out += ipToString(station_ip);
+  out += F("\",\"gateway_ip\":\"");
+  if (station_has_ip) out += ipToString(WiFi.gatewayIP());
+  out += F("\",\"dns_ip\":\"");
+  if (station_has_ip) out += ipToString(WiFi.dnsIP());
   out += F("\",\"rssi\":");
   if (wifi_usable) out += WiFi.RSSI();
   else out += F("null");
