@@ -5655,6 +5655,20 @@ void appendSwitchbotLockCommandJson(String &out, const SwitchbotLockCommand &cmd
   out += F("}");
 }
 
+void appendSwitchbotLockCompatCommandJson(String &out, const SwitchbotLockCommand &cmd) {
+  char id_text[9]{};
+  switchbotLockCommandIdToString(cmd.id, id_text);
+  out += F("{\"id\": \"");
+  out += id_text;
+  out += F("\", \"desired\": \"");
+  out += switchbotLockStateName(cmd.desired_state);
+  out += F("\", \"status\": \"");
+  out += switchbotLockCommandStatusName(cmd.status);
+  out += F("\", \"ts\": ");
+  out += cmd.created_ms / 1000UL;
+  out += F("}");
+}
+
 bool switchbotLockCredentialsReady(uint8_t &key_id, uint8_t (&key)[16]) {
   uint8_t key_id_buf[1]{};
   if (!hexToBytes(config.switchbot_lock_key_id, key_id_buf, sizeof(key_id_buf))) return false;
@@ -9416,6 +9430,100 @@ void handleSwitchbotLockCommandStatus() {
   server.send(200, F("application/json"), out);
 }
 
+bool switchbotLockCompatPreflight() {
+  if (!config.switchbot_lock_enabled) {
+    server.send(400, F("application/json"), F("{\"status\": \"error\", \"message\": \"disabled\"}"));
+    return false;
+  }
+  if (!switchbotLockSupported()) {
+    server.send(400, F("application/json"), F("{\"status\": \"error\", \"message\": \"unsupported\"}"));
+    return false;
+  }
+  if (config.switchbot_lock_key_id[0] == '\0' || config.switchbot_lock_key[0] == '\0') {
+    server.send(400, F("application/json"), F("{\"status\": \"error\", \"message\": \"missing key\"}"));
+    return false;
+  }
+  return true;
+}
+
+void handleSwitchbotLockCompatCommand(bool want_lock) {
+  if (!switchbotLockCompatPreflight()) return;
+  SwitchbotLockCommand *cmd = createSwitchbotLockCommand(want_lock ? kSwitchbotLockStateLocked : kSwitchbotLockStateUnlocked);
+  if (!cmd) {
+    server.send(500, F("application/json"), F("{\"status\": \"error\", \"message\": \"command queue full\"}"));
+    return;
+  }
+
+  String out;
+  out.reserve(140);
+  if (cmd->status == kSwitchbotLockCommandStatusSuccess &&
+      !want_lock && switchbot_lock_state == kSwitchbotLockStateUnlocked) {
+    char id_text[9]{};
+    switchbotLockCommandIdToString(cmd->id, id_text);
+    out += F("{\"status\": \"success\", \"id\": \"");
+    out += id_text;
+    out += F("\", \"action\": \"unlock\", \"message\": \"already unlocked\"}");
+  } else {
+    out += F("{\"status\": \"");
+    out += switchbotLockCommandStatusName(cmd->status);
+    out += F("\", \"id\": \"");
+    char id_text[9]{};
+    switchbotLockCommandIdToString(cmd->id, id_text);
+    out += id_text;
+    out += F("\", \"action\": \"");
+    out += (want_lock ? String(F("lock")) : String(F("unlock")));
+    out += F("\"}");
+  }
+  server.sendHeader(F("Cache-Control"), F("no-store"));
+  server.send(cmd->status == kSwitchbotLockCommandStatusPending ? 202 : 200, F("application/json"), out);
+}
+
+void handleSwitchbotLockCompatLock() {
+  handleSwitchbotLockCompatCommand(true);
+}
+
+void handleSwitchbotLockCompatUnlock() {
+  handleSwitchbotLockCompatCommand(false);
+}
+
+void handleSwitchbotLockCompatStatus() {
+  String out;
+  out.reserve(150);
+  out += F("{\"status\": \"ok\", \"state\": \"");
+  out += switchbotLockStateName(switchbot_lock_state);
+  out += F("\", \"door_open\": ");
+  if (switchbot_lock_door_known) out += (switchbot_lock_door_open ? String(F("true")) : String(F("false")));
+  else out += F("null");
+  out += F(", \"battery\": ");
+  if (switchbot_lock_battery >= 0) out += switchbot_lock_battery;
+  else out += F("null");
+  out += F(", \"last_seen\": ");
+  out += (switchbot_lock_last_update_ms == 0 ? String(F("0")) : String(switchbot_lock_last_update_ms / 1000UL));
+  out += F(", \"ble_connected\": ");
+  out += (switchbotLockClientConnected() ? String(F("true")) : String(F("false")));
+  out += F("}");
+  server.sendHeader(F("Cache-Control"), F("no-store"));
+  server.send(200, F("application/json"), out);
+}
+
+void handleSwitchbotLockCompatCommandStatus(const String &id_text) {
+  uint32_t id = 0;
+  if (!parseSwitchbotLockCommandId(id_text, id)) {
+    server.send(400, F("application/json"), F("{\"status\": \"error\", \"message\": \"Invalid command ID\"}"));
+    return;
+  }
+  SwitchbotLockCommand *cmd = findSwitchbotLockCommand(id);
+  if (!cmd) {
+    server.send(404, F("application/json"), F("{\"status\": \"error\", \"message\": \"Unknown command ID\"}"));
+    return;
+  }
+  String out;
+  out.reserve(140);
+  appendSwitchbotLockCompatCommandJson(out, *cmd);
+  server.sendHeader(F("Cache-Control"), F("no-store"));
+  server.send(200, F("application/json"), out);
+}
+
 void handleSystemSave() {
   uint8_t mode = kPowerSavingOff;
   if (!parsePowerSavingMode(server.arg("power_saving"), mode)) {
@@ -11556,6 +11664,17 @@ void handleUpdateUpload() {
 }
 
 void handleNotFound() {
+  String uri = server.uri();
+  constexpr size_t switchbot_prefix_len = sizeof("/switchbotlockultra/status/") - 1;
+  if (uri.startsWith(F("/switchbotlockultra/status/")) && uri.length() > switchbot_prefix_len) {
+    handleSwitchbotLockCompatCommandStatus(uri.substring(switchbot_prefix_len));
+    return;
+  }
+  constexpr size_t status_prefix_len = sizeof("/status/") - 1;
+  if (uri.startsWith(F("/status/")) && uri.length() > status_prefix_len) {
+    handleSwitchbotLockCompatCommandStatus(uri.substring(status_prefix_len));
+    return;
+  }
   server.sendHeader(F("Location"), F("/"), true);
   sendPlain(302, "");
 }
@@ -11580,6 +11699,12 @@ void setupRoutes() {
   server.on("/switchbot-lock-command", HTTP_POST, handleSwitchbotLockCommand);
   server.on("/switchbot-lock-command", HTTP_GET, handleSwitchbotLockCommand);
   server.on("/switchbot-lock-command-status", HTTP_GET, handleSwitchbotLockCommandStatus);
+  server.on("/switchbotlockultra/lock", HTTP_GET, handleSwitchbotLockCompatLock);
+  server.on("/switchbotlockultra/unlock", HTTP_GET, handleSwitchbotLockCompatUnlock);
+  server.on("/switchbotlockultra/status", HTTP_GET, handleSwitchbotLockCompatStatus);
+  server.on("/lock", HTTP_GET, handleSwitchbotLockCompatLock);
+  server.on("/unlock", HTTP_GET, handleSwitchbotLockCompatUnlock);
+  server.on("/status", HTTP_GET, handleSwitchbotLockCompatStatus);
   server.on("/system", HTTP_POST, handleSystemSave);
   server.on("/settings/export", HTTP_GET, handleSettingsExport);
   server.on("/settings/import", HTTP_POST, handleSettingsImport);
