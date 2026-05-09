@@ -314,7 +314,7 @@ constexpr uint16_t kSwitchbotManufacturerId = 2409;
 constexpr uint32_t kSwitchbotLockPollIntervalMs = 900000UL;
 constexpr uint32_t kSwitchbotLockRetryMs = 30000UL;
 constexpr uint32_t kSwitchbotLockResponseTimeoutMs = 5000UL;
-constexpr uint32_t kSwitchbotLockConnectTimeoutSec = 10;
+constexpr uint32_t kSwitchbotLockConnectTimeoutMs = 10000UL;
 constexpr uint16_t kSwitchbotLockScanIntervalMs = 160;
 constexpr uint16_t kSwitchbotLockScanWindowMs = 80;
 constexpr uint8_t kSwitchbotLockStateUnknown = 255;
@@ -760,9 +760,10 @@ uint16_t ibeacon_mqtt_rate_window_count = 0;
 uint16_t ibeacon_mqtt_reports_per_minute = 0;
 
 SwitchbotLockCandidate switchbot_lock_candidates[kSwitchbotLockCandidateCount]{};
-char switchbot_lock_status[28] = "disabled";
+char switchbot_lock_status[32] = "disabled";
 char switchbot_lock_discovered_mac[kSwitchbotLockMacMaxLen + 1] = "";
 uint8_t switchbot_lock_discovered_type = 0;
+int switchbot_lock_last_error_code = 0;
 uint8_t switchbot_lock_state = kSwitchbotLockStateUnknown;
 int8_t switchbot_lock_battery = -1;
 bool switchbot_lock_door_open = false;
@@ -4604,6 +4605,12 @@ void setSwitchbotLockStatus(const char *status) {
   strlcpy(switchbot_lock_status, status ? status : "unknown", sizeof(switchbot_lock_status));
 }
 
+void setSwitchbotLockStatusCode(const char *prefix, int code) {
+  char status[sizeof(switchbot_lock_status)]{};
+  snprintf(status, sizeof(status), "%s%d", prefix ? prefix : "err", code);
+  setSwitchbotLockStatus(status);
+}
+
 void updateIBeaconMqttReportRate(uint32_t now) {
   if (ibeacon_mqtt_rate_window_start == 0) {
     ibeacon_mqtt_rate_window_start = now;
@@ -4955,6 +4962,7 @@ void processSwitchbotLockAdvertisement(const NimBLEAdvertisedDevice *device) {
   rememberSwitchbotLockCandidate(mac, device->getAddressType(), device->getRSSI(), now);
   strlcpy(switchbot_lock_discovered_mac, mac, sizeof(switchbot_lock_discovered_mac));
   switchbot_lock_discovered_type = device->getAddressType();
+  switchbot_lock_last_error_code = 0;
   switchbot_lock_state = state;
   switchbot_lock_door_open = door_open;
   switchbot_lock_door_known = true;
@@ -5376,34 +5384,68 @@ bool switchbotLockPollCandidate(const char *mac, uint8_t address_type, uint8_t k
   if (!client) return false;
   bool ok = false;
   bool command_ok = false;
-  client->setConnectTimeout(kSwitchbotLockConnectTimeoutSec);
+  client->setConnectTimeout(kSwitchbotLockConnectTimeoutMs);
   client->setConnectRetries(1);
   client->setConnectionParams(12, 24, 0, 60, 32, 16);
   NimBLEAddress address(std::string(mac), address_type);
-  if (!client->connect(address, true, false, true)) goto done;
+  if (!client->connect(address, true, false, true)) {
+    switchbot_lock_last_error_code = client->getLastError();
+    setSwitchbotLockStatusCode("connect_e", switchbot_lock_last_error_code);
+    goto done;
+  }
   {
     NimBLERemoteService *service = client->getService(kSwitchbotServiceUuid);
-    if (!service) goto done;
+    if (!service) {
+      switchbot_lock_last_error_code = client->getLastError();
+      setSwitchbotLockStatus("svc_missing");
+      goto done;
+    }
     NimBLERemoteCharacteristic *tx = service->getCharacteristic(kSwitchbotTxUuid);
     NimBLERemoteCharacteristic *rx = service->getCharacteristic(kSwitchbotRxUuid);
-    if (!tx || !rx) goto done;
-    rx->subscribe(true, switchbotLockNotifyCallback, true);
+    if (!tx || !rx) {
+      switchbot_lock_last_error_code = client->getLastError();
+      setSwitchbotLockStatus("char_missing");
+      goto done;
+    }
+    if (!rx->subscribe(true, switchbotLockNotifyCallback, true)) {
+      switchbot_lock_last_error_code = client->getLastError();
+      setSwitchbotLockStatusCode("sub_e", switchbot_lock_last_error_code);
+      goto done;
+    }
 
     uint8_t init_cmd[8] = {0x57, 0x00, 0x00, 0x00, 0x0f, 0x21, 0x03, key_id};
     uint8_t raw[kSwitchbotLockMaxPacketBytes]{};
     size_t raw_len = 0;
-    if (!switchbotLockRawSend(tx, init_cmd, sizeof(init_cmd), raw, raw_len)) goto done;
-    if (raw_len < 16 || (raw[0] != 1 && raw[0] != 6)) goto done;
+    if (!switchbotLockRawSend(tx, init_cmd, sizeof(init_cmd), raw, raw_len)) {
+      switchbot_lock_last_error_code = client->getLastError();
+      setSwitchbotLockStatus("init_send_failed");
+      goto done;
+    }
+    if (raw_len < 16 || (raw[0] != 1 && raw[0] != 6)) {
+      switchbot_lock_last_error_code = raw_len > 0 ? raw[0] : -1;
+      setSwitchbotLockStatusCode("init_bad_", switchbot_lock_last_error_code);
+      goto done;
+    }
     switchbot_lock_cipher_mode = raw[2];
     if (switchbot_lock_cipher_mode == 0) {
-      if (raw_len < 20) goto done;
+      if (raw_len < 20) {
+        switchbot_lock_last_error_code = static_cast<int>(raw_len);
+        setSwitchbotLockStatus("ctr_iv_short");
+        goto done;
+      }
       memcpy(switchbot_lock_iv, raw + 4, 16);
       switchbot_lock_iv_len = 16;
     } else if (switchbot_lock_cipher_mode == 1) {
-      if (raw_len < 16) goto done;
+      if (raw_len < 16) {
+        switchbot_lock_last_error_code = static_cast<int>(raw_len);
+        setSwitchbotLockStatus("gcm_iv_short");
+        goto done;
+      }
       memcpy(switchbot_lock_iv, raw + 4, 12);
       switchbot_lock_iv_len = 12;
     } else {
+      switchbot_lock_last_error_code = switchbot_lock_cipher_mode;
+      setSwitchbotLockStatusCode("cipher_", switchbot_lock_last_error_code);
       goto done;
     }
 
@@ -5413,6 +5455,8 @@ bool switchbotLockPollCandidate(const char *mac, uint8_t address_type, uint8_t k
     if (action_cmd && action_cmd_len > 0) {
       if (!switchbotLockEncryptedSend(tx, action_cmd, action_cmd_len, key_id, key, plain, plain_len) ||
           plain_len == 0 || (plain[0] != 1 && plain[0] != 6)) {
+        switchbot_lock_last_error_code = plain_len > 0 ? plain[0] : client->getLastError();
+        setSwitchbotLockStatusCode("cmd_e", switchbot_lock_last_error_code);
         goto done;
       }
       command_ok = true;
@@ -5437,6 +5481,7 @@ bool switchbotLockPollCandidate(const char *mac, uint8_t address_type, uint8_t k
     if (ok || command_ok) {
       strlcpy(switchbot_lock_discovered_mac, mac, sizeof(switchbot_lock_discovered_mac));
       switchbot_lock_discovered_type = address_type;
+      switchbot_lock_last_error_code = 0;
       switchbot_lock_last_update_ms = millis();
       setSwitchbotLockStatus("ok");
     }
@@ -5460,6 +5505,7 @@ void resetSwitchbotLockRuntimeState() {
   switchbot_lock_cipher_mode = 255;
   switchbot_lock_iv_len = 0;
   switchbot_lock_polling = false;
+  switchbot_lock_last_error_code = 0;
   setSwitchbotLockStatus(config.switchbot_lock_enabled ? "idle" : "disabled");
 }
 
@@ -5518,7 +5564,7 @@ bool switchbotLockRunWithCandidates(const uint8_t *action_cmd, size_t action_cmd
     }
   }
   switchbot_lock_polling = false;
-  if (!ok) setSwitchbotLockStatus(failure_status);
+  if (!ok && strcmp(switchbot_lock_status, busy_status) == 0) setSwitchbotLockStatus(failure_status);
   if (ok) setSwitchbotLockStatus(success_status);
   if ((restart_scan || config.ibeacon_enabled || config.switchbot_lock_enabled) && startBleScan("switchbot")) {
     ibeacon_scanning = config.ibeacon_enabled;
@@ -10402,7 +10448,11 @@ void handleHealth() {
   else out += millis() - switchbot_lock_last_update_ms;
   out += F(",\"mac\":\"");
   out += jsonEscape(switchbot_lock_discovered_mac);
-  out += F("\"}");
+  out += F("\",\"address_type\":");
+  out += switchbot_lock_discovered_type;
+  out += F(",\"error_code\":");
+  out += switchbot_lock_last_error_code;
+  out += F("}");
   out += F(",\"mqtt\":{\"enabled\":");
   out += (mqttConfigured() ? F("true") : F("false"));
   out += F(",\"connected\":");
