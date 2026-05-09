@@ -366,6 +366,7 @@ constexpr size_t kShellyBluButtonMacMaxLen = 17;
 constexpr uint32_t kShellyBluButtonPairScanTimeoutMs = 45000UL;
 constexpr uint32_t kShellyBluButtonConnectTimeoutMs = 30000UL;
 constexpr uint32_t kShellyBluButtonPostScanSettleMs = 300UL;
+constexpr uint8_t kShellyBluButtonBeepAttempts = 3;
 constexpr const char *kShellyBluButtonServiceUuid = "de8a5aac-a99b-c315-0c80-60d4cbb51225";
 constexpr const char *kShellyBluButtonBeaconModeUuid = "cb9e957e-952d-4761-a7e1-4416494a5bfa";
 constexpr const char *kShellyBluButtonBuzzerUuid = "5b026510-4088-c297-46d8-be6c736a087b";
@@ -868,6 +869,7 @@ uint32_t switchbot_lock_last_status_notify_ms = 0;
 ShellyBluButtonPairRequest shelly_blu_pair{};
 char shelly_blu_button_status[32] = "idle";
 int shelly_blu_button_last_error = 0;
+bool shelly_blu_button_beeping = false;
 
 #if MYMOTA32_BLE_SCAN_SUPPORTED
 IBeaconObservation ibeacon_queue[kIBeaconQueueDepth]{};
@@ -6459,27 +6461,8 @@ bool shellyBluButtonRunPair(const char *mac, uint8_t address_type) {
   return true;
 }
 
-bool shellyBluButtonBeep(const char *mac) {
-  if (!shellyBluButtonSupported()) {
-    setShellyBluButtonStatus("unsupported");
-    return false;
-  }
-  if (!mac || !mac[0] || shelly_blu_pair.active || shellyBluButtonSlotForMac(mac) < 0) {
-    setShellyBluButtonStatus("beep_invalid");
-    return false;
-  }
-  if (!ensureBleScanner("shelly")) return false;
-
+bool shellyBluButtonBeepAttempt(const char *mac) {
   bool ok = false;
-  const bool resume_scan = config.ibeacon_enabled || config.switchbot_lock_enabled;
-  if (ibeacon_scan && ibeacon_scan->isScanning()) {
-    ibeacon_scan->stop();
-    ble_scanning = false;
-    ibeacon_scanning = false;
-    delay(kShellyBluButtonPostScanSettleMs);
-  }
-
-  setShellyBluButtonStatus("beeping");
   shellyBluButtonCloseClient();
   NimBLEDevice::setSecurityAuth(true, false, true);
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
@@ -6540,6 +6523,49 @@ bool shellyBluButtonBeep(const char *mac) {
 
 done:
   shellyBluButtonCloseClient();
+  return ok;
+}
+
+bool shellyBluButtonBeepBusy() {
+  return shelly_blu_button_beeping;
+}
+
+bool shellyBluButtonBeep(const char *mac) {
+  if (!shellyBluButtonSupported()) {
+    setShellyBluButtonStatus("unsupported");
+    return false;
+  }
+  if (!mac || !mac[0] || shelly_blu_pair.active || shellyBluButtonSlotForMac(mac) < 0) {
+    setShellyBluButtonStatus("beep_invalid");
+    return false;
+  }
+  if (shelly_blu_button_beeping) return false;
+  if (!ensureBleScanner("shelly")) return false;
+
+  bool ok = false;
+  const bool resume_scan = config.ibeacon_enabled || config.switchbot_lock_enabled;
+  if (ibeacon_scan && ibeacon_scan->isScanning()) {
+    ibeacon_scan->stop();
+    ble_scanning = false;
+    ibeacon_scanning = false;
+    delay(kShellyBluButtonPostScanSettleMs);
+  }
+
+  shelly_blu_button_beeping = true;
+  setShellyBluButtonStatus("beeping");
+  for (uint8_t attempt = 0; attempt < kShellyBluButtonBeepAttempts && !ok; attempt++) {
+    if (attempt > 0) {
+      delay(250);
+      setShellyBluButtonStatus("beeping");
+    }
+    ok = shellyBluButtonBeepAttempt(mac);
+  }
+  if (ok) {
+    shelly_blu_button_last_error = 0;
+    setShellyBluButtonStatus("beep_ok");
+  }
+  shelly_blu_button_beeping = false;
+
   if (resume_scan && startBleScan("shelly")) {
     ibeacon_scanning = config.ibeacon_enabled;
   } else {
@@ -6549,6 +6575,9 @@ done:
 }
 #else
 void shellyBluButtonCloseClient() {}
+bool shellyBluButtonBeepBusy() {
+  return false;
+}
 bool shellyBluButtonBeep(const char *) {
   return false;
 }
@@ -7635,7 +7664,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("function t(i,v){var e=document.getElementById(i);if(e)e.textContent=v;}");
   page += F("function p(i,v,c){var e=document.getElementById(i);if(e){e.textContent=v;e.className=c;}}");
   page += F("function nv(v){return v==null||v===''?'n/a':v;}function yn(v){return v?'yes':'no';}function ag(v){return v==null?'n/a':Math.floor(v/1000)+'s ago';}function ms(v){return v==null?'n/a':v+' ms ago';}");
-  page += F("function sd(e,d){if(!e)return;var q=e.querySelectorAll('input,select,textarea,button');for(var i=0;i<q.length;i++)q[i].disabled=d;}");
+  page += F("function sd(e,d){if(!e)return;var q=e.querySelectorAll('input,select,textarea,button');for(var i=0;i<q.length;i++)q[i].disabled=d;}var fbz={};function sdb(k,d){var a=document.querySelectorAll('form[data-busy=\"'+k+'\"]');for(var i=0;i<a.length;i++)sd(a[i],d);}");
   page += F("function live(){fh().then(function(d){");
   page += F("t('live-version',nv(d.version));t('live-target',nv(d.target));t('live-chip',(d.chip_model?d.chip_model:'Chip')+(d.chip_id?' ('+d.chip_id+')':''));t('live-hostname',nv(d.hostname));t('live-heap',d.heap+' bytes');if(d.flash){t('live-flash-used',d.flash.used+' bytes');t('live-flash-total',d.flash.total+' bytes');t('live-flash-free',d.flash.free+' bytes');t('live-flash-chip',d.flash.chip_size+' bytes');}");
   page += F("if(d.partitions){var r=d.partitions.running||{},u=d.partitions.next_update||{},f=d.partitions.factory||{};t('live-part-running-label',nv(r.label));t('live-part-running-size',r.size==null?'n/a':r.size+' bytes');t('live-part-update-label',nv(u.label));t('live-part-update-size',u.size==null?'n/a':u.size+' bytes');t('live-part-factory-label',nv(f.label));t('live-part-factory-size',f.size==null?'n/a':f.size+' bytes');t('live-part-ota-slots',nv(d.partitions.ota_slots));}");
@@ -7650,7 +7679,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
 #endif
   page += F("if(d.ibeacon){var ib=d.ibeacon,ic=!ib.enabled?'pill':(ib.scanning?'pill ok':'pill bad');p('live-ibeacon',ib.enabled?(ib.status||'enabled'):'disabled',ic);t('live-ibeacon-mqtt-rpm',ib.mqtt_reports_per_minute+'/min');}");
   page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,st=sl.status||'',bad=st.indexOf('failed')>=0||st=='unsupported'||st=='missing_key'||st=='bad_key'||st.indexOf('connect_e')==0||st.indexOf('timeout')>=0,good=st=='ok'||st=='connected'||st=='advertisement'||st=='lock_sent'||st=='unlock_sent'||st.indexOf('confirmed')>=0,sc=!sl.enabled?'pill':(bad?'pill bad':(good?'pill ok':'pill warn'));p('live-switchbot-lock-status',sl.enabled?(st||'unknown'):'disabled',sc);t('live-switchbot-lock-ble',sl.connected?'connected':'disconnected');t('live-switchbot-lock-connected-age',sl.connected_ms_ago==null?'n/a':Math.floor(sl.connected_ms_ago/1000)+'s');t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-door',sl.door_open==null?'n/a':(sl.door_open?'open':'closed'));t('live-switchbot-lock-device',sl.device_health||'n/a');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-battery-quality',sl.battery_quality||'n/a');t('live-switchbot-lock-updated',ag(sl.last_update_ms_ago));t('live-switchbot-lock-status-cb',ag(sl.last_status_callback_ms_ago));t('live-switchbot-lock-battery-cb',ag(sl.last_battery_callback_ms_ago));t('live-switchbot-lock-device-cb',ag(sl.last_device_callback_ms_ago));t('live-switchbot-lock-mac',sl.mac||'n/a');t('live-switchbot-lock-address-type',nv(sl.address_type));t('live-switchbot-lock-error',nv(sl.error_code));t('live-switchbot-lock-disconnect',nv(sl.disconnect_reason));t('live-switchbot-lock-command',sl.command?(sl.command.id+' '+sl.command.status):'n/a');if(sl.callbacks){t('live-switchbot-lock-cb-enabled',yn(sl.callbacks.status_configured)+' / '+yn(sl.callbacks.battery_configured)+' / '+yn(sl.callbacks.device_configured));t('live-switchbot-lock-cb-times',sl.callbacks.offline_delay+'s / '+sl.callbacks.online_heal+'s / '+sl.callbacks.battery_notify+'s');}}");
-  page += F("if(d.shelly_blu_button){var sb=d.shelly_blu_button,st=sb.status||'',bad=st=='unsupported'||st.indexOf('failed')>=0||st.indexOf('timeout')>=0||st.indexOf('connect_e')==0||st.indexOf('secure_e')==0||st=='svc_missing'||st=='bond_missing'||st=='slot_full'||st=='passkey_required'||st=='char_missing'||st=='beep_invalid'||st.indexOf('write_failed')>=0,good=st=='paired'||st=='beep_ok'||(!sb.pairing&&sb.paired_count>0),sc=bad?'pill bad':(sb.pairing||st=='beeping'?'pill warn':(good?'pill ok':'pill')),dt=(st=='idle'&&sb.paired_count>0)?'paired':(st||'idle');p('live-shelly-blu-status',dt,sc);t('live-shelly-blu-count',sb.paired_count+'/'+sb.max);t('live-shelly-blu-error',nv(sb.last_error));for(var x=0;x<sb.max;x++){var bt=sb.buttons&&sb.buttons[x]?sb.buttons[x]:null,mac=bt&&bt.mac?bt.mac:'empty';t('live-shelly-blu-mac-'+x,mac);t('live-shelly-blu-bond-'+x,bt&&bt.mac?(bt.bonded==null?'stored':(bt.bonded?'bonded':'stored')):'empty');var bi=document.getElementById('shelly-blu-beep-mac-'+x),bb=document.getElementById('shelly-blu-beep-btn-'+x),fi=document.getElementById('shelly-blu-forget-mac-'+x),fb=document.getElementById('shelly-blu-forget-btn-'+x);if(bi)bi.value=bt&&bt.mac?bt.mac:'';if(bb)bb.disabled=!(bt&&bt.mac);if(fi)fi.value=bt&&bt.mac?bt.mac:'';if(fb)fb.disabled=!(bt&&bt.mac);}}");
+  page += F("if(d.shelly_blu_button){var sb=d.shelly_blu_button,st=sb.status||'',busy=!!sb.beeping,bad=st=='unsupported'||st.indexOf('failed')>=0||st.indexOf('timeout')>=0||st.indexOf('connect_e')==0||st.indexOf('secure_e')==0||st=='svc_missing'||st=='bond_missing'||st=='slot_full'||st=='passkey_required'||st=='char_missing'||st=='beep_invalid'||st.indexOf('write_failed')>=0,good=st=='paired'||st=='beep_ok'||(!sb.pairing&&sb.paired_count>0),sc=bad?'pill bad':(sb.pairing||busy||st=='beeping'?'pill warn':(good?'pill ok':'pill')),dt=(st=='idle'&&sb.paired_count>0)?'paired':(st||'idle');p('live-shelly-blu-status',dt,sc);t('live-shelly-blu-count',sb.paired_count+'/'+sb.max);t('live-shelly-blu-error',nv(sb.last_error));for(var x=0;x<sb.max;x++){var bt=sb.buttons&&sb.buttons[x]?sb.buttons[x]:null,has=!!(bt&&bt.mac),mac=has?bt.mac:'empty';t('live-shelly-blu-mac-'+x,mac);var ac=document.getElementById('shelly-blu-actions-'+x),bi=document.getElementById('shelly-blu-beep-mac-'+x),bb=document.getElementById('shelly-blu-beep-btn-'+x),fi=document.getElementById('shelly-blu-forget-mac-'+x),fb=document.getElementById('shelly-blu-forget-btn-'+x);if(ac)ac.style.display=has?'flex':'none';if(bi)bi.value=has?bt.mac:'';if(bb)bb.disabled=!has||busy;if(fi)fi.value=has?bt.mac:'';if(fb)fb.disabled=!has;}}");
   page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!==null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
@@ -7674,7 +7703,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("function bi(){var a=document.querySelectorAll('.ba');for(var i=0;i<a.length;i++){a[i].onchange=function(){ba(this)};ba(a[i]);}var m=document.querySelectorAll('.im');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var c=document.querySelectorAll('.rbc');for(var k=0;k<c.length;k++){c[k].onchange=function(){rb(this)};rb(c[k]);}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ts();}bi();fw();");
 #endif
   page += F("document.addEventListener('click',function(e){var b=e.target;while(b&&b.tagName!='BUTTON'&&b.tagName!='INPUT')b=b.parentNode;if(!b||!b.form)return;var t=(b.type||'').toLowerCase();if(t=='submit'||t=='image')b.form._s=b;},true);");
-  page += F("document.addEventListener('submit',function(e){var f=e.target;if(!f||f.getAttribute('data-inline')!='1')return;e.preventDefault();var fd=new FormData(f),b=e.submitter||f._s;if(b&&b.name)fd.append(b.name,b.value);fd.append('_inline','1');var body=new URLSearchParams();fd.forEach(function(v,k){body.append(k,v);});fetch(f.getAttribute('action')||location.pathname,{method:(f.method||'POST').toUpperCase(),body:body,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});live();}).catch(function(x){alert(x.message||x);});},true);");
+  page += F("document.addEventListener('submit',function(e){var f=e.target;if(!f||f.getAttribute('data-inline')!='1')return;e.preventDefault();var bk=f.getAttribute('data-busy');if(bk&&fbz[bk])return;if(bk){fbz[bk]=1;sdb(bk,true);}var fd=new FormData(f),b=e.submitter||f._s;if(b&&b.name)fd.append(b.name,b.value);fd.append('_inline','1');var body=new URLSearchParams();fd.forEach(function(v,k){body.append(k,v);});var fin=function(){if(bk){fbz[bk]=0;sdb(bk,false);}};fetch(f.getAttribute('action')||location.pathname,{method:(f.method||'POST').toUpperCase(),body:body,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});live();}).then(fin).catch(function(x){fin();alert(x.message||x);});},true);");
   if (live_poll) page += F("setInterval(live,1000);setInterval(ck,1000);live();");
   if (reboot_wait) {
     page += F("var rb=");
@@ -8838,13 +8867,11 @@ void appendShellyBluButtonForm(String &page) {
     page += String(i);
     page += F("'>");
     page += mac[0] ? htmlEscape(mac) : String(F("empty"));
-    page += F("</code> <span class='muted' id='live-shelly-blu-bond-");
+    page += F("</code><div id='shelly-blu-actions-");
     page += String(i);
-    page += F("'>");
-    if (!mac[0]) page += F("empty");
-    else if (ibeacon_stack_started && shellyBluButtonMacBonded(mac)) page += F("bonded");
-    else page += F("stored");
-    page += F("</span><form class='inline' data-inline='1' method='post' action='/shelly-blu-button'>");
+    page += F("' class='actions'");
+    if (!mac[0]) page += F(" style='display:none'");
+    page += F("><form class='inline' data-inline='1' data-busy='shelly-blu-beep' method='post' action='/shelly-blu-button'>");
     page += F("<input id='shelly-blu-beep-mac-");
     page += String(i);
     page += F("' type='hidden' name='mac' value='");
@@ -8862,7 +8889,7 @@ void appendShellyBluButtonForm(String &page) {
     page += String(i);
     page += F("' class='danger' name='action' value='forget'");
     if (unsupported || !mac[0]) page += F(" disabled");
-    page += F(">Forget</button></form></div>");
+    page += F(">Forget</button></form></div></div>");
   }
   page += F("</div></div></section>");
 }
@@ -10150,6 +10177,10 @@ void handleShellyBluButton() {
       sendPlain(409, F("pairing already active"));
       return;
     }
+    if (shellyBluButtonBeepBusy()) {
+      sendInlineOkOrHome();
+      return;
+    }
     if (shellyBluButtonSlotForMac(mac) < 0) {
       sendPlain(404, F("unknown button"));
       return;
@@ -10191,6 +10222,10 @@ void handleShellyBluButtonBeepApi() {
   }
   if (shelly_blu_pair.active) {
     server.send(409, F("application/json"), F("{\"ok\":false,\"error\":\"pairing_active\"}"));
+    return;
+  }
+  if (shellyBluButtonBeepBusy()) {
+    server.send(200, F("application/json"), F("{\"ok\":true,\"ignored\":true,\"reason\":\"beep_busy\"}"));
     return;
   }
 
@@ -12272,6 +12307,8 @@ void handleHealth() {
   out += jsonEscape(shelly_blu_button_status);
   out += F("\",\"pairing\":");
   out += shelly_blu_pair.active ? F("true") : F("false");
+  out += F(",\"beeping\":");
+  out += shelly_blu_button_beeping ? F("true") : F("false");
   out += F(",\"target\":\"");
   out += jsonEscape(shelly_blu_pair.mac);
   out += F("\",\"paired_count\":");
@@ -12285,13 +12322,7 @@ void handleHealth() {
     if (i) out += ',';
     out += F("{\"mac\":\"");
     out += jsonEscape(config.shelly_blu_button_macs[i]);
-    out += F("\",\"bonded\":");
-    if (!config.shelly_blu_button_macs[i][0] || !ibeacon_stack_started) {
-      out += F("null");
-    } else {
-      out += shellyBluButtonMacBonded(config.shelly_blu_button_macs[i]) ? F("true") : F("false");
-    }
-    out += F("}");
+    out += F("\"}");
   }
   out += F("]}");
   out += F(",\"mqtt\":{\"enabled\":");
