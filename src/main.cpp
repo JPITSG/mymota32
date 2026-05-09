@@ -7687,10 +7687,61 @@ void handleFactoryReset() {
   scheduleRestart(800);
 }
 
+void appendPartitionJson(String &out, const esp_partition_t *partition) {
+  if (!partition) {
+    out += F("null");
+    return;
+  }
+  out += F("{\"label\":\"");
+  out += jsonEscape(partition->label);
+  out += F("\",\"type\":");
+  out += static_cast<unsigned>(partition->type);
+  out += F(",\"subtype\":");
+  out += static_cast<unsigned>(partition->subtype);
+  out += F(",\"offset\":");
+  out += partition->address;
+  out += F(",\"size\":");
+  out += partition->size;
+  out += F("}");
+}
+
+uint8_t otaAppPartitionCount() {
+  uint8_t count = 0;
+  esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, nullptr);
+  while (it) {
+    const esp_partition_t *partition = esp_partition_get(it);
+    if (partition &&
+        partition->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MIN &&
+        partition->subtype < ESP_PARTITION_SUBTYPE_APP_OTA_MAX) {
+      count++;
+    }
+    it = esp_partition_next(it);
+  }
+  esp_partition_iterator_release(it);
+  return count;
+}
+
+void appendHealthPartitionsJson(String &out) {
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  const esp_partition_t *next_update = esp_ota_get_next_update_partition(nullptr);
+  const esp_partition_t *factory = esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+                                                            ESP_PARTITION_SUBTYPE_APP_FACTORY,
+                                                            nullptr);
+  out += F(",\"partitions\":{\"running\":");
+  appendPartitionJson(out, running);
+  out += F(",\"next_update\":");
+  appendPartitionJson(out, next_update);
+  out += F(",\"factory\":");
+  appendPartitionJson(out, factory);
+  out += F(",\"ota_slots\":");
+  out += otaAppPartitionCount();
+  out += F("}");
+}
+
 void handleHealth() {
   updateIBeaconMqttReportRate(millis());
   String out;
-  out.reserve(1900);
+  out.reserve(2300);
   beginStreamedResponse("application/json");
   out += F("{\"name\":\"myMota32\",\"version\":\"");
   out += F(MYMOTA32_VERSION);
@@ -7706,6 +7757,7 @@ void handleHealth() {
   out += boot_id;
   out += F(",\"heap\":");
   out += ESP.getFreeHeap();
+  appendHealthPartitionsJson(out);
   out += F(",\"uptime\":");
   out += millis() / 1000;
   out += F(",\"perf\":{\"loop_hz\":");
