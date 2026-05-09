@@ -169,7 +169,7 @@ constexpr uint8_t kButtonActionWebhook = 3;
 constexpr size_t kButtonActionTargetMaxLen = 128;
 constexpr size_t kButtonActionPayloadMaxLen = 128;
 constexpr uint16_t kApiSettingsVersion = 2;
-constexpr size_t kSettingsImportJsonMaxLen = 8192;
+constexpr size_t kSettingsImportJsonMaxLen = 12288;
 constexpr uint16_t kSettingsFormatVersion = 1;
 constexpr const char *kDefaultButtonMqttTopic = "stat/{TOPIC}/RESULT";
 constexpr const char *kDefaultButtonMqttPressPayload = "{\"Switch{BUTTONID}\":{\"Action\":\"{TYPE}\"}}";
@@ -308,12 +308,19 @@ const uint16_t kIBeaconFilterIntervals[] = {1, 5, 10, 15, 30, 60, 120, 300, 600}
 constexpr size_t kSwitchbotLockMacMaxLen = 17;
 constexpr size_t kSwitchbotLockKeyIdMaxLen = 2;
 constexpr size_t kSwitchbotLockKeyMaxLen = 32;
+constexpr size_t kSwitchbotLockCallbackMaxLen = kButtonActionTargetMaxLen;
 constexpr uint8_t kSwitchbotLockCandidateCount = 4;
 constexpr uint8_t kSwitchbotLockMaxPacketBytes = 48;
 constexpr uint16_t kSwitchbotManufacturerId = 2409;
 constexpr uint32_t kSwitchbotLockPollIntervalMs = 900000UL;
 constexpr uint32_t kSwitchbotLockReconnectMs = 10000UL;
 constexpr uint32_t kSwitchbotLockCommandConfirmMs = 15000UL;
+constexpr uint16_t kSwitchbotLockOfflineDefaultSec = 300;
+constexpr uint16_t kSwitchbotLockOnlineHealDefaultSec = 600;
+constexpr uint16_t kSwitchbotLockBatteryNotifyDefaultSec = 3600;
+constexpr uint16_t kSwitchbotLockCallbackMinSec = 1;
+constexpr uint16_t kSwitchbotLockCallbackMaxSec = 65535U;
+constexpr uint32_t kSwitchbotLockDeviceHealthPollMs = 5000UL;
 constexpr uint32_t kSwitchbotLockResponseTimeoutMs = 5000UL;
 constexpr uint32_t kSwitchbotLockConnectTimeoutMs = 10000UL;
 constexpr uint16_t kSwitchbotLockScanIntervalMs = 160;
@@ -329,6 +336,15 @@ constexpr uint8_t kSwitchbotLockCommandStatusPending = 1;
 constexpr uint8_t kSwitchbotLockCommandStatusSuccess = 2;
 constexpr uint8_t kSwitchbotLockCommandStatusTimeout = 3;
 constexpr uint8_t kSwitchbotLockCommandStatusAborted = 4;
+constexpr uint8_t kSwitchbotLockCallbackCodeUnknown = 255;
+constexpr uint8_t kSwitchbotLockStatusCallbackLocked = 0;
+constexpr uint8_t kSwitchbotLockStatusCallbackUnlocked = 1;
+constexpr uint8_t kSwitchbotLockBatteryCallbackBad = 0;
+constexpr uint8_t kSwitchbotLockBatteryCallbackModerate = 1;
+constexpr uint8_t kSwitchbotLockBatteryCallbackGood = 2;
+constexpr uint8_t kSwitchbotLockDeviceHealthUnknown = 0;
+constexpr uint8_t kSwitchbotLockDeviceHealthOnline = 1;
+constexpr uint8_t kSwitchbotLockDeviceHealthOffline = 2;
 constexpr const char *kSwitchbotServiceUuid = "cba20d00-224d-11e6-9fb8-0002a5d5c51b";
 constexpr const char *kSwitchbotTxUuid = "cba20002-224d-11e6-9fb8-0002a5d5c51b";
 constexpr const char *kSwitchbotRxUuid = "cba20003-224d-11e6-9fb8-0002a5d5c51b";
@@ -569,6 +585,12 @@ struct StoredConfig {
   char switchbot_lock_mac[kSwitchbotLockMacMaxLen + 1];
   char switchbot_lock_key_id[kSwitchbotLockKeyIdMaxLen + 1];
   char switchbot_lock_key[kSwitchbotLockKeyMaxLen + 1];
+  char switchbot_lock_status_callback[kSwitchbotLockCallbackMaxLen + 1];
+  char switchbot_lock_battery_callback[kSwitchbotLockCallbackMaxLen + 1];
+  char switchbot_lock_device_callback[kSwitchbotLockCallbackMaxLen + 1];
+  uint16_t switchbot_lock_offline_delay_sec;
+  uint16_t switchbot_lock_online_heal_sec;
+  uint16_t switchbot_lock_battery_notify_sec;
 
   uint16_t power_saving_mode;
   uint8_t wifi_dynamic_power;
@@ -802,6 +824,16 @@ uint8_t switchbot_lock_active_direction = kSwitchbotLockStateUnknown;
 bool switchbot_lock_active_ble_sent = false;
 uint32_t switchbot_lock_active_started_ms = 0;
 uint32_t switchbot_lock_active_ble_sent_ms = 0;
+uint8_t switchbot_lock_last_status_callback_code = kSwitchbotLockCallbackCodeUnknown;
+uint8_t switchbot_lock_pending_status_callback_code = kSwitchbotLockCallbackCodeUnknown;
+uint8_t switchbot_lock_last_battery_callback_code = kSwitchbotLockCallbackCodeUnknown;
+uint8_t switchbot_lock_pending_battery_callback_code = kSwitchbotLockCallbackCodeUnknown;
+uint8_t switchbot_lock_device_health_state = kSwitchbotLockDeviceHealthUnknown;
+uint32_t switchbot_lock_device_offline_since_ms = 0;
+uint32_t switchbot_lock_last_device_health_check_ms = 0;
+uint32_t switchbot_lock_last_device_notify_ms = 0;
+uint32_t switchbot_lock_last_battery_notify_ms = 0;
+uint32_t switchbot_lock_last_status_notify_ms = 0;
 
 #if MYMOTA32_BLE_SCAN_SUPPORTED
 IBeaconObservation ibeacon_queue[kIBeaconQueueDepth]{};
@@ -1792,6 +1824,10 @@ void setupLightRuntime();
 void maintainLight();
 void maintainSwitchbotLock();
 void switchbotLockResolveActiveIfMatched();
+bool switchbotLockClientConnected();
+bool parseHttpUrl(const String &url, String &host, uint16_t &port, String &path);
+uint16_t sanitizeSwitchbotLockCallbackSeconds(uint16_t value, uint16_t default_value);
+bool normalizeSwitchbotLockCallbackTemplate(const String &input, char *out, size_t out_size);
 void scheduleMqttLightPublish(uint8_t mask);
 bool persistLightConfig(bool force = false);
 
@@ -1849,6 +1885,12 @@ void setDefaultConfig() {
   config.switchbot_lock_mac[0] = '\0';
   config.switchbot_lock_key_id[0] = '\0';
   config.switchbot_lock_key[0] = '\0';
+  config.switchbot_lock_status_callback[0] = '\0';
+  config.switchbot_lock_battery_callback[0] = '\0';
+  config.switchbot_lock_device_callback[0] = '\0';
+  config.switchbot_lock_offline_delay_sec = kSwitchbotLockOfflineDefaultSec;
+  config.switchbot_lock_online_heal_sec = kSwitchbotLockOnlineHealDefaultSec;
+  config.switchbot_lock_battery_notify_sec = kSwitchbotLockBatteryNotifyDefaultSec;
   config.power_saving_mode = kPowerSavingOff;
   config.wifi_dynamic_power = kWifiDynamicPowerDefault;
 }
@@ -1982,6 +2024,12 @@ bool loadConfig() {
   String switchbot_lock_mac = prefs.getString("sb_mac", "");
   String switchbot_lock_key_id = prefs.getString("sb_key_id", "");
   String switchbot_lock_key = prefs.getString("sb_key", "");
+  String switchbot_lock_status_callback = prefs.getString("sb_st_cb", "");
+  String switchbot_lock_battery_callback = prefs.getString("sb_bat_cb", "");
+  String switchbot_lock_device_callback = prefs.getString("sb_dev_cb", "");
+  uint16_t switchbot_lock_offline_delay = prefs.getUShort("sb_off_s", kSwitchbotLockOfflineDefaultSec);
+  uint16_t switchbot_lock_online_heal = prefs.getUShort("sb_on_s", kSwitchbotLockOnlineHealDefaultSec);
+  uint16_t switchbot_lock_battery_notify = prefs.getUShort("sb_bat_s", kSwitchbotLockBatteryNotifyDefaultSec);
   uint16_t power_saving_mode = prefs.getUShort("pwr_save", kPowerSavingOff);
   uint8_t wifi_dynamic_power = prefs.getUChar("wifi_dyn", kWifiDynamicPowerDefault);
   prefs.end();
@@ -2115,6 +2163,27 @@ bool loadConfig() {
                          kSwitchbotLockKeyMaxLen)) {
     config.switchbot_lock_key[0] = '\0';
   }
+  if (!normalizeSwitchbotLockCallbackTemplate(switchbot_lock_status_callback,
+                                              config.switchbot_lock_status_callback,
+                                              sizeof(config.switchbot_lock_status_callback))) {
+    config.switchbot_lock_status_callback[0] = '\0';
+  }
+  if (!normalizeSwitchbotLockCallbackTemplate(switchbot_lock_battery_callback,
+                                              config.switchbot_lock_battery_callback,
+                                              sizeof(config.switchbot_lock_battery_callback))) {
+    config.switchbot_lock_battery_callback[0] = '\0';
+  }
+  if (!normalizeSwitchbotLockCallbackTemplate(switchbot_lock_device_callback,
+                                              config.switchbot_lock_device_callback,
+                                              sizeof(config.switchbot_lock_device_callback))) {
+    config.switchbot_lock_device_callback[0] = '\0';
+  }
+  config.switchbot_lock_offline_delay_sec =
+    sanitizeSwitchbotLockCallbackSeconds(switchbot_lock_offline_delay, kSwitchbotLockOfflineDefaultSec);
+  config.switchbot_lock_online_heal_sec =
+    sanitizeSwitchbotLockCallbackSeconds(switchbot_lock_online_heal, kSwitchbotLockOnlineHealDefaultSec);
+  config.switchbot_lock_battery_notify_sec =
+    sanitizeSwitchbotLockCallbackSeconds(switchbot_lock_battery_notify, kSwitchbotLockBatteryNotifyDefaultSec);
   config.power_saving_mode = sanitizePowerSavingMode(power_saving_mode);
   config.wifi_dynamic_power = wifi_dynamic_power ? 1 : 0;
 
@@ -2216,12 +2285,21 @@ bool saveIBeaconConfig(bool enabled, uint16_t filter1_interval, const char *filt
   return loadConfig();
 }
 
-bool saveSwitchbotLockConfig(bool enabled, const char *mac, const char *key_id, const char *key) {
+bool saveSwitchbotLockConfig(bool enabled, const char *mac, const char *key_id, const char *key,
+                             const char *status_callback, const char *battery_callback,
+                             const char *device_callback, uint16_t offline_delay_sec,
+                             uint16_t online_heal_sec, uint16_t battery_notify_sec) {
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putUChar("sb_lock", enabled ? 1 : 0);
   prefs.putString("sb_mac", mac ? mac : "");
   prefs.putString("sb_key_id", key_id ? key_id : "");
   prefs.putString("sb_key", key ? key : "");
+  prefs.putString("sb_st_cb", status_callback ? status_callback : "");
+  prefs.putString("sb_bat_cb", battery_callback ? battery_callback : "");
+  prefs.putString("sb_dev_cb", device_callback ? device_callback : "");
+  prefs.putUShort("sb_off_s", sanitizeSwitchbotLockCallbackSeconds(offline_delay_sec, kSwitchbotLockOfflineDefaultSec));
+  prefs.putUShort("sb_on_s", sanitizeSwitchbotLockCallbackSeconds(online_heal_sec, kSwitchbotLockOnlineHealDefaultSec));
+  prefs.putUShort("sb_bat_s", sanitizeSwitchbotLockCallbackSeconds(battery_notify_sec, kSwitchbotLockBatteryNotifyDefaultSec));
   prefs.end();
   return loadConfig();
 }
@@ -3232,6 +3310,209 @@ bool runWebhookAction(uint8_t button, bool hold) {
   drainWebhookResponse(client);
   client.stop();
   return true;
+}
+
+uint16_t sanitizeSwitchbotLockCallbackSeconds(uint16_t value, uint16_t default_value) {
+  if (value < kSwitchbotLockCallbackMinSec || value > kSwitchbotLockCallbackMaxSec) return default_value;
+  return value;
+}
+
+bool isValidSwitchbotLockCallbackTemplate(const String &input) {
+  String value = input;
+  value.trim();
+  if (value.length() == 0) return true;
+  if (value.length() > kSwitchbotLockCallbackMaxLen) return false;
+  if (value.indexOf(F("{STATE}")) < 0) return false;
+  value.replace(F("{STATE}"), F("Online"));
+  String host;
+  String path;
+  uint16_t port = 80;
+  return parseHttpUrl(value, host, port, path);
+}
+
+bool normalizeSwitchbotLockCallbackTemplate(const String &input, char *out, size_t out_size) {
+  if (!out || out_size == 0) return false;
+  String value = input;
+  value.trim();
+  if (value.length() == 0) {
+    out[0] = '\0';
+    return true;
+  }
+  if (!isValidSwitchbotLockCallbackTemplate(value) || value.length() >= out_size) return false;
+  strlcpy(out, value.c_str(), out_size);
+  return true;
+}
+
+bool runSwitchbotLockCallback(const char *url_template, const char *state) {
+  if (!url_template || !url_template[0] || !state || !state[0]) return false;
+  if (WiFi.status() != WL_CONNECTED) return false;
+  String url = url_template;
+  url.replace(F("{STATE}"), state);
+  String host;
+  String path;
+  uint16_t port = 80;
+  if (!parseHttpUrl(url, host, port, path)) return false;
+  WiFiClient client;
+  client.setTimeout(kWebhookConnectTimeoutMs);
+  if (!client.connect(host.c_str(), port)) return false;
+  String request;
+  request.reserve(path.length() + host.length() + 90);
+  request += F("GET ");
+  request += path;
+  request += F(" HTTP/1.1\r\nHost: ");
+  request += host;
+  request += F("\r\nConnection: close\r\nUser-Agent: myMota32/");
+  request += F(MYMOTA32_VERSION);
+  request += F("\r\n\r\n");
+  const bool ok = client.print(request) == request.length();
+  if (ok) drainWebhookResponse(client);
+  client.stop();
+  return ok;
+}
+
+uint8_t switchbotLockStatusCallbackCode(uint8_t state) {
+  if (state == kSwitchbotLockStateUnknown) return kSwitchbotLockCallbackCodeUnknown;
+  return state == kSwitchbotLockStateLocked ? kSwitchbotLockStatusCallbackLocked : kSwitchbotLockStatusCallbackUnlocked;
+}
+
+const char *switchbotLockStatusCallbackLabel(uint8_t code) {
+  switch (code) {
+    case kSwitchbotLockStatusCallbackLocked: return "Locked";
+    case kSwitchbotLockStatusCallbackUnlocked: return "Unlocked";
+    default: return nullptr;
+  }
+}
+
+uint8_t switchbotLockBatteryCallbackCode(int8_t battery) {
+  if (battery < 0) return kSwitchbotLockCallbackCodeUnknown;
+  if (battery > 66) return kSwitchbotLockBatteryCallbackGood;
+  if (battery > 33) return kSwitchbotLockBatteryCallbackModerate;
+  return kSwitchbotLockBatteryCallbackBad;
+}
+
+const char *switchbotLockBatteryCallbackLabel(uint8_t code) {
+  switch (code) {
+    case kSwitchbotLockBatteryCallbackGood: return "Good";
+    case kSwitchbotLockBatteryCallbackModerate: return "Moderate";
+    case kSwitchbotLockBatteryCallbackBad: return "Bad";
+    default: return nullptr;
+  }
+}
+
+const char *switchbotLockDeviceHealthLabel(uint8_t state) {
+  switch (state) {
+    case kSwitchbotLockDeviceHealthOnline: return "Online";
+    case kSwitchbotLockDeviceHealthOffline: return "Offline";
+    default: return nullptr;
+  }
+}
+
+void switchbotLockQueueStatusCallback(uint8_t state) {
+  const uint8_t code = switchbotLockStatusCallbackCode(state);
+  if (code == kSwitchbotLockCallbackCodeUnknown || code == switchbot_lock_last_status_callback_code) return;
+  switchbot_lock_pending_status_callback_code = code;
+}
+
+void switchbotLockQueueBatteryCallback(int8_t battery) {
+  const uint8_t code = switchbotLockBatteryCallbackCode(battery);
+  if (code == kSwitchbotLockCallbackCodeUnknown || code == switchbot_lock_last_battery_callback_code) return;
+  switchbot_lock_pending_battery_callback_code = code;
+}
+
+void switchbotLockRecordObservedState(uint8_t state, bool door_known, bool door_open, uint32_t now) {
+  switchbot_lock_state = state;
+  if (door_known) {
+    switchbot_lock_door_open = door_open;
+    switchbot_lock_door_known = true;
+  }
+  switchbot_lock_last_update_ms = now;
+  switchbotLockQueueStatusCallback(state);
+}
+
+void switchbotLockRecordBattery(int8_t battery) {
+  if (battery < 0) return;
+  switchbot_lock_battery = battery;
+  switchbotLockQueueBatteryCallback(battery);
+}
+
+void switchbotLockSendPendingStatusCallback(uint32_t now) {
+  const uint8_t code = switchbot_lock_pending_status_callback_code;
+  if (code == kSwitchbotLockCallbackCodeUnknown) return;
+  switchbot_lock_pending_status_callback_code = kSwitchbotLockCallbackCodeUnknown;
+  const char *label = switchbotLockStatusCallbackLabel(code);
+  if (!label) return;
+  if (config.switchbot_lock_status_callback[0]) runSwitchbotLockCallback(config.switchbot_lock_status_callback, label);
+  switchbot_lock_last_status_callback_code = code;
+  switchbot_lock_last_status_notify_ms = now;
+}
+
+void switchbotLockSendBatteryCallback(uint8_t code, uint32_t now) {
+  const char *label = switchbotLockBatteryCallbackLabel(code);
+  if (!label) return;
+  if (config.switchbot_lock_battery_callback[0]) runSwitchbotLockCallback(config.switchbot_lock_battery_callback, label);
+  switchbot_lock_last_battery_callback_code = code;
+  switchbot_lock_last_battery_notify_ms = now;
+}
+
+void switchbotLockSendPendingBatteryCallback(uint32_t now) {
+  const uint8_t code = switchbot_lock_pending_battery_callback_code;
+  if (code == kSwitchbotLockCallbackCodeUnknown) return;
+  switchbot_lock_pending_battery_callback_code = kSwitchbotLockCallbackCodeUnknown;
+  switchbotLockSendBatteryCallback(code, now);
+}
+
+void switchbotLockSendDeviceCallback(uint8_t state, uint32_t now) {
+  const char *label = switchbotLockDeviceHealthLabel(state);
+  if (!label) return;
+  if (config.switchbot_lock_device_callback[0]) runSwitchbotLockCallback(config.switchbot_lock_device_callback, label);
+  switchbot_lock_last_device_notify_ms = now;
+}
+
+void maintainSwitchbotLockCallbackReports(uint32_t now) {
+  switchbotLockSendPendingStatusCallback(now);
+  switchbotLockSendPendingBatteryCallback(now);
+
+  if (config.switchbot_lock_battery_callback[0] && switchbot_lock_battery >= 0) {
+    const uint32_t interval_ms = static_cast<uint32_t>(config.switchbot_lock_battery_notify_sec) * 1000UL;
+    if (switchbot_lock_last_battery_notify_ms != 0 &&
+        now - switchbot_lock_last_battery_notify_ms >= interval_ms) {
+      switchbotLockSendBatteryCallback(switchbotLockBatteryCallbackCode(switchbot_lock_battery), now);
+    }
+  }
+
+  if (switchbot_lock_last_device_health_check_ms != 0 &&
+      now - switchbot_lock_last_device_health_check_ms < kSwitchbotLockDeviceHealthPollMs) {
+    return;
+  }
+  switchbot_lock_last_device_health_check_ms = now;
+  const bool connected = switchbotLockClientConnected();
+  if (connected) {
+    if (switchbot_lock_device_health_state != kSwitchbotLockDeviceHealthOnline) {
+      switchbotLockSendDeviceCallback(kSwitchbotLockDeviceHealthOnline, now);
+      switchbot_lock_device_health_state = kSwitchbotLockDeviceHealthOnline;
+    } else {
+      const uint32_t heal_ms = static_cast<uint32_t>(config.switchbot_lock_online_heal_sec) * 1000UL;
+      if (switchbot_lock_last_device_notify_ms != 0 &&
+          now - switchbot_lock_last_device_notify_ms >= heal_ms) {
+        switchbotLockSendDeviceCallback(kSwitchbotLockDeviceHealthOnline, now);
+      }
+    }
+    switchbot_lock_device_offline_since_ms = 0;
+    return;
+  }
+
+  if (switchbot_lock_device_offline_since_ms == 0) {
+    switchbot_lock_device_offline_since_ms = now ? now : 1;
+    if (switchbot_lock_device_health_state == kSwitchbotLockDeviceHealthOnline) {
+      switchbot_lock_device_health_state = kSwitchbotLockDeviceHealthUnknown;
+    }
+  }
+  const uint32_t offline_ms = static_cast<uint32_t>(config.switchbot_lock_offline_delay_sec) * 1000UL;
+  if (switchbot_lock_device_health_state != kSwitchbotLockDeviceHealthOffline &&
+      now - switchbot_lock_device_offline_since_ms >= offline_ms) {
+    switchbotLockSendDeviceCallback(kSwitchbotLockDeviceHealthOffline, now);
+    switchbot_lock_device_health_state = kSwitchbotLockDeviceHealthOffline;
+  }
 }
 
 bool runButtonAction(uint8_t button, uint8_t action, bool hold) {
@@ -5003,11 +5284,8 @@ void processSwitchbotLockAdvertisement(const NimBLEAdvertisedDevice *device) {
   strlcpy(switchbot_lock_discovered_mac, mac, sizeof(switchbot_lock_discovered_mac));
   switchbot_lock_discovered_type = device->getAddressType();
   switchbot_lock_last_error_code = 0;
-  switchbot_lock_state = state;
-  switchbot_lock_door_open = door_open;
-  switchbot_lock_door_known = true;
-  switchbot_lock_battery = battery;
-  switchbot_lock_last_update_ms = now;
+  switchbotLockRecordObservedState(state, true, door_open, now);
+  switchbotLockRecordBattery(battery);
   switchbotLockResolveActiveIfMatched();
   if (!switchbot_lock_polling) setSwitchbotLockStatus("advertisement");
 }
@@ -5554,10 +5832,7 @@ bool switchbotLockDecryptResponse(const uint8_t *raw, size_t raw_len, const uint
 void switchbotLockParsePush(const uint8_t *plain, size_t len) {
   if (!plain || len < 2) return;
   const uint8_t state = (plain[0] & 0x78) >> 3;
-  switchbot_lock_state = state;
-  switchbot_lock_door_open = (plain[1] & 0x10) != 0;
-  switchbot_lock_door_known = true;
-  switchbot_lock_last_update_ms = millis();
+  switchbotLockRecordObservedState(state, true, (plain[1] & 0x10) != 0, millis());
   switchbotLockResolveActiveIfMatched();
 }
 
@@ -5776,16 +6051,14 @@ bool switchbotLockRunOnConnection(const uint8_t *action_cmd = nullptr, size_t ac
   } else {
     if (switchbotLockEncryptedSend(switchbot_lock_tx, kSwitchbotCmdLockInfo, sizeof(kSwitchbotCmdLockInfo), key_id, key, plain, plain_len) &&
         plain_len > 2) {
-      switchbot_lock_state = (plain[1] & 0x78) >> 3;
-      switchbot_lock_door_open = (plain[2] & 0x10) != 0;
-      switchbot_lock_door_known = true;
+      switchbotLockRecordObservedState((plain[1] & 0x78) >> 3, true, (plain[2] & 0x10) != 0, millis());
       ok = true;
     }
   }
 
   if (switchbotLockEncryptedSend(switchbot_lock_tx, kSwitchbotCmdBasic, sizeof(kSwitchbotCmdBasic), key_id, key, plain, plain_len) &&
       plain_len > 1) {
-    switchbot_lock_battery = static_cast<int8_t>(plain[1]);
+    switchbotLockRecordBattery(static_cast<int8_t>(plain[1]));
     ok = true;
   }
   if (ok || command_ok) {
@@ -5819,6 +6092,16 @@ void resetSwitchbotLockRuntimeState() {
   switchbot_lock_polling = false;
   switchbot_lock_last_error_code = 0;
   switchbot_lock_last_command_id = 0;
+  switchbot_lock_last_status_callback_code = kSwitchbotLockCallbackCodeUnknown;
+  switchbot_lock_pending_status_callback_code = kSwitchbotLockCallbackCodeUnknown;
+  switchbot_lock_last_battery_callback_code = kSwitchbotLockCallbackCodeUnknown;
+  switchbot_lock_pending_battery_callback_code = kSwitchbotLockCallbackCodeUnknown;
+  switchbot_lock_device_health_state = kSwitchbotLockDeviceHealthUnknown;
+  switchbot_lock_device_offline_since_ms = config.switchbot_lock_enabled ? (millis() ? millis() : 1) : 0;
+  switchbot_lock_last_device_health_check_ms = 0;
+  switchbot_lock_last_device_notify_ms = 0;
+  switchbot_lock_last_battery_notify_ms = 0;
+  switchbot_lock_last_status_notify_ms = 0;
   clearSwitchbotLockActiveCommand();
   setSwitchbotLockStatus(config.switchbot_lock_enabled ? "idle" : "disabled");
 }
@@ -5948,14 +6231,17 @@ void maintainSwitchbotLock() {
     return;
   }
   startBleScan("switchbot");
+  uint32_t now = millis();
+  maintainSwitchbotLockCallbackReports(now);
   if (switchbot_lock_active_direction != kSwitchbotLockStateUnknown) {
     maintainSwitchbotLockCommand();
+    maintainSwitchbotLockCallbackReports(millis());
     return;
   }
-  const uint32_t now = millis();
   if (switchbot_lock_next_poll_ms != 0 && static_cast<int32_t>(now - switchbot_lock_next_poll_ms) < 0) return;
   const bool ok = switchbotLockPollOnce();
   switchbot_lock_next_poll_ms = now + (ok ? kSwitchbotLockPollIntervalMs : kSwitchbotLockReconnectMs);
+  maintainSwitchbotLockCallbackReports(millis());
 }
 
 void maintainIBeacon() {
@@ -6819,7 +7105,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("if(d.light){p('live-light-power',d.light.power?'on':'off',d.light.power?'pill ok':'pill bad');t('live-light-dimmer',d.light.dimmer+'%');t('live-light-ct',d.light.ct+' mired');t('live-light-color',d.light.color||'000000');t('live-light-on-dimmer',d.light.on_dimmer+'%');t('live-light-fade',d.light.fade?'on':'off');t('live-light-speed',d.light.speed);}");
 #endif
   page += F("if(d.ibeacon){t('live-ibeacon-mqtt-rpm',d.ibeacon.mqtt_reports_per_minute+'/min');}");
-  page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,st=sl.status||'',bad=st.indexOf('failed')>=0||st=='unsupported'||st=='missing_key'||st=='bad_key'||st.indexOf('connect_e')==0||st.indexOf('timeout')>=0,good=st=='ok'||st=='connected'||st=='advertisement'||st=='lock_sent'||st=='unlock_sent'||st.indexOf('confirmed')>=0,sc=!sl.enabled?'pill':(bad?'pill bad':(good?'pill ok':'pill warn'));p('live-switchbot-lock-status',sl.enabled?(st||'unknown'):'disabled',sc);t('live-switchbot-lock-ble',sl.connected?'connected':'disconnected');t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-updated',sl.last_update_ms_ago==null?'n/a':Math.floor(sl.last_update_ms_ago/1000)+'s ago');t('live-switchbot-lock-mac',sl.mac||'n/a');t('live-switchbot-lock-command',sl.command?(sl.command.id+' '+sl.command.status):'n/a');}");
+  page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,st=sl.status||'',bad=st.indexOf('failed')>=0||st=='unsupported'||st=='missing_key'||st=='bad_key'||st.indexOf('connect_e')==0||st.indexOf('timeout')>=0,good=st=='ok'||st=='connected'||st=='advertisement'||st=='lock_sent'||st=='unlock_sent'||st.indexOf('confirmed')>=0,sc=!sl.enabled?'pill':(bad?'pill bad':(good?'pill ok':'pill warn'));p('live-switchbot-lock-status',sl.enabled?(st||'unknown'):'disabled',sc);t('live-switchbot-lock-ble',sl.connected?'connected':'disconnected');t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-device',sl.device_health||'n/a');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-battery-quality',sl.battery_quality||'n/a');t('live-switchbot-lock-updated',sl.last_update_ms_ago==null?'n/a':Math.floor(sl.last_update_ms_ago/1000)+'s ago');t('live-switchbot-lock-mac',sl.mac||'n/a');t('live-switchbot-lock-command',sl.command?(sl.command.id+' '+sl.command.status):'n/a');}");
   page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!==null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
@@ -7796,6 +8082,43 @@ void appendSwitchbotLockForm(String &page) {
   page += F("' onfocus=\"this.type='text'\" onclick=\"this.type='text'\"");
   if (unsupported) page += F(" disabled");
   page += F("></label></div>");
+  page += F("<div class='bb'><h3>Callbacks</h3>");
+  page += F("<div class='row'><label>Lock status callback<br><input name='status_callback' maxlength='");
+  page += String(kSwitchbotLockCallbackMaxLen);
+  page += F("' placeholder='http://192.168.1.1:80/CMD?LockStatus={STATE}' value='");
+  page += htmlEscape(config.switchbot_lock_status_callback);
+  page += F("'");
+  if (unsupported) page += F(" disabled");
+  page += F("></label></div>");
+  page += F("<div class='row'><label>Battery quality callback<br><input name='battery_callback' maxlength='");
+  page += String(kSwitchbotLockCallbackMaxLen);
+  page += F("' placeholder='http://192.168.1.1:80/CMD?LockBattery={STATE}' value='");
+  page += htmlEscape(config.switchbot_lock_battery_callback);
+  page += F("'");
+  if (unsupported) page += F(" disabled");
+  page += F("></label></div>");
+  page += F("<div class='row'><label>Device health callback<br><input name='device_callback' maxlength='");
+  page += String(kSwitchbotLockCallbackMaxLen);
+  page += F("' placeholder='http://192.168.1.1:80/CMD?DeviceStatus={STATE}' value='");
+  page += htmlEscape(config.switchbot_lock_device_callback);
+  page += F("'");
+  if (unsupported) page += F(" disabled");
+  page += F("></label></div>");
+  page += F("<div class='row'><label>Offline delay seconds<br><input type='number' min='1' max='65535' name='offline_delay' value='");
+  page += config.switchbot_lock_offline_delay_sec;
+  page += F("'");
+  if (unsupported) page += F(" disabled");
+  page += F("></label></div>");
+  page += F("<div class='row'><label>Online refresh seconds<br><input type='number' min='1' max='65535' name='online_heal' value='");
+  page += config.switchbot_lock_online_heal_sec;
+  page += F("'");
+  if (unsupported) page += F(" disabled");
+  page += F("></label></div>");
+  page += F("<div class='row'><label>Battery refresh seconds<br><input type='number' min='1' max='65535' name='battery_notify' value='");
+  page += config.switchbot_lock_battery_notify_sec;
+  page += F("'");
+  if (unsupported) page += F(" disabled");
+  page += F("></label></div></div>");
   page += F("<button type='submit'");
   if (unsupported) page += F(" disabled");
   page += F(">Save Switchbot Lock</button></form>");
@@ -7811,6 +8134,9 @@ void appendSwitchbotLockForm(String &page) {
   page += switchbotLockClientConnected() ? F("connected") : F("disconnected");
   page += F("</code></div><span>Lock</span><div><code id='live-switchbot-lock-state'>");
   page += switchbotLockStateName(switchbot_lock_state);
+  page += F("</code></div><span>Device</span><div><code id='live-switchbot-lock-device'>");
+  const char *device_health = switchbotLockDeviceHealthLabel(switchbot_lock_device_health_state);
+  page += device_health ? device_health : "n/a";
   page += F("</code></div><span>Battery</span><div><code id='live-switchbot-lock-battery'>");
   if (switchbot_lock_battery >= 0) {
     page += String(switchbot_lock_battery);
@@ -7818,6 +8144,9 @@ void appendSwitchbotLockForm(String &page) {
   } else {
     page += F("n/a");
   }
+  page += F("</code></div><span>Battery quality</span><div><code id='live-switchbot-lock-battery-quality'>");
+  const char *battery_quality = switchbotLockBatteryCallbackLabel(switchbotLockBatteryCallbackCode(switchbot_lock_battery));
+  page += battery_quality ? battery_quality : "n/a";
   page += F("</code></div><span>Last updated</span><div><code id='live-switchbot-lock-updated'>");
   if (switchbot_lock_last_update_ms == 0) {
     page += F("n/a");
@@ -8983,16 +9312,38 @@ void handleSwitchbotLockSave() {
   char mac[kSwitchbotLockMacMaxLen + 1]{};
   char key_id[kSwitchbotLockKeyIdMaxLen + 1]{};
   char key[kSwitchbotLockKeyMaxLen + 1]{};
+  char status_callback[kSwitchbotLockCallbackMaxLen + 1]{};
+  char battery_callback[kSwitchbotLockCallbackMaxLen + 1]{};
+  char device_callback[kSwitchbotLockCallbackMaxLen + 1]{};
   if (!normalizeSwitchbotMac(server.hasArg("mac") ? server.arg("mac") : String(), mac, sizeof(mac)) ||
       !normalizeFixedHex(server.hasArg("key_id") ? server.arg("key_id") : String(), key_id, sizeof(key_id),
                          kSwitchbotLockKeyIdMaxLen) ||
       !normalizeFixedHex(server.hasArg("key") ? server.arg("key") : String(), key, sizeof(key),
-                         kSwitchbotLockKeyMaxLen)) {
+                         kSwitchbotLockKeyMaxLen) ||
+      !normalizeSwitchbotLockCallbackTemplate(server.hasArg("status_callback") ? server.arg("status_callback") : String(),
+                                              status_callback, sizeof(status_callback)) ||
+      !normalizeSwitchbotLockCallbackTemplate(server.hasArg("battery_callback") ? server.arg("battery_callback") : String(),
+                                              battery_callback, sizeof(battery_callback)) ||
+      !normalizeSwitchbotLockCallbackTemplate(server.hasArg("device_callback") ? server.arg("device_callback") : String(),
+                                              device_callback, sizeof(device_callback))) {
     sendPlain(400, F("invalid switchbot lock settings"));
     return;
   }
+  uint16_t offline_delay = kSwitchbotLockOfflineDefaultSec;
+  uint16_t online_heal = kSwitchbotLockOnlineHealDefaultSec;
+  uint16_t battery_notify = kSwitchbotLockBatteryNotifyDefaultSec;
+  if (!parseUint16Input(server.arg("offline_delay"), kSwitchbotLockCallbackMinSec,
+                        kSwitchbotLockCallbackMaxSec, offline_delay) ||
+      !parseUint16Input(server.arg("online_heal"), kSwitchbotLockCallbackMinSec,
+                        kSwitchbotLockCallbackMaxSec, online_heal) ||
+      !parseUint16Input(server.arg("battery_notify"), kSwitchbotLockCallbackMinSec,
+                        kSwitchbotLockCallbackMaxSec, battery_notify)) {
+    sendPlain(400, F("invalid switchbot lock callback seconds"));
+    return;
+  }
 
-  if (!saveSwitchbotLockConfig(enabled, mac, key_id, key)) {
+  if (!saveSwitchbotLockConfig(enabled, mac, key_id, key, status_callback, battery_callback,
+                               device_callback, offline_delay, online_heal, battery_notify)) {
     sendPlain(500, F("save failed"));
     return;
   }
@@ -9402,7 +9753,13 @@ bool switchbotLockConfigDiffers(const StoredConfig &a, const StoredConfig &b) {
   return a.switchbot_lock_enabled != b.switchbot_lock_enabled ||
          strcmp(a.switchbot_lock_mac, b.switchbot_lock_mac) != 0 ||
          strcmp(a.switchbot_lock_key_id, b.switchbot_lock_key_id) != 0 ||
-         strcmp(a.switchbot_lock_key, b.switchbot_lock_key) != 0;
+         strcmp(a.switchbot_lock_key, b.switchbot_lock_key) != 0 ||
+         strcmp(a.switchbot_lock_status_callback, b.switchbot_lock_status_callback) != 0 ||
+         strcmp(a.switchbot_lock_battery_callback, b.switchbot_lock_battery_callback) != 0 ||
+         strcmp(a.switchbot_lock_device_callback, b.switchbot_lock_device_callback) != 0 ||
+         a.switchbot_lock_offline_delay_sec != b.switchbot_lock_offline_delay_sec ||
+         a.switchbot_lock_online_heal_sec != b.switchbot_lock_online_heal_sec ||
+         a.switchbot_lock_battery_notify_sec != b.switchbot_lock_battery_notify_sec;
 }
 
 bool commitStoredConfig(const StoredConfig &source) {
@@ -9465,6 +9822,15 @@ bool commitStoredConfig(const StoredConfig &source) {
   prefs.putString("sb_mac", source.switchbot_lock_mac);
   prefs.putString("sb_key_id", source.switchbot_lock_key_id);
   prefs.putString("sb_key", source.switchbot_lock_key);
+  prefs.putString("sb_st_cb", source.switchbot_lock_status_callback);
+  prefs.putString("sb_bat_cb", source.switchbot_lock_battery_callback);
+  prefs.putString("sb_dev_cb", source.switchbot_lock_device_callback);
+  prefs.putUShort("sb_off_s", sanitizeSwitchbotLockCallbackSeconds(source.switchbot_lock_offline_delay_sec,
+                                                                    kSwitchbotLockOfflineDefaultSec));
+  prefs.putUShort("sb_on_s", sanitizeSwitchbotLockCallbackSeconds(source.switchbot_lock_online_heal_sec,
+                                                                  kSwitchbotLockOnlineHealDefaultSec));
+  prefs.putUShort("sb_bat_s", sanitizeSwitchbotLockCallbackSeconds(source.switchbot_lock_battery_notify_sec,
+                                                                   kSwitchbotLockBatteryNotifyDefaultSec));
   prefs.putUShort("pwr_save", sanitizePowerSavingMode(source.power_saving_mode));
   prefs.end();
   return loadConfig();
@@ -9598,7 +9964,19 @@ void appendSettingsExportJson(String &out) {
   out += jsonEscape(config.switchbot_lock_key_id);
   out += F("\",\"key\":\"");
   out += jsonEscape(config.switchbot_lock_key);
-  out += F("\"},\"inputs\":{\"hold_ms\":");
+  out += F("\",\"status_callback\":\"");
+  out += jsonEscape(config.switchbot_lock_status_callback);
+  out += F("\",\"battery_callback\":\"");
+  out += jsonEscape(config.switchbot_lock_battery_callback);
+  out += F("\",\"device_callback\":\"");
+  out += jsonEscape(config.switchbot_lock_device_callback);
+  out += F("\",\"offline_delay\":");
+  out += config.switchbot_lock_offline_delay_sec;
+  out += F(",\"online_heal\":");
+  out += config.switchbot_lock_online_heal_sec;
+  out += F(",\"battery_notify\":");
+  out += config.switchbot_lock_battery_notify_sec;
+  out += F("},\"inputs\":{\"hold_ms\":");
   out += config.button_hold_ms;
   out += F(",\"debounce_ms\":");
   out += config.button_debounce_ms;
@@ -10136,6 +10514,66 @@ void importSettingsSwitchbotLock(const cJSON *root, StoredConfig &target, Settin
       recordSettingsApplied(stats);
     } else {
       recordSettingsSkipped(stats, F("switchbot_lock.key"));
+    }
+  }
+  if (const cJSON *value = cjsonObjectItem(lock, "status_callback")) {
+    String callback;
+    char normalized[kSwitchbotLockCallbackMaxLen + 1]{};
+    if (settingsReadString(value, callback, kSwitchbotLockCallbackMaxLen) &&
+        normalizeSwitchbotLockCallbackTemplate(callback, normalized, sizeof(normalized))) {
+      strlcpy(target.switchbot_lock_status_callback, normalized, sizeof(target.switchbot_lock_status_callback));
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("switchbot_lock.status_callback"));
+    }
+  }
+  if (const cJSON *value = cjsonObjectItem(lock, "battery_callback")) {
+    String callback;
+    char normalized[kSwitchbotLockCallbackMaxLen + 1]{};
+    if (settingsReadString(value, callback, kSwitchbotLockCallbackMaxLen) &&
+        normalizeSwitchbotLockCallbackTemplate(callback, normalized, sizeof(normalized))) {
+      strlcpy(target.switchbot_lock_battery_callback, normalized, sizeof(target.switchbot_lock_battery_callback));
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("switchbot_lock.battery_callback"));
+    }
+  }
+  if (const cJSON *value = cjsonObjectItem(lock, "device_callback")) {
+    String callback;
+    char normalized[kSwitchbotLockCallbackMaxLen + 1]{};
+    if (settingsReadString(value, callback, kSwitchbotLockCallbackMaxLen) &&
+        normalizeSwitchbotLockCallbackTemplate(callback, normalized, sizeof(normalized))) {
+      strlcpy(target.switchbot_lock_device_callback, normalized, sizeof(target.switchbot_lock_device_callback));
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("switchbot_lock.device_callback"));
+    }
+  }
+  if (const cJSON *value = cjsonObjectItem(lock, "offline_delay")) {
+    uint16_t seconds = 0;
+    if (settingsReadUint16(value, kSwitchbotLockCallbackMinSec, kSwitchbotLockCallbackMaxSec, seconds)) {
+      target.switchbot_lock_offline_delay_sec = seconds;
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("switchbot_lock.offline_delay"));
+    }
+  }
+  if (const cJSON *value = cjsonObjectItem(lock, "online_heal")) {
+    uint16_t seconds = 0;
+    if (settingsReadUint16(value, kSwitchbotLockCallbackMinSec, kSwitchbotLockCallbackMaxSec, seconds)) {
+      target.switchbot_lock_online_heal_sec = seconds;
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("switchbot_lock.online_heal"));
+    }
+  }
+  if (const cJSON *value = cjsonObjectItem(lock, "battery_notify")) {
+    uint16_t seconds = 0;
+    if (settingsReadUint16(value, kSwitchbotLockCallbackMinSec, kSwitchbotLockCallbackMaxSec, seconds)) {
+      target.switchbot_lock_battery_notify_sec = seconds;
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("switchbot_lock.battery_notify"));
     }
   }
 }
@@ -10841,9 +11279,36 @@ void handleHealth() {
   out += F(",\"battery\":");
   if (switchbot_lock_battery >= 0) out += switchbot_lock_battery;
   else out += F("null");
+  out += F(",\"battery_quality\":");
+  const char *quality = switchbotLockBatteryCallbackLabel(switchbotLockBatteryCallbackCode(switchbot_lock_battery));
+  if (quality) {
+    out += '"';
+    out += quality;
+    out += '"';
+  } else {
+    out += F("null");
+  }
+  out += F(",\"device_health\":");
+  const char *device_health = switchbotLockDeviceHealthLabel(switchbot_lock_device_health_state);
+  if (device_health) {
+    out += '"';
+    out += device_health;
+    out += '"';
+  } else {
+    out += F("null");
+  }
   out += F(",\"last_update_ms_ago\":");
   if (switchbot_lock_last_update_ms == 0) out += F("null");
   else out += millis() - switchbot_lock_last_update_ms;
+  out += F(",\"last_status_callback_ms_ago\":");
+  if (switchbot_lock_last_status_notify_ms == 0) out += F("null");
+  else out += millis() - switchbot_lock_last_status_notify_ms;
+  out += F(",\"last_battery_callback_ms_ago\":");
+  if (switchbot_lock_last_battery_notify_ms == 0) out += F("null");
+  else out += millis() - switchbot_lock_last_battery_notify_ms;
+  out += F(",\"last_device_callback_ms_ago\":");
+  if (switchbot_lock_last_device_notify_ms == 0) out += F("null");
+  else out += millis() - switchbot_lock_last_device_notify_ms;
   out += F(",\"mac\":\"");
   out += jsonEscape(switchbot_lock_discovered_mac);
   out += F("\",\"address_type\":");
@@ -10856,6 +11321,19 @@ void handleHealth() {
   SwitchbotLockCommand *last_switchbot_lock_command = lastSwitchbotLockCommand();
   if (last_switchbot_lock_command) appendSwitchbotLockCommandJson(out, *last_switchbot_lock_command);
   else out += F("null");
+  out += F(",\"callbacks\":{\"status_configured\":");
+  out += config.switchbot_lock_status_callback[0] ? F("true") : F("false");
+  out += F(",\"battery_configured\":");
+  out += config.switchbot_lock_battery_callback[0] ? F("true") : F("false");
+  out += F(",\"device_configured\":");
+  out += config.switchbot_lock_device_callback[0] ? F("true") : F("false");
+  out += F(",\"offline_delay\":");
+  out += config.switchbot_lock_offline_delay_sec;
+  out += F(",\"online_heal\":");
+  out += config.switchbot_lock_online_heal_sec;
+  out += F(",\"battery_notify\":");
+  out += config.switchbot_lock_battery_notify_sec;
+  out += F("}");
   out += F("}");
   out += F(",\"mqtt\":{\"enabled\":");
   out += (mqttConfigured() ? F("true") : F("false"));
