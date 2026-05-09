@@ -7110,23 +7110,26 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("function fh(){return fetch('/health',{cache:'no-store'}).then(function(r){if(!r.ok)throw Error();return r.json();}).then(function(d){ok();return d;});}");
   page += F("function t(i,v){var e=document.getElementById(i);if(e)e.textContent=v;}");
   page += F("function p(i,v,c){var e=document.getElementById(i);if(e){e.textContent=v;e.className=c;}}");
+  page += F("function nv(v){return v==null||v===''?'n/a':v;}function yn(v){return v?'yes':'no';}function ag(v){return v==null?'n/a':Math.floor(v/1000)+'s ago';}function ms(v){return v==null?'n/a':v+' ms ago';}");
   page += F("function sd(e,d){if(!e)return;var q=e.querySelectorAll('input,select,textarea,button');for(var i=0;i<q.length;i++)q[i].disabled=d;}");
   page += F("function live(){fh().then(function(d){");
-  page += F("t('live-heap',d.heap+' bytes');if(d.flash){t('live-flash-used',d.flash.used+' bytes');t('live-flash-total',d.flash.total+' bytes');t('live-flash-free',d.flash.free+' bytes');}t('live-uptime',d.uptime+'s');t('live-active-phy',d.active_phy);");
+  page += F("t('live-version',nv(d.version));t('live-target',nv(d.target));t('live-chip',(d.chip_model?d.chip_model:'Chip')+(d.chip_id?' ('+d.chip_id+')':''));t('live-hostname',nv(d.hostname));t('live-heap',d.heap+' bytes');if(d.flash){t('live-flash-used',d.flash.used+' bytes');t('live-flash-total',d.flash.total+' bytes');t('live-flash-free',d.flash.free+' bytes');t('live-flash-chip',d.flash.chip_size+' bytes');}");
+  page += F("if(d.partitions){var r=d.partitions.running||{},u=d.partitions.next_update||{},f=d.partitions.factory||{};t('live-part-running-label',nv(r.label));t('live-part-running-size',r.size==null?'n/a':r.size+' bytes');t('live-part-update-label',nv(u.label));t('live-part-update-size',u.size==null?'n/a':u.size+' bytes');t('live-part-factory-label',nv(f.label));t('live-part-factory-size',f.size==null?'n/a':f.size+' bytes');t('live-part-ota-slots',nv(d.partitions.ota_slots));}");
+  page += F("t('live-uptime',d.uptime+'s');t('live-configured-phy',nv(d.configured_phy));t('live-active-phy',nv(d.active_phy));");
   page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',Number(d.perf.loop_max_us/1000).toFixed(1)+' ms');}");
   page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);");
-  page += F("var wu=d.wifi_usable!=null?d.wifi_usable:d.wifi,ws=!!d.wifi_sdk_connected,wl=ws?'connected':(wu?'usable':'disconnected'),wc=ws?'pill ok':(wu?'pill warn':'pill bad');p('live-wifi',wl,wc);t('live-ssid',d.wifi_ssid||'n/a');t('live-wifi-sdk',(d.wifi_status_name||'unknown')+' ('+(d.wifi_status==null?'?':d.wifi_status)+')');t('live-ip',d.ip||'n/a');t('live-gateway',d.gateway_ip||'n/a');t('live-dns',d.dns_ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
+  page += F("var wu=d.wifi_usable!=null?d.wifi_usable:d.wifi,ws=!!d.wifi_sdk_connected,wl=ws?'connected':(wu?'usable':'disconnected'),wc=ws?'pill ok':(wu?'pill warn':'pill bad');p('live-wifi',wl,wc);t('live-ssid',d.wifi_ssid||'n/a');t('live-wifi-sdk',(d.wifi_status_name||'unknown')+' ('+(d.wifi_status==null?'?':d.wifi_status)+')');t('live-ip',d.ip||'n/a');t('live-gateway',d.gateway_ip||'n/a');t('live-dns',d.dns_ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');t('live-ap',d.ap?(d.ap_ssid||'active'):'off');t('live-ap-ip',d.ap_ip||'n/a');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
-  page += F("if(d.mqtt){t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',d.mqtt.last_attempt_ms_ago==null?'n/a':d.mqtt.last_attempt_ms_ago+' ms ago');}");
+  page += F("if(d.mqtt){t('live-mqtt-broker',d.mqtt.enabled?(d.mqtt.host+':'+d.mqtt.port):'not configured');t('live-mqtt-topic',nv(d.mqtt.topic));t('live-mqtt-protocol-keepalive',d.mqtt.protocol_keepalive+'s');t('live-mqtt-state-keepalive',d.mqtt.state_keepalive?d.mqtt.state_keepalive+'s':'disabled');t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',ms(d.mqtt.last_attempt_ms_ago));}");
 #if MYMOTA32_LIGHT_SUPPORTED
-  page += F("if(d.light){p('live-light-power',d.light.power?'on':'off',d.light.power?'pill ok':'pill bad');t('live-light-dimmer',d.light.dimmer+'%');t('live-light-ct',d.light.ct+' mired');t('live-light-color',d.light.color||'000000');t('live-light-on-dimmer',d.light.on_dimmer+'%');t('live-light-fade',d.light.fade?'on':'off');t('live-light-speed',d.light.speed);}");
+  page += F("if(d.light){p('live-light-power',d.light.power?'on':'off',d.light.power?'pill ok':'pill bad');t('live-light-dimmer',d.light.dimmer+'%');t('live-light-ct',d.light.ct+' mired');t('live-light-color',d.light.color||'000000');t('live-light-on-dimmer',d.light.on_dimmer+'%');t('live-light-fade',d.light.fade?'on':'off');t('live-light-speed',d.light.speed);t('live-light-fading',d.light.fading?'yes':'no');t('live-light-driver',nv(d.light.driver));}");
 #endif
-  page += F("if(d.ibeacon){t('live-ibeacon-mqtt-rpm',d.ibeacon.mqtt_reports_per_minute+'/min');}");
-  page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,st=sl.status||'',bad=st.indexOf('failed')>=0||st=='unsupported'||st=='missing_key'||st=='bad_key'||st.indexOf('connect_e')==0||st.indexOf('timeout')>=0,good=st=='ok'||st=='connected'||st=='advertisement'||st=='lock_sent'||st=='unlock_sent'||st.indexOf('confirmed')>=0,sc=!sl.enabled?'pill':(bad?'pill bad':(good?'pill ok':'pill warn'));p('live-switchbot-lock-status',sl.enabled?(st||'unknown'):'disabled',sc);t('live-switchbot-lock-ble',sl.connected?'connected':'disconnected');t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-device',sl.device_health||'n/a');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-battery-quality',sl.battery_quality||'n/a');t('live-switchbot-lock-updated',sl.last_update_ms_ago==null?'n/a':Math.floor(sl.last_update_ms_ago/1000)+'s ago');t('live-switchbot-lock-mac',sl.mac||'n/a');t('live-switchbot-lock-command',sl.command?(sl.command.id+' '+sl.command.status):'n/a');}");
+  page += F("if(d.ibeacon){var ib=d.ibeacon,ic=!ib.enabled?'pill':(ib.scanning?'pill ok':'pill bad');p('live-ibeacon',ib.enabled?(ib.status||'enabled'):'disabled',ic);t('live-ibeacon-mqtt-rpm',ib.mqtt_reports_per_minute+'/min');}");
+  page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,st=sl.status||'',bad=st.indexOf('failed')>=0||st=='unsupported'||st=='missing_key'||st=='bad_key'||st.indexOf('connect_e')==0||st.indexOf('timeout')>=0,good=st=='ok'||st=='connected'||st=='advertisement'||st=='lock_sent'||st=='unlock_sent'||st.indexOf('confirmed')>=0,sc=!sl.enabled?'pill':(bad?'pill bad':(good?'pill ok':'pill warn'));p('live-switchbot-lock-status',sl.enabled?(st||'unknown'):'disabled',sc);t('live-switchbot-lock-ble',sl.connected?'connected':'disconnected');t('live-switchbot-lock-connected-age',sl.connected_ms_ago==null?'n/a':Math.floor(sl.connected_ms_ago/1000)+'s');t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-door',sl.door_open==null?'n/a':(sl.door_open?'open':'closed'));t('live-switchbot-lock-device',sl.device_health||'n/a');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-battery-quality',sl.battery_quality||'n/a');t('live-switchbot-lock-updated',ag(sl.last_update_ms_ago));t('live-switchbot-lock-status-cb',ag(sl.last_status_callback_ms_ago));t('live-switchbot-lock-battery-cb',ag(sl.last_battery_callback_ms_ago));t('live-switchbot-lock-device-cb',ag(sl.last_device_callback_ms_ago));t('live-switchbot-lock-mac',sl.mac||'n/a');t('live-switchbot-lock-address-type',nv(sl.address_type));t('live-switchbot-lock-error',nv(sl.error_code));t('live-switchbot-lock-disconnect',nv(sl.disconnect_reason));t('live-switchbot-lock-command',sl.command?(sl.command.id+' '+sl.command.status):'n/a');if(sl.callbacks){t('live-switchbot-lock-cb-enabled',yn(sl.callbacks.status_configured)+' / '+yn(sl.callbacks.battery_configured)+' / '+yn(sl.callbacks.device_configured));t('live-switchbot-lock-cb-times',sl.callbacks.offline_delay+'s / '+sl.callbacks.online_heal+'s / '+sl.callbacks.battery_notify+'s');}}");
   page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!==null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
-  page += F("function fmt(v,d,s){return v==null?'n/a':Number(v).toFixed(d)+s;}if(d.energy){t('live-energy-power',fmt(d.energy.power,1,' W'));t('live-energy-voltage',fmt(d.energy.voltage,1,' V'));t('live-energy-current',fmt(d.energy.current,3,' A'));t('live-energy-total',fmt(d.energy.total_kwh,4,' kWh'));t('live-energy-offset',fmt(d.energy.offset_kwh,4,' kWh'));t('live-energy-mqtt-age',d.energy.last_mqtt_report_ms_ago==null?'n/a':d.energy.last_mqtt_report_ms_ago+' ms ago');t('live-energy-mqtt-reason',d.energy.last_mqtt_report_reason||'n/a');if(d.energy.channels){for(var e=0;e<d.energy.channels.length;e++){t('live-energy-ch'+e+'-power',fmt(d.energy.channels[e].power,1,' W'));t('live-energy-ch'+e+'-current',fmt(d.energy.channels[e].current,3,' A'));}}}");
+  page += F("function fmt(v,d,s){return v==null?'n/a':Number(v).toFixed(d)+s;}if(d.energy){t('live-energy-driver',nv(d.energy.driver));t('live-energy-power',fmt(d.energy.power,1,' W'));t('live-energy-voltage',fmt(d.energy.voltage,1,' V'));t('live-energy-current',fmt(d.energy.current,3,' A'));t('live-energy-total',fmt(d.energy.total_kwh,4,' kWh'));t('live-energy-recorded-total',fmt(d.energy.recorded_total_kwh,4,' kWh'));t('live-energy-offset',fmt(d.energy.offset_kwh,4,' kWh'));t('live-energy-temp',fmt(d.energy.temperature,1,' C'));t('live-energy-report-interval',d.energy.report_interval?d.energy.report_interval+'s':'disabled');t('live-energy-report-change',fmt(d.energy.report_change_percent,1,'%')+' / '+d.energy.report_change_watts+' W');t('live-energy-mqtt-age',ms(d.energy.last_mqtt_report_ms_ago));t('live-energy-mqtt-reason',d.energy.last_mqtt_report_reason||'n/a');if(d.energy.debug){t('live-energy-debug-age',ms(d.energy.debug.last_success_ms_ago));t('live-energy-debug-raw',d.energy.debug.voltage_raw==null?'n/a':d.energy.debug.voltage_raw);}if(d.energy.channels){for(var e=0;e<d.energy.channels.length;e++){t('live-energy-ch'+e+'-voltage',fmt(d.energy.channels[e].voltage,1,' V'));t('live-energy-ch'+e+'-power',fmt(d.energy.channels[e].power,1,' W'));t('live-energy-ch'+e+'-current',fmt(d.energy.channels[e].current,3,' A'));}}}");
   page += F("}).catch(function(){});}");
   page += F("function ba(s){var k=s.getAttribute('data-key'),v=s.value,b=document.getElementById('extra-'+k);if(!b)return;var t=b.querySelector('.ti'),p=b.querySelector('.pi'),rr=b.querySelector('.rr'),tr=b.querySelector('.tr'),pr=b.querySelector('.pr'),tl=b.querySelector('.tl'),off=s.disabled;b.className=(v=='1'||v=='2'||v=='3')?'ae show':'ae';if(rr)rr.className=v=='1'?'row rr':'row rr hidden';if(tr)tr.className=(v=='2'||v=='3')?'row tr':'row tr hidden';if(pr)pr.className=v=='2'?'row pr':'row pr hidden';sd(rr,off||v!='1');sd(tr,off||!(v=='2'||v=='3'));sd(pr,off||v!='2');if(v=='2'){if(t&&(!t.value||t.value.indexOf('http://')==0))t.value=t.getAttribute('data-default-topic');if(p&&!p.value)p.value=p.getAttribute('data-default-payload');if(tl)tl.textContent='MQTT topic';}else if(v=='3'&&tl)tl.textContent='Webhook URL';}");
   page += F("function im(s){var k=s.getAttribute('data-input'),v=s.value,b=document.getElementById('input-button-'+k),w=document.getElementById('input-switch-'+k);if(b)b.className=v=='0'?'me show':'me';if(w)w.className=v=='1'?'me show':'me';sd(b,v!='0');sd(w,v!='1');if(b){var a=b.querySelectorAll('.ba');for(var i=0;i<a.length;i++)ba(a[i]);}}");
@@ -7227,13 +7230,13 @@ void appendStatusBlock(String &page) {
                                                                       ESP_PARTITION_SUBTYPE_APP_FACTORY,
                                                                       nullptr);
   page += F("<section class='panel wide'><h2>System Status</h2><div class='kv'>");
-  page += F("<span>Version</span><div><code>");
+  page += F("<span>Version</span><div><code id='live-version'>");
   page += F(MYMOTA32_VERSION);
-  page += F("</code> <code>");
+  page += F("</code> <code id='live-target'>");
   page += F(MYMOTA32_TARGET);
-  page += F("</code></div><span>Chip</span><div><code>");
+  page += F("</code></div><span>Chip</span><div><code id='live-chip'>");
   page += chipDisplayName();
-  page += F("</code></div><span>Hostname</span><div><code>");
+  page += F("</code></div><span>Hostname</span><div><code id='live-hostname'>");
   page += htmlEscape(config.hostname);
   page += F("</code></div><span>Heap</span><div><code id='live-heap'>");
   page += String(ESP.getFreeHeap());
@@ -7243,31 +7246,33 @@ void appendStatusBlock(String &page) {
   page += String(flashTotalBytes());
   page += F(" bytes</code> (app slot) / <code id='live-flash-free'>");
   page += String(flashFreeBytes());
-  page += F(" bytes</code> (free)</div><span>Partitions</span><div>running <code>");
+  page += F(" bytes</code> (free) / chip <code id='live-flash-chip'>");
+  page += String(ESP.getFlashChipSize());
+  page += F(" bytes</code></div><span>Partitions</span><div>running <code id='live-part-running-label'>");
   page += running_partition ? htmlEscape(running_partition->label) : String(F("n/a"));
   page += F("</code>");
   if (running_partition) {
-    page += F(" <code>");
+    page += F(" <code id='live-part-running-size'>");
     page += String(running_partition->size);
     page += F(" bytes</code>");
   }
-  page += F(" / update <code>");
+  page += F(" / update <code id='live-part-update-label'>");
   page += next_update_partition ? htmlEscape(next_update_partition->label) : String(F("n/a"));
   page += F("</code>");
   if (next_update_partition) {
-    page += F(" <code>");
+    page += F(" <code id='live-part-update-size'>");
     page += String(next_update_partition->size);
     page += F(" bytes</code>");
   }
-  page += F(" / factory <code>");
+  page += F(" / factory <code id='live-part-factory-label'>");
   page += factory_partition ? htmlEscape(factory_partition->label) : String(F("none"));
   page += F("</code>");
   if (factory_partition) {
-    page += F(" <code>");
+    page += F(" <code id='live-part-factory-size'>");
     page += String(factory_partition->size);
     page += F(" bytes</code>");
   }
-  page += F(" / OTA slots <code>");
+  page += F(" / OTA slots <code id='live-part-ota-slots'>");
   page += String(otaAppPartitionCount());
   page += F("</code></div><span>Uptime</span><div><code id='live-uptime'>");
   page += String(millis() / 1000);
@@ -7277,7 +7282,7 @@ void appendStatusBlock(String &page) {
   page += String(perf_last_loop_hz);
   page += F("/s</code></div><span>Slowest loop</span><div><code id='live-loop-max'>");
   appendMillisTenthsFromMicros(page, perf_last_loop_max_us);
-  page += F(" ms</code></div><span>PHY mode</span><div><code>");
+  page += F(" ms</code></div><span>PHY mode</span><div><code id='live-configured-phy'>");
   page += phyModeName(config.phy_mode);
   page += F("</code> configured <code id='live-active-phy'>");
   page += phyModeName(activePhyMode());
@@ -7326,13 +7331,11 @@ void appendStatusBlock(String &page) {
   page += F("<span>Tx power</span><div><code id='live-wifi-tx-power'>");
   appendWifiTxPowerText(page);
   page += F("</code></div>");
-  if (ap_started) {
-    page += F("<span>Setup AP</span><div><code>");
-    page += htmlEscape(WiFi.softAPSSID());
-    page += F("</code> <span class='pill ok'>open</span> at <code>");
-    page += ipToString(WiFi.softAPIP());
-    page += F("</code></div>");
-  }
+  page += F("<span>Setup AP</span><div><code id='live-ap'>");
+  page += ap_started ? htmlEscape(WiFi.softAPSSID()) : String(F("off"));
+  page += F("</code> at <code id='live-ap-ip'>");
+  page += ap_started ? ipToString(WiFi.softAPIP()) : String(F("n/a"));
+  page += F("</code></div>");
 
   page += F("<span>MQTT</span><div>");
   if (config.mqtt_host[0] == '\0') {
@@ -7344,21 +7347,18 @@ void appendStatusBlock(String &page) {
   }
   page += F("</div><span>MQTT iBeacon Reports / minute</span><div><code id='live-ibeacon-mqtt-rpm'>");
   page += String(ibeacon_mqtt_reports_per_minute);
-  page += F("/min</code></div><span>MQTT broker</span><div>");
-  if (config.mqtt_host[0] == '\0') {
-    page += F("<span class='muted'>not configured</span>");
-  } else {
-    page += F("<code>");
+  page += F("/min</code></div><span>MQTT broker</span><div><code id='live-mqtt-broker'>");
+  if (config.mqtt_host[0] == '\0') page += F("not configured");
+  else {
     page += htmlEscape(config.mqtt_host);
     page += F(":");
     page += String(config.mqtt_port);
-    page += F("</code>");
   }
-  page += F("</div><span>MQTT topic</span><div><code>");
+  page += F("</code></div><span>MQTT topic</span><div><code id='live-mqtt-topic'>");
   page += htmlEscape(config.mqtt_topic);
-  page += F("</code></div><span>MQTT keepalive</span><div><code>");
+  page += F("</code></div><span>MQTT keepalive</span><div><code id='live-mqtt-protocol-keepalive'>");
   page += String(config.mqtt_protocol_keepalive);
-  page += F("s</code></div><span>State keepalive</span><div><code>");
+  page += F("s</code></div><span>State keepalive</span><div><code id='live-mqtt-state-keepalive'>");
   if (config.mqtt_keepalive == 0) {
     page += F("disabled");
   } else {
@@ -7486,7 +7486,9 @@ void appendDeviceControls(String &page) {
     page += config.light_fade ? F("on") : F("off");
     page += F("</code></div><span>Speed</span><div><code id='live-light-speed'>");
     page += String(config.light_speed);
-    page += F("</code></div></div>");
+    page += F("</code></div><span>Fading</span><div><code id='live-light-fading'>");
+    page += light.fade_running ? F("yes") : F("no");
+    page += F("</code></div><span>Driver</span><div><code id='live-light-driver'>SM2335</code></div></div>");
     page += F("<form class='inline' data-inline='1' method='post' action='/light'><span class='actions'><button name='power' value='toggle'>Toggle</button><button name='power' value='on'>On</button><button class='secondary' name='power' value='off'>Off</button></span></form>");
     page += F("<div class='row'><label>Dimmer<br><input class='la' data-live='live-light-dimmer' data-suffix='%' name='dimmer' type='range' min='0' max='100' step='1' value='");
     page += String(light.dimmer);
@@ -7528,7 +7530,9 @@ void appendDeviceControls(String &page) {
     page += F("'><span class='actions'><button name='state' value='toggle'>Toggle</button><button name='state' value='on'>On</button><button class='secondary' name='state' value='off'>Off</button></span></form></div>");
   }
   if (energy.present) {
-    page += F("<div class='bb'><strong>Energy</strong><div class='kv'><span>Power</span><div><code id='live-energy-power'>");
+    page += F("<div class='bb'><strong>Energy</strong> <code id='live-energy-driver'>");
+    page += energyDriverName();
+    page += F("</code><div class='kv'><span>Power</span><div><code id='live-energy-power'>");
     appendFloatDecimal(page, energy.power, 1);
     page += F(" W</code></div><span>Voltage</span><div><code id='live-energy-voltage'>");
     appendFloatDecimal(page, energy.voltage, 1);
@@ -7536,9 +7540,23 @@ void appendDeviceControls(String &page) {
     appendFloatDecimal(page, energy.current, 3);
     page += F(" A</code></div><span>Total</span><div><code id='live-energy-total'>");
     appendFloatDecimal(page, reportedEnergyTotalKwh(), 4);
+    page += F(" kWh</code></div><span>Recorded total</span><div><code id='live-energy-recorded-total'>");
+    appendFloatDecimal(page, energy.total_kwh, 4);
     page += F(" kWh</code></div><span>Total offset</span><div><code id='live-energy-offset'>");
     appendFloatDecimal(page, config.energy_total_offset_kwh, 4);
-    page += F(" kWh</code></div><span>Last MQTT report</span><div><code id='live-energy-mqtt-age'>");
+    page += F(" kWh</code></div><span>Temperature</span><div><code id='live-energy-temp'>");
+    appendFloatDecimal(page, energy.temperature, 1);
+    page += F(" C</code></div><span>MQTT report interval</span><div><code id='live-energy-report-interval'>");
+    if (config.energy_mqtt_interval == 0) page += F("disabled");
+    else {
+      page += String(config.energy_mqtt_interval);
+      page += F("s");
+    }
+    page += F("</code></div><span>MQTT report change</span><div><code id='live-energy-report-change'>");
+    appendScaledDecimal(page, config.energy_mqtt_change_percent_x10, 1);
+    page += F("% / ");
+    page += String(config.energy_mqtt_change_watts);
+    page += F(" W</code></div><span>Last MQTT report</span><div><code id='live-energy-mqtt-age'>");
     if (last_mqtt_energy_publish == 0) {
       page += F("n/a");
     } else {
@@ -7547,6 +7565,15 @@ void appendDeviceControls(String &page) {
     }
     page += F("</code></div><span>MQTT report reason</span><div><code id='live-energy-mqtt-reason'>");
     page += mqttEnergyReportReasonName(last_mqtt_energy_report_reason);
+    page += F("</code></div><span>Last energy frame</span><div><code id='live-energy-debug-age'>");
+    if (energy.last_success_ms == 0) {
+      page += F("n/a");
+    } else {
+      page += String(millis() - energy.last_success_ms);
+      page += F(" ms ago");
+    }
+    page += F("</code></div><span>Raw voltage</span><div><code id='live-energy-debug-raw'>");
+    page += String(energy.voltage_raw);
     page += F("</code></div></div>");
     if (energy.channel_count > 1) {
       page += F("<div class='kv'>");
@@ -7554,6 +7581,10 @@ void appendDeviceControls(String &page) {
         page += F("<span>Channel ");
         page += String(i + 1);
         page += F("</span><div><code id='live-energy-ch");
+        page += String(i);
+        page += F("-voltage'>");
+        appendFloatDecimal(page, energy.channel[i].voltage, 1);
+        page += F(" V</code> <code id='live-energy-ch");
         page += String(i);
         page += F("-power'>");
         appendFloatDecimal(page, energy.channel[i].power, 1);
@@ -8104,8 +8135,18 @@ void appendSwitchbotLockForm(String &page) {
                                  config.switchbot_lock_key[0] == '\0';
   page += F("<div class='bb'><h3>State</h3><div class='kv'><span>BLE</span><div><code id='live-switchbot-lock-ble'>");
   page += switchbotLockClientConnected() ? F("connected") : F("disconnected");
+  page += F("</code></div><span>Connected for</span><div><code id='live-switchbot-lock-connected-age'>");
+  if (switchbot_lock_connected_since_ms == 0 || !switchbotLockClientConnected()) {
+    page += F("n/a");
+  } else {
+    page += String((millis() - switchbot_lock_connected_since_ms) / 1000);
+    page += F("s");
+  }
   page += F("</code></div><span>Lock</span><div><code id='live-switchbot-lock-state'>");
   page += switchbotLockStateName(switchbot_lock_state);
+  page += F("</code></div><span>Door</span><div><code id='live-switchbot-lock-door'>");
+  if (switchbot_lock_door_known) page += switchbot_lock_door_open ? F("open") : F("closed");
+  else page += F("n/a");
   page += F("</code></div><span>Device</span><div><code id='live-switchbot-lock-device'>");
   const char *device_health = switchbotLockDeviceHealthLabel(switchbot_lock_device_health_state);
   page += device_health ? device_health : "n/a";
@@ -8126,8 +8167,35 @@ void appendSwitchbotLockForm(String &page) {
     page += String((millis() - switchbot_lock_last_update_ms) / 1000);
     page += F("s ago");
   }
+  page += F("</code></div><span>Last status callback</span><div><code id='live-switchbot-lock-status-cb'>");
+  if (switchbot_lock_last_status_notify_ms == 0) {
+    page += F("n/a");
+  } else {
+    page += String((millis() - switchbot_lock_last_status_notify_ms) / 1000);
+    page += F("s ago");
+  }
+  page += F("</code></div><span>Last battery callback</span><div><code id='live-switchbot-lock-battery-cb'>");
+  if (switchbot_lock_last_battery_notify_ms == 0) {
+    page += F("n/a");
+  } else {
+    page += String((millis() - switchbot_lock_last_battery_notify_ms) / 1000);
+    page += F("s ago");
+  }
+  page += F("</code></div><span>Last device callback</span><div><code id='live-switchbot-lock-device-cb'>");
+  if (switchbot_lock_last_device_notify_ms == 0) {
+    page += F("n/a");
+  } else {
+    page += String((millis() - switchbot_lock_last_device_notify_ms) / 1000);
+    page += F("s ago");
+  }
   page += F("</code></div><span>MAC</span><div><code id='live-switchbot-lock-mac'>");
   page += switchbot_lock_discovered_mac[0] ? htmlEscape(switchbot_lock_discovered_mac) : String(F("n/a"));
+  page += F("</code></div><span>Address type</span><div><code id='live-switchbot-lock-address-type'>");
+  page += String(switchbot_lock_discovered_type);
+  page += F("</code></div><span>BLE error</span><div><code id='live-switchbot-lock-error'>");
+  page += String(switchbot_lock_last_error_code);
+  page += F("</code></div><span>Disconnect reason</span><div><code id='live-switchbot-lock-disconnect'>");
+  page += String(switchbot_lock_disconnect_reason);
   page += F("</code></div><span>Command</span><div><code id='live-switchbot-lock-command'>");
   SwitchbotLockCommand *last_cmd = lastSwitchbotLockCommand();
   if (last_cmd) {
@@ -8141,6 +8209,19 @@ void appendSwitchbotLockForm(String &page) {
   }
   page += F("</code></div></div></div>");
   page += F("<div class='bb'><h3>Callback</h3>");
+  page += F("<div class='kv'><span>Configured</span><div><code id='live-switchbot-lock-cb-enabled'>");
+  page += config.switchbot_lock_status_callback[0] ? F("yes") : F("no");
+  page += F(" / ");
+  page += config.switchbot_lock_battery_callback[0] ? F("yes") : F("no");
+  page += F(" / ");
+  page += config.switchbot_lock_device_callback[0] ? F("yes") : F("no");
+  page += F("</code></div><span>Timers</span><div><code id='live-switchbot-lock-cb-times'>");
+  page += String(config.switchbot_lock_offline_delay_sec);
+  page += F("s / ");
+  page += String(config.switchbot_lock_online_heal_sec);
+  page += F("s / ");
+  page += String(config.switchbot_lock_battery_notify_sec);
+  page += F("s</code></div></div>");
   page += F("<div class='row'><label>Lock status callback<br><input form='switchbot-lock-form' name='status_callback' maxlength='");
   page += String(kSwitchbotLockCallbackMaxLen);
   page += F("' placeholder='http://192.168.1.1:80/CMD?LockStatus={STATE}' value='");
@@ -11120,6 +11201,8 @@ void handleHealth() {
   out += chipIdHex();
   out += F("\",\"chip\":\"");
   out += chipIdHex();
+  out += F("\",\"hostname\":\"");
+  out += jsonEscape(config.hostname);
   out += F("\",\"boot_id\":");
   out += boot_id;
   out += F(",\"heap\":");
@@ -11157,7 +11240,7 @@ void handleHealth() {
   out += String(static_cast<uint8_t>(wifi_status));
   out += F(",\"wifi_status_name\":\"");
   out += wifiStatusName(wifi_status);
-  out += F(",\"wifi_ssid\":\"");
+  out += F("\",\"wifi_ssid\":\"");
   if (wifi_usable) {
     const String ssid = wifi_sdk_connected ? WiFi.SSID() : String(config.ssid);
     out += jsonEscape(ssid.c_str());
@@ -11183,6 +11266,22 @@ void handleHealth() {
   out += F("}");
   out += F(",\"ap\":");
   out += (ap_started ? F("true") : F("false"));
+  out += F(",\"ap_ssid\":");
+  if (ap_started) {
+    out += '"';
+    out += jsonEscape(WiFi.softAPSSID().c_str());
+    out += '"';
+  } else {
+    out += F("null");
+  }
+  out += F(",\"ap_ip\":");
+  if (ap_started) {
+    out += '"';
+    out += ipToString(WiFi.softAPIP());
+    out += '"';
+  } else {
+    out += F("null");
+  }
   out += F(",\"configured_phy_mode\":");
   out += config.phy_mode;
   out += F(",\"configured_phy\":\"");
