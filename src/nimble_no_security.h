@@ -51,14 +51,17 @@
 #define CONFIG_BT_NIMBLE_ROLE_OBSERVER 1
 #endif
 
-// The Lock Ultra protocol uses its own application-layer AES key and does not
-// require BLE pairing/bonding.
+// SwitchBot Lock Ultra uses its own application-layer AES key, but Shelly BLU
+// Button pairing requires NimBLE security manager bonding to be available.
 #define CONFIG_BT_NIMBLE_CRYPTO_STACK_MBEDTLS 1
-#define MYNEWT_VAL_BLE_SM_LEGACY 0
-#define MYNEWT_VAL_BLE_SM_SC 0
-#define MYNEWT_VAL_BLE_SM_BONDING 0
-#define MYNEWT_VAL_BLE_SM_OUR_KEY_DIST 0
-#define MYNEWT_VAL_BLE_SM_THEIR_KEY_DIST 0
+#undef CONFIG_BT_NIMBLE_MAX_BONDS
+#define CONFIG_BT_NIMBLE_MAX_BONDS 4
+#define MYNEWT_VAL_BLE_STORE_MAX_BONDS 4
+#define MYNEWT_VAL_BLE_SM_LEGACY 1
+#define MYNEWT_VAL_BLE_SM_SC 1
+#define MYNEWT_VAL_BLE_SM_BONDING 1
+#define MYNEWT_VAL_BLE_SM_OUR_KEY_DIST 3
+#define MYNEWT_VAL_BLE_SM_THEIR_KEY_DIST 3
 
 // We do not use controller or host whitelists for advertisement capture.
 #define MYNEWT_VAL_BLE_WHITELIST 0

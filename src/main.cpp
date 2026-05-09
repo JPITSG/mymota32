@@ -44,6 +44,12 @@
 #define MYMOTA32_SWITCHBOT_LOCK_SUPPORTED 0
 #endif
 
+#if MYMOTA32_BLE_SCAN_SUPPORTED && CONFIG_BT_NIMBLE_ROLE_CENTRAL
+#define MYMOTA32_SHELLY_BLU_BUTTON_SUPPORTED 1
+#else
+#define MYMOTA32_SHELLY_BLU_BUTTON_SUPPORTED 0
+#endif
+
 #if CONFIG_IDF_TARGET_ESP32C3
 #define MYMOTA32_LIGHT_SUPPORTED 1
 #else
@@ -354,6 +360,13 @@ const uint8_t kSwitchbotCmdNotifOn[] = {0x57, 0x0e, 0x01, 0x00, 0x1e, 0x00, 0x00
 const uint8_t kSwitchbotCmdLock[] = {0x57, 0x0f, 0x4e, 0x01, 0x01, 0x00, 0x00, 0x00};
 const uint8_t kSwitchbotCmdUnlock[] = {0x57, 0x0f, 0x4e, 0x01, 0x01, 0x00, 0x00, 0x80};
 
+constexpr uint8_t kShellyBluButtonMax = 4;
+constexpr size_t kShellyBluButtonMacMaxLen = 17;
+constexpr uint32_t kShellyBluButtonPairScanTimeoutMs = 45000UL;
+constexpr uint32_t kShellyBluButtonConnectTimeoutMs = 10000UL;
+constexpr const char *kShellyBluButtonServiceUuid = "de8a5aac-a99b-c315-0c80-60d4cbb51225";
+constexpr const char *kShellyBluButtonBeaconModeUuid = "cb9e957e-952d-4761-a7e1-4416494a5bfa";
+
 constexpr uint8_t kPowerStateOff = 0;
 constexpr uint8_t kPowerStateOn = 1;
 constexpr uint8_t kPowerStateToggle = 2;
@@ -592,6 +605,8 @@ struct StoredConfig {
   uint16_t switchbot_lock_online_heal_sec;
   uint16_t switchbot_lock_battery_notify_sec;
 
+  char shelly_blu_button_macs[kShellyBluButtonMax][kShellyBluButtonMacMaxLen + 1];
+
   uint16_t power_saving_mode;
   uint8_t wifi_dynamic_power;
 };
@@ -640,6 +655,18 @@ struct SwitchbotLockCommand {
   uint8_t status;
   uint32_t created_ms;
   uint32_t updated_ms;
+};
+
+struct ShellyBluButtonPairRequest {
+  bool active;
+  char mac[kShellyBluButtonMacMaxLen + 1];
+  uint8_t address_type;
+  bool seen;
+  int8_t rssi;
+  uint32_t started_ms;
+  uint32_t seen_ms;
+  bool passkey_set;
+  uint32_t passkey;
 };
 
 struct EnergyChannelState {
@@ -835,6 +862,10 @@ uint32_t switchbot_lock_last_device_notify_ms = 0;
 uint32_t switchbot_lock_last_battery_notify_ms = 0;
 uint32_t switchbot_lock_last_status_notify_ms = 0;
 
+ShellyBluButtonPairRequest shelly_blu_pair{};
+char shelly_blu_button_status[32] = "idle";
+int shelly_blu_button_last_error = 0;
+
 #if MYMOTA32_BLE_SCAN_SUPPORTED
 IBeaconObservation ibeacon_queue[kIBeaconQueueDepth]{};
 uint8_t ibeacon_queue_head = 0;
@@ -862,6 +893,19 @@ NimBLERemoteCharacteristic *switchbot_lock_tx = nullptr;
 NimBLERemoteCharacteristic *switchbot_lock_rx = nullptr;
 char switchbot_lock_client_mac[kSwitchbotLockMacMaxLen + 1] = "";
 uint8_t switchbot_lock_client_address_type = 0;
+#endif
+
+#if MYMOTA32_SHELLY_BLU_BUTTON_SUPPORTED
+class ShellyBluButtonClientCallbacks : public NimBLEClientCallbacks {
+ public:
+  void onDisconnect(NimBLEClient *, int reason) override;
+  void onPassKeyEntry(NimBLEConnInfo &connInfo) override;
+  uint32_t onPassKeyDisplay(NimBLEConnInfo &) override;
+  void onConfirmPasskey(NimBLEConnInfo &connInfo, uint32_t) override;
+};
+
+ShellyBluButtonClientCallbacks shelly_blu_button_client_callbacks;
+NimBLEClient *shelly_blu_button_client = nullptr;
 #endif
 
 void recordLoopPerf(uint32_t started_us, uint32_t ended_us) {
@@ -1823,6 +1867,7 @@ void refreshRelayPulseRuntime(bool schedule_on_relays);
 void setupLightRuntime();
 void maintainLight();
 void maintainSwitchbotLock();
+void maintainShellyBluButton();
 void switchbotLockResolveActiveIfMatched();
 bool switchbotLockClientConnected();
 bool parseHttpUrl(const String &url, String &host, uint16_t &port, String &path);
@@ -2030,6 +2075,10 @@ bool loadConfig() {
   uint16_t switchbot_lock_offline_delay = prefs.getUShort("sb_off_s", kSwitchbotLockOfflineDefaultSec);
   uint16_t switchbot_lock_online_heal = prefs.getUShort("sb_on_s", kSwitchbotLockOnlineHealDefaultSec);
   uint16_t switchbot_lock_battery_notify = prefs.getUShort("sb_bat_s", kSwitchbotLockBatteryNotifyDefaultSec);
+  char shelly_blu_button_macs[kShellyBluButtonMax][kShellyBluButtonMacMaxLen + 1]{};
+  if (prefs.getBytesLength("blu_macs") == sizeof(shelly_blu_button_macs)) {
+    prefs.getBytes("blu_macs", shelly_blu_button_macs, sizeof(shelly_blu_button_macs));
+  }
   uint16_t power_saving_mode = prefs.getUShort("pwr_save", kPowerSavingOff);
   uint8_t wifi_dynamic_power = prefs.getUChar("wifi_dyn", kWifiDynamicPowerDefault);
   prefs.end();
@@ -2184,6 +2233,24 @@ bool loadConfig() {
     sanitizeSwitchbotLockCallbackSeconds(switchbot_lock_online_heal, kSwitchbotLockOnlineHealDefaultSec);
   config.switchbot_lock_battery_notify_sec =
     sanitizeSwitchbotLockCallbackSeconds(switchbot_lock_battery_notify, kSwitchbotLockBatteryNotifyDefaultSec);
+  for (uint8_t i = 0; i < kShellyBluButtonMax; i++) {
+    shelly_blu_button_macs[i][kShellyBluButtonMacMaxLen] = '\0';
+    char normalized[kShellyBluButtonMacMaxLen + 1]{};
+    if (!normalizeSwitchbotMac(String(shelly_blu_button_macs[i]), normalized, sizeof(normalized)) ||
+        normalized[0] == '\0') {
+      config.shelly_blu_button_macs[i][0] = '\0';
+      continue;
+    }
+    bool duplicate = false;
+    for (uint8_t j = 0; j < i; j++) {
+      if (strcmp(config.shelly_blu_button_macs[j], normalized) == 0) {
+        duplicate = true;
+        break;
+      }
+    }
+    if (duplicate) config.shelly_blu_button_macs[i][0] = '\0';
+    else strlcpy(config.shelly_blu_button_macs[i], normalized, sizeof(config.shelly_blu_button_macs[i]));
+  }
   config.power_saving_mode = sanitizePowerSavingMode(power_saving_mode);
   config.wifi_dynamic_power = wifi_dynamic_power ? 1 : 0;
 
@@ -2300,6 +2367,13 @@ bool saveSwitchbotLockConfig(bool enabled, const char *mac, const char *key_id, 
   prefs.putUShort("sb_off_s", sanitizeSwitchbotLockCallbackSeconds(offline_delay_sec, kSwitchbotLockOfflineDefaultSec));
   prefs.putUShort("sb_on_s", sanitizeSwitchbotLockCallbackSeconds(online_heal_sec, kSwitchbotLockOnlineHealDefaultSec));
   prefs.putUShort("sb_bat_s", sanitizeSwitchbotLockCallbackSeconds(battery_notify_sec, kSwitchbotLockBatteryNotifyDefaultSec));
+  prefs.end();
+  return loadConfig();
+}
+
+bool saveShellyBluButtonConfig(const char macs[kShellyBluButtonMax][kShellyBluButtonMacMaxLen + 1]) {
+  if (!prefs.begin("mymota32", false)) return false;
+  prefs.putBytes("blu_macs", macs, sizeof(config.shelly_blu_button_macs));
   prefs.end();
   return loadConfig();
 }
@@ -4932,6 +5006,125 @@ void setSwitchbotLockStatusCode(const char *prefix, int code) {
   setSwitchbotLockStatus(status);
 }
 
+bool shellyBluButtonSupported() {
+  return MYMOTA32_SHELLY_BLU_BUTTON_SUPPORTED != 0;
+}
+
+void setShellyBluButtonStatus(const char *status) {
+  strlcpy(shelly_blu_button_status, status ? status : "unknown", sizeof(shelly_blu_button_status));
+}
+
+void setShellyBluButtonStatusCode(const char *prefix, int code) {
+  char status[sizeof(shelly_blu_button_status)]{};
+  snprintf(status, sizeof(status), "%s%d", prefix ? prefix : "err", code);
+  setShellyBluButtonStatus(status);
+}
+
+bool shellyBluButtonPairActive() {
+  return shelly_blu_pair.active;
+}
+
+uint8_t shellyBluButtonPairedCount() {
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < kShellyBluButtonMax; i++) {
+    if (config.shelly_blu_button_macs[i][0]) count++;
+  }
+  return count;
+}
+
+int8_t shellyBluButtonSlotForMac(const char *mac) {
+  if (!mac || !mac[0]) return -1;
+  for (uint8_t i = 0; i < kShellyBluButtonMax; i++) {
+    if (strcmp(config.shelly_blu_button_macs[i], mac) == 0) return static_cast<int8_t>(i);
+  }
+  return -1;
+}
+
+int8_t shellyBluButtonFirstFreeSlot() {
+  for (uint8_t i = 0; i < kShellyBluButtonMax; i++) {
+    if (config.shelly_blu_button_macs[i][0] == '\0') return static_cast<int8_t>(i);
+  }
+  return -1;
+}
+
+bool parseShellyBluButtonPasskey(const String &input, bool &has_passkey, uint32_t &passkey) {
+  String value = input;
+  value.trim();
+  has_passkey = false;
+  passkey = 0;
+  if (value.length() == 0) return true;
+  if (value.length() > 6) return false;
+  for (size_t i = 0; i < value.length(); i++) {
+    if (value[i] < '0' || value[i] > '9') return false;
+  }
+  passkey = static_cast<uint32_t>(value.toInt());
+  if (passkey > 999999UL) return false;
+  has_passkey = true;
+  return true;
+}
+
+bool shellyBluButtonMacBonded(const char *mac) {
+#if MYMOTA32_SHELLY_BLU_BUTTON_SUPPORTED
+  if (!mac || !mac[0] || !ibeacon_stack_started) return false;
+  const int bonds = NimBLEDevice::getNumBonds();
+  for (int i = 0; i < bonds; i++) {
+    const std::string bonded = NimBLEDevice::getBondedAddress(i).toString();
+    char normalized[kShellyBluButtonMacMaxLen + 1]{};
+    if (normalizeSwitchbotMac(String(bonded.c_str()), normalized, sizeof(normalized)) &&
+        strcmp(normalized, mac) == 0) {
+      return true;
+    }
+  }
+#else
+  (void)mac;
+#endif
+  return false;
+}
+
+bool shellyBluButtonDeleteBond(const char *mac) {
+#if MYMOTA32_SHELLY_BLU_BUTTON_SUPPORTED
+  if (!mac || !mac[0] || !ibeacon_stack_started) return true;
+  const int bonds = NimBLEDevice::getNumBonds();
+  for (int i = 0; i < bonds; i++) {
+    NimBLEAddress address = NimBLEDevice::getBondedAddress(i);
+    const std::string bonded = address.toString();
+    char normalized[kShellyBluButtonMacMaxLen + 1]{};
+    if (normalizeSwitchbotMac(String(bonded.c_str()), normalized, sizeof(normalized)) &&
+        strcmp(normalized, mac) == 0) {
+      return NimBLEDevice::deleteBond(address);
+    }
+  }
+#else
+  (void)mac;
+#endif
+  return true;
+}
+
+bool shellyBluButtonRememberMac(const char *mac) {
+  if (!mac || !mac[0]) return false;
+  StoredConfig candidate = config;
+  int8_t slot = shellyBluButtonSlotForMac(mac);
+  if (slot < 0) slot = shellyBluButtonFirstFreeSlot();
+  if (slot < 0) return false;
+  strlcpy(candidate.shelly_blu_button_macs[slot], mac, sizeof(candidate.shelly_blu_button_macs[slot]));
+  return saveShellyBluButtonConfig(candidate.shelly_blu_button_macs);
+}
+
+bool shellyBluButtonForgetMac(const char *mac) {
+  if (!mac || !mac[0]) return false;
+  StoredConfig candidate = config;
+  bool found = false;
+  for (uint8_t i = 0; i < kShellyBluButtonMax; i++) {
+    if (strcmp(candidate.shelly_blu_button_macs[i], mac) == 0) {
+      candidate.shelly_blu_button_macs[i][0] = '\0';
+      found = true;
+    }
+  }
+  if (!found) return false;
+  shellyBluButtonDeleteBond(mac);
+  return saveShellyBluButtonConfig(candidate.shelly_blu_button_macs);
+}
+
 void updateIBeaconMqttReportRate(uint32_t now) {
   if (ibeacon_mqtt_rate_window_start == 0) {
     ibeacon_mqtt_rate_window_start = now;
@@ -5290,6 +5483,21 @@ void processSwitchbotLockAdvertisement(const NimBLEAdvertisedDevice *device) {
   if (!switchbot_lock_polling) setSwitchbotLockStatus("advertisement");
 }
 
+void processShellyBluButtonAdvertisement(const NimBLEAdvertisedDevice *device) {
+  if (!device || !shelly_blu_pair.active || shelly_blu_pair.seen) return;
+  char mac[kShellyBluButtonMacMaxLen + 1]{};
+  std::string mac_string = device->getAddress().toString();
+  strlcpy(mac, mac_string.c_str(), sizeof(mac));
+  normalizeIBeaconMac(mac);
+  if (strcmp(mac, shelly_blu_pair.mac) != 0) return;
+  shelly_blu_pair.address_type = device->getAddressType();
+  shelly_blu_pair.rssi = device->getRSSI();
+  shelly_blu_pair.seen_ms = millis();
+  shelly_blu_pair.seen = true;
+  shelly_blu_button_last_error = 0;
+  setShellyBluButtonStatus("found");
+}
+
 void pushIBeaconObservation(const IBeaconObservation &obs) {
   portENTER_CRITICAL(&ibeacon_queue_mux);
   if (ibeacon_queue_count >= kIBeaconQueueDepth) {
@@ -5325,6 +5533,7 @@ void resetIBeaconObservationQueue() {
 void IBeaconScanCallbacks::onResult(const NimBLEAdvertisedDevice *device) {
   if (!device) return;
   processSwitchbotLockAdvertisement(device);
+  processShellyBluButtonAdvertisement(device);
   if (config.ibeacon_enabled) {
     IBeaconObservation obs{};
     std::string mac = device->getAddress().toString();
@@ -5362,16 +5571,23 @@ bool ensureBleScanner(const char *status_owner) {
     next_ibeacon_start_attempt = now;
     if (status_owner && strcmp(status_owner, "ibeacon") == 0) setIBeaconStatus("starting");
     if (status_owner && strcmp(status_owner, "switchbot") == 0) setSwitchbotLockStatus("starting");
+    if (status_owner && strcmp(status_owner, "shelly") == 0) setShellyBluButtonStatus("starting");
     if (!NimBLEDevice::init("mymota32")) {
       if (status_owner && strcmp(status_owner, "ibeacon") == 0) setIBeaconStatus("init_failed");
       if (status_owner && strcmp(status_owner, "switchbot") == 0) setSwitchbotLockStatus("init_failed");
+      if (status_owner && strcmp(status_owner, "shelly") == 0) setShellyBluButtonStatus("init_failed");
       return false;
     }
+    NimBLEDevice::setSecurityAuth(true, false, true);
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
+    NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
+    NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
     ibeacon_stack_started = true;
     ibeacon_scan = NimBLEDevice::getScan();
     if (!ibeacon_scan) {
       if (status_owner && strcmp(status_owner, "ibeacon") == 0) setIBeaconStatus("scan_missing");
       if (status_owner && strcmp(status_owner, "switchbot") == 0) setSwitchbotLockStatus("scan_missing");
+      if (status_owner && strcmp(status_owner, "shelly") == 0) setShellyBluButtonStatus("scan_missing");
       return false;
     }
     ibeacon_scan->setScanCallbacks(&ibeacon_scan_callbacks, true);
@@ -5396,6 +5612,7 @@ bool startBleScan(const char *status_owner) {
       ble_scanning = false;
       if (status_owner && strcmp(status_owner, "ibeacon") == 0) setIBeaconStatus("scan_failed");
       if (status_owner && strcmp(status_owner, "switchbot") == 0) setSwitchbotLockStatus("scan_failed");
+      if (status_owner && strcmp(status_owner, "shelly") == 0) setShellyBluButtonStatus("scan_failed");
       return false;
     }
   }
@@ -5410,7 +5627,7 @@ bool startBleScan(const char *status_owner) {
 
 void stopBleScanIfIdle() {
 #if MYMOTA32_BLE_SCAN_SUPPORTED
-  if (config.ibeacon_enabled || config.switchbot_lock_enabled) return;
+  if (config.ibeacon_enabled || config.switchbot_lock_enabled || shellyBluButtonPairActive()) return;
   if (ibeacon_scan && ibeacon_scan->isScanning()) {
     ibeacon_scan->stop();
   }
@@ -6090,6 +6307,173 @@ bool switchbotLockClientConnected() {
 
 void switchbotLockCloseClient() {}
 #endif
+
+#if MYMOTA32_SHELLY_BLU_BUTTON_SUPPORTED
+void ShellyBluButtonClientCallbacks::onDisconnect(NimBLEClient *, int reason) {
+  shelly_blu_button_last_error = reason;
+  if (shelly_blu_pair.active) setShellyBluButtonStatusCode("disconnected_", reason);
+}
+
+void ShellyBluButtonClientCallbacks::onPassKeyEntry(NimBLEConnInfo &connInfo) {
+  if (!shelly_blu_pair.passkey_set) {
+    shelly_blu_button_last_error = -2;
+    setShellyBluButtonStatus("passkey_required");
+    return;
+  }
+  NimBLEDevice::injectPassKey(connInfo, shelly_blu_pair.passkey);
+}
+
+uint32_t ShellyBluButtonClientCallbacks::onPassKeyDisplay(NimBLEConnInfo &) {
+  return shelly_blu_pair.passkey_set ? shelly_blu_pair.passkey : 123456UL;
+}
+
+void ShellyBluButtonClientCallbacks::onConfirmPasskey(NimBLEConnInfo &connInfo, uint32_t) {
+  NimBLEDevice::injectConfirmPasskey(connInfo, true);
+}
+
+void shellyBluButtonCloseClient() {
+  if (shelly_blu_button_client) {
+    if (shelly_blu_button_client->isConnected()) shelly_blu_button_client->disconnect();
+    NimBLEDevice::deleteClient(shelly_blu_button_client);
+    shelly_blu_button_client = nullptr;
+  }
+}
+
+bool shellyBluButtonRunPair(const char *mac, uint8_t address_type) {
+  if (!mac || !mac[0]) return false;
+  shellyBluButtonCloseClient();
+  NimBLEDevice::setSecurityAuth(true, false, true);
+  NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
+  NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
+  if (shelly_blu_pair.passkey_set) {
+    NimBLEDevice::setSecurityPasskey(shelly_blu_pair.passkey);
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_KEYBOARD_ONLY);
+  } else {
+    NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
+  }
+
+  NimBLEClient *client = NimBLEDevice::createClient();
+  if (!client) {
+    setShellyBluButtonStatus("client_failed");
+    return false;
+  }
+  shelly_blu_button_client = client;
+  client->setClientCallbacks(&shelly_blu_button_client_callbacks, false);
+  client->setConnectTimeout(kShellyBluButtonConnectTimeoutMs);
+  client->setConnectRetries(1);
+  client->setConnectionParams(12, 24, 0, 60, 32, 16);
+
+  NimBLEAddress address(std::string(mac), address_type);
+  if (!client->connect(address, true, false, true)) {
+    shelly_blu_button_last_error = client->getLastError();
+    setShellyBluButtonStatusCode("connect_e", shelly_blu_button_last_error);
+    shellyBluButtonCloseClient();
+    return false;
+  }
+
+  NimBLERemoteService *service = client->getService(kShellyBluButtonServiceUuid);
+  if (!service) {
+    shelly_blu_button_last_error = client->getLastError();
+    setShellyBluButtonStatus("svc_missing");
+    shellyBluButtonCloseClient();
+    return false;
+  }
+
+  if (!client->secureConnection(false)) {
+    shelly_blu_button_last_error = client->getLastError();
+    setShellyBluButtonStatusCode("secure_e", shelly_blu_button_last_error);
+    shellyBluButtonCloseClient();
+    return false;
+  }
+
+  bool bonded = NimBLEDevice::isBonded(address) || shellyBluButtonMacBonded(mac);
+  NimBLERemoteCharacteristic *beacon_mode = service->getCharacteristic(kShellyBluButtonBeaconModeUuid);
+  if (beacon_mode) {
+    NimBLEAttValue value = beacon_mode->readValue();
+    if (value.length() > 0) bonded = bonded || NimBLEDevice::isBonded(address) || shellyBluButtonMacBonded(mac);
+  }
+  if (!bonded) {
+    shelly_blu_button_last_error = -3;
+    setShellyBluButtonStatus("bond_missing");
+    shellyBluButtonCloseClient();
+    return false;
+  }
+
+  if (!shellyBluButtonRememberMac(mac)) {
+    shelly_blu_button_last_error = -4;
+    setShellyBluButtonStatus("slot_full");
+    shellyBluButtonCloseClient();
+    return false;
+  }
+  shelly_blu_button_last_error = 0;
+  setShellyBluButtonStatus("paired");
+  shellyBluButtonCloseClient();
+  return true;
+}
+#else
+void shellyBluButtonCloseClient() {}
+#endif
+
+bool startShellyBluButtonPair(const char *mac, bool passkey_set, uint32_t passkey) {
+  if (!shellyBluButtonSupported()) {
+    setShellyBluButtonStatus("unsupported");
+    return false;
+  }
+  if (!mac || !mac[0] || shelly_blu_pair.active) return false;
+  if (shellyBluButtonSlotForMac(mac) < 0 && shellyBluButtonFirstFreeSlot() < 0) {
+    setShellyBluButtonStatus("slot_full");
+    return false;
+  }
+  if (!ensureBleScanner("shelly")) return false;
+  memset(&shelly_blu_pair, 0, sizeof(shelly_blu_pair));
+  shelly_blu_pair.active = true;
+  strlcpy(shelly_blu_pair.mac, mac, sizeof(shelly_blu_pair.mac));
+  shelly_blu_pair.started_ms = millis();
+  shelly_blu_pair.passkey_set = passkey_set;
+  shelly_blu_pair.passkey = passkey;
+  shelly_blu_button_last_error = 0;
+  setShellyBluButtonStatus("scanning");
+  if (!startBleScan("shelly")) {
+    shelly_blu_pair.active = false;
+    return false;
+  }
+  return true;
+}
+
+void maintainShellyBluButton() {
+  if (!shelly_blu_pair.active) return;
+  const uint32_t now = millis();
+  if (!shelly_blu_pair.seen) {
+    if (now - shelly_blu_pair.started_ms >= kShellyBluButtonPairScanTimeoutMs) {
+      shelly_blu_pair.active = false;
+      shelly_blu_button_last_error = -1;
+      setShellyBluButtonStatus("scan_timeout");
+      stopBleScanIfIdle();
+    }
+    return;
+  }
+
+  setShellyBluButtonStatus("pairing");
+#if MYMOTA32_SHELLY_BLU_BUTTON_SUPPORTED
+  const bool resume_scan = config.ibeacon_enabled || config.switchbot_lock_enabled;
+  if (ibeacon_scan && ibeacon_scan->isScanning()) {
+    ibeacon_scan->stop();
+    ble_scanning = false;
+    ibeacon_scanning = false;
+    delay(50);
+  }
+  shellyBluButtonRunPair(shelly_blu_pair.mac, shelly_blu_pair.address_type);
+  shelly_blu_pair.active = false;
+  if (resume_scan && startBleScan("shelly")) {
+    ibeacon_scanning = config.ibeacon_enabled;
+  } else {
+    stopBleScanIfIdle();
+  }
+#else
+  shelly_blu_pair.active = false;
+  setShellyBluButtonStatus("unsupported");
+#endif
+}
 
 void resetSwitchbotLockRuntimeState() {
   switchbotLockCloseClient();
@@ -7126,6 +7510,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
 #endif
   page += F("if(d.ibeacon){var ib=d.ibeacon,ic=!ib.enabled?'pill':(ib.scanning?'pill ok':'pill bad');p('live-ibeacon',ib.enabled?(ib.status||'enabled'):'disabled',ic);t('live-ibeacon-mqtt-rpm',ib.mqtt_reports_per_minute+'/min');}");
   page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,st=sl.status||'',bad=st.indexOf('failed')>=0||st=='unsupported'||st=='missing_key'||st=='bad_key'||st.indexOf('connect_e')==0||st.indexOf('timeout')>=0,good=st=='ok'||st=='connected'||st=='advertisement'||st=='lock_sent'||st=='unlock_sent'||st.indexOf('confirmed')>=0,sc=!sl.enabled?'pill':(bad?'pill bad':(good?'pill ok':'pill warn'));p('live-switchbot-lock-status',sl.enabled?(st||'unknown'):'disabled',sc);t('live-switchbot-lock-ble',sl.connected?'connected':'disconnected');t('live-switchbot-lock-connected-age',sl.connected_ms_ago==null?'n/a':Math.floor(sl.connected_ms_ago/1000)+'s');t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-door',sl.door_open==null?'n/a':(sl.door_open?'open':'closed'));t('live-switchbot-lock-device',sl.device_health||'n/a');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-battery-quality',sl.battery_quality||'n/a');t('live-switchbot-lock-updated',ag(sl.last_update_ms_ago));t('live-switchbot-lock-status-cb',ag(sl.last_status_callback_ms_ago));t('live-switchbot-lock-battery-cb',ag(sl.last_battery_callback_ms_ago));t('live-switchbot-lock-device-cb',ag(sl.last_device_callback_ms_ago));t('live-switchbot-lock-mac',sl.mac||'n/a');t('live-switchbot-lock-address-type',nv(sl.address_type));t('live-switchbot-lock-error',nv(sl.error_code));t('live-switchbot-lock-disconnect',nv(sl.disconnect_reason));t('live-switchbot-lock-command',sl.command?(sl.command.id+' '+sl.command.status):'n/a');if(sl.callbacks){t('live-switchbot-lock-cb-enabled',yn(sl.callbacks.status_configured)+' / '+yn(sl.callbacks.battery_configured)+' / '+yn(sl.callbacks.device_configured));t('live-switchbot-lock-cb-times',sl.callbacks.offline_delay+'s / '+sl.callbacks.online_heal+'s / '+sl.callbacks.battery_notify+'s');}}");
+  page += F("if(d.shelly_blu_button){var sb=d.shelly_blu_button,st=sb.status||'',bad=st=='unsupported'||st.indexOf('failed')>=0||st.indexOf('timeout')>=0||st.indexOf('connect_e')==0||st.indexOf('secure_e')==0||st=='svc_missing'||st=='bond_missing'||st=='slot_full'||st=='passkey_required',good=st=='paired'||(!sb.pairing&&sb.paired_count>0),sc=bad?'pill bad':(sb.pairing?'pill warn':(good?'pill ok':'pill')),dt=(st=='idle'&&sb.paired_count>0)?'paired':(st||'idle');p('live-shelly-blu-status',dt,sc);t('live-shelly-blu-count',sb.paired_count+'/'+sb.max);t('live-shelly-blu-error',nv(sb.last_error));for(var x=0;x<sb.max;x++){var bt=sb.buttons&&sb.buttons[x]?sb.buttons[x]:null,mac=bt&&bt.mac?bt.mac:'empty';t('live-shelly-blu-mac-'+x,mac);t('live-shelly-blu-bond-'+x,bt&&bt.mac?(bt.bonded==null?'stored':(bt.bonded?'bonded':'stored')):'empty');var fi=document.getElementById('shelly-blu-forget-mac-'+x),fb=document.getElementById('shelly-blu-forget-btn-'+x);if(fi)fi.value=bt&&bt.mac?bt.mac:'';if(fb)fb.disabled=!(bt&&bt.mac);}}");
   page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!==null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
@@ -8268,6 +8653,71 @@ void appendSwitchbotLockForm(String &page) {
   page += F(">Save Switchbot Lock</button></section>");
 }
 
+void appendShellyBluButtonForm(String &page) {
+  const bool unsupported = !shellyBluButtonSupported();
+  const uint8_t paired_count = shellyBluButtonPairedCount();
+  page += F("<section class='panel'><div class='panel-title'><h2>Shelly BLU Button</h2>");
+  if (unsupported) {
+    page += F("<span id='live-shelly-blu-status' class='pill bad'>unsupported</span>");
+  } else if (shelly_blu_pair.active) {
+    page += F("<span id='live-shelly-blu-status' class='pill warn'>");
+    page += htmlEscape(shelly_blu_button_status);
+    page += F("</span>");
+  } else if (paired_count > 0 || strcmp(shelly_blu_button_status, "paired") == 0) {
+    page += F("<span id='live-shelly-blu-status' class='pill ok'>");
+    if (paired_count > 0 && strcmp(shelly_blu_button_status, "idle") == 0) page += F("paired");
+    else page += htmlEscape(shelly_blu_button_status);
+    page += F("</span>");
+  } else {
+    page += F("<span id='live-shelly-blu-status' class='pill'>idle</span>");
+  }
+  page += F("</div><div class='kv'><span>Paired</span><div><code id='live-shelly-blu-count'>");
+  page += String(paired_count);
+  page += F("/");
+  page += String(kShellyBluButtonMax);
+  page += F("</code></div><span>Last error</span><div><code id='live-shelly-blu-error'>");
+  page += String(shelly_blu_button_last_error);
+  page += F("</code></div></div>");
+
+  page += F("<div class='bb'><h3>Pair</h3><form data-inline='1' method='post' action='/shelly-blu-button'>");
+  page += F("<div class='row'><label>Button MAC<br><input name='mac' maxlength='17' placeholder='AA:BB:CC:DD:EE:FF'");
+  if (unsupported) page += F(" disabled");
+  page += F("></label></div>");
+  page += F("<div class='row'><label>Pair code<br><input name='passkey' maxlength='6' inputmode='numeric' autocomplete='off'");
+  if (unsupported) page += F(" disabled");
+  page += F("></label></div><button name='action' value='pair'");
+  if (unsupported) page += F(" disabled");
+  page += F(">Pair</button></form></div>");
+
+  page += F("<div class='bb'><h3>Devices</h3><div class='kv'>");
+  for (uint8_t i = 0; i < kShellyBluButtonMax; i++) {
+    const char *mac = config.shelly_blu_button_macs[i];
+    page += F("<span>Button ");
+    page += String(i + 1);
+    page += F("</span><div><code id='live-shelly-blu-mac-");
+    page += String(i);
+    page += F("'>");
+    page += mac[0] ? htmlEscape(mac) : String(F("empty"));
+    page += F("</code> <span class='muted' id='live-shelly-blu-bond-");
+    page += String(i);
+    page += F("'>");
+    if (!mac[0]) page += F("empty");
+    else if (ibeacon_stack_started && shellyBluButtonMacBonded(mac)) page += F("bonded");
+    else page += F("stored");
+    page += F("</span><form class='inline' data-inline='1' method='post' action='/shelly-blu-button'>");
+    page += F("<input id='shelly-blu-forget-mac-");
+    page += String(i);
+    page += F("' type='hidden' name='mac' value='");
+    page += mac[0] ? htmlEscape(mac) : String();
+    page += F("'><button id='shelly-blu-forget-btn-");
+    page += String(i);
+    page += F("' class='danger' name='action' value='forget'");
+    if (unsupported || !mac[0]) page += F(" disabled");
+    page += F(">Forget</button></form></div>");
+  }
+  page += F("</div></div></section>");
+}
+
 void appendPowerSavingOption(String &page, uint8_t mode, const __FlashStringHelper *label) {
   page += F("<option value='");
   page += mode;
@@ -8330,6 +8780,8 @@ void handleRoot() {
   appendIBeaconForm(page);
   flushStreamChunk(page);
   appendSwitchbotLockForm(page);
+  flushStreamChunk(page);
+  appendShellyBluButtonForm(page);
   flushStreamChunk(page);
 
   page += F("<section class='panel'><h2>Wi-Fi</h2><form method='post' action='/wifi'>");
@@ -9514,6 +9966,53 @@ void handleSwitchbotLockCommandStatus() {
   server.send(200, F("application/json"), out);
 }
 
+void handleShellyBluButton() {
+  if (!shellyBluButtonSupported()) {
+    sendPlain(400, F("unsupported"));
+    return;
+  }
+  String action = server.hasArg("action") ? server.arg("action") : String(F("pair"));
+  action.toLowerCase();
+  char mac[kShellyBluButtonMacMaxLen + 1]{};
+  if (!normalizeSwitchbotMac(server.hasArg("mac") ? server.arg("mac") : String(), mac, sizeof(mac), false)) {
+    sendPlain(400, F("invalid mac"));
+    return;
+  }
+
+  if (action == F("forget")) {
+    if (!shellyBluButtonForgetMac(mac)) {
+      sendPlain(404, F("unknown button"));
+      return;
+    }
+    if (shellyBluButtonPairedCount() == 0 && strcmp(shelly_blu_button_status, "paired") == 0) {
+      setShellyBluButtonStatus("idle");
+    }
+    sendInlineOkOrHome();
+    return;
+  }
+
+  if (action != F("pair")) {
+    sendPlain(400, F("invalid action"));
+    return;
+  }
+  if (shelly_blu_pair.active) {
+    sendPlain(409, F("pairing already active"));
+    return;
+  }
+  bool has_passkey = false;
+  uint32_t passkey = 0;
+  if (!parseShellyBluButtonPasskey(server.hasArg("passkey") ? server.arg("passkey") : String(),
+                                   has_passkey, passkey)) {
+    sendPlain(400, F("invalid pair code"));
+    return;
+  }
+  if (!startShellyBluButtonPair(mac, has_passkey, passkey)) {
+    sendPlain(500, F("pairing start failed"));
+    return;
+  }
+  sendInlineOkOrHome();
+}
+
 bool switchbotLockCompatPreflight() {
   if (!config.switchbot_lock_enabled) {
     server.send(400, F("application/json"), F("{\"status\": \"error\", \"message\": \"disabled\"}"));
@@ -10023,6 +10522,7 @@ bool commitStoredConfig(const StoredConfig &source) {
                                                                   kSwitchbotLockOnlineHealDefaultSec));
   prefs.putUShort("sb_bat_s", sanitizeSwitchbotLockCallbackSeconds(source.switchbot_lock_battery_notify_sec,
                                                                    kSwitchbotLockBatteryNotifyDefaultSec));
+  prefs.putBytes("blu_macs", source.shelly_blu_button_macs, sizeof(source.shelly_blu_button_macs));
   prefs.putUShort("pwr_save", sanitizePowerSavingMode(source.power_saving_mode));
   prefs.end();
   return loadConfig();
@@ -11189,7 +11689,7 @@ void appendHealthPartitionsJson(String &out) {
 void handleHealth() {
   updateIBeaconMqttReportRate(millis());
   String out;
-  out.reserve(2400);
+  out.reserve(3200);
   beginStreamedResponse("application/json");
   out += F("{\"name\":\"myMota32\",\"version\":\"");
   out += F(MYMOTA32_VERSION);
@@ -11545,6 +12045,34 @@ void handleHealth() {
   out += config.switchbot_lock_battery_notify_sec;
   out += F("}");
   out += F("}");
+  out += F(",\"shelly_blu_button\":{\"supported\":");
+  out += shellyBluButtonSupported() ? F("true") : F("false");
+  out += F(",\"status\":\"");
+  out += jsonEscape(shelly_blu_button_status);
+  out += F("\",\"pairing\":");
+  out += shelly_blu_pair.active ? F("true") : F("false");
+  out += F(",\"target\":\"");
+  out += jsonEscape(shelly_blu_pair.mac);
+  out += F("\",\"paired_count\":");
+  out += shellyBluButtonPairedCount();
+  out += F(",\"max\":");
+  out += kShellyBluButtonMax;
+  out += F(",\"last_error\":");
+  out += shelly_blu_button_last_error;
+  out += F(",\"buttons\":[");
+  for (uint8_t i = 0; i < kShellyBluButtonMax; i++) {
+    if (i) out += ',';
+    out += F("{\"mac\":\"");
+    out += jsonEscape(config.shelly_blu_button_macs[i]);
+    out += F("\",\"bonded\":");
+    if (!config.shelly_blu_button_macs[i][0] || !ibeacon_stack_started) {
+      out += F("null");
+    } else {
+      out += shellyBluButtonMacBonded(config.shelly_blu_button_macs[i]) ? F("true") : F("false");
+    }
+    out += F("}");
+  }
+  out += F("]}");
   out += F(",\"mqtt\":{\"enabled\":");
   out += (mqttConfigured() ? F("true") : F("false"));
   out += F(",\"connected\":");
@@ -11796,6 +12324,7 @@ void setupRoutes() {
   server.on("/switchbot-lock-command", HTTP_POST, handleSwitchbotLockCommand);
   server.on("/switchbot-lock-command", HTTP_GET, handleSwitchbotLockCommand);
   server.on("/switchbot-lock-command-status", HTTP_GET, handleSwitchbotLockCommandStatus);
+  server.on("/shelly-blu-button", HTTP_POST, handleShellyBluButton);
   server.on("/switchbotlockultra/lock", HTTP_GET, handleSwitchbotLockCompatLock);
   server.on("/switchbotlockultra/unlock", HTTP_GET, handleSwitchbotLockCompatUnlock);
   server.on("/switchbotlockultra/status", HTTP_GET, handleSwitchbotLockCompatStatus);
@@ -11853,6 +12382,7 @@ void loop() {
   server.handleClient();
   maintainMqtt();
   maintainIBeacon();
+  maintainShellyBluButton();
   maintainSwitchbotLock();
   server.handleClient();
 
