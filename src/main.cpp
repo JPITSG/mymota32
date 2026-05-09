@@ -8137,11 +8137,6 @@ void appendSwitchbotLockForm(String &page) {
     page += F("n/a");
   }
   page += F("</code></div></div></div>");
-  page += F("<div class='bb'><h3>Control</h3><form class='inline' data-inline='1' method='post' action='/switchbot-lock-command'><span class='actions'><button name='action' value='lock'");
-  if (controls_disabled) page += F(" disabled");
-  page += F(">Lock</button><button class='secondary' name='action' value='unlock'");
-  if (controls_disabled) page += F(" disabled");
-  page += F(">Unlock</button></span></form></div>");
   page += F("<div class='bb'><h3>Callback</h3>");
   page += F("<div class='row'><label>Lock status callback<br><input form='switchbot-lock-form' name='status_callback' maxlength='");
   page += String(kSwitchbotLockCallbackMaxLen);
@@ -8179,6 +8174,11 @@ void appendSwitchbotLockForm(String &page) {
   page += F("'");
   if (unsupported) page += F(" disabled");
   page += F("></label></div></div>");
+  page += F("<div class='bb'><h3>Control</h3><form class='inline' data-inline='1' method='post' action='/switchbot-lock-command'><span class='actions'><button name='action' value='lock'");
+  if (controls_disabled) page += F(" disabled");
+  page += F(">Lock</button><button class='secondary' name='action' value='unlock'");
+  if (controls_disabled) page += F(" disabled");
+  page += F(">Unlock</button></span></form></div>");
   page += F("<button form='switchbot-lock-form' type='submit'");
   if (unsupported) page += F(" disabled");
   page += F(">Save Switchbot Lock</button></section>");
