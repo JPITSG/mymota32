@@ -11670,11 +11670,6 @@ void handleNotFound() {
     handleSwitchbotLockCompatCommandStatus(uri.substring(switchbot_prefix_len));
     return;
   }
-  constexpr size_t status_prefix_len = sizeof("/status/") - 1;
-  if (uri.startsWith(F("/status/")) && uri.length() > status_prefix_len) {
-    handleSwitchbotLockCompatCommandStatus(uri.substring(status_prefix_len));
-    return;
-  }
   server.sendHeader(F("Location"), F("/"), true);
   sendPlain(302, "");
 }
@@ -11702,9 +11697,6 @@ void setupRoutes() {
   server.on("/switchbotlockultra/lock", HTTP_GET, handleSwitchbotLockCompatLock);
   server.on("/switchbotlockultra/unlock", HTTP_GET, handleSwitchbotLockCompatUnlock);
   server.on("/switchbotlockultra/status", HTTP_GET, handleSwitchbotLockCompatStatus);
-  server.on("/lock", HTTP_GET, handleSwitchbotLockCompatLock);
-  server.on("/unlock", HTTP_GET, handleSwitchbotLockCompatUnlock);
-  server.on("/status", HTTP_GET, handleSwitchbotLockCompatStatus);
   server.on("/system", HTTP_POST, handleSystemSave);
   server.on("/settings/export", HTTP_GET, handleSettingsExport);
   server.on("/settings/import", HTTP_POST, handleSettingsImport);
