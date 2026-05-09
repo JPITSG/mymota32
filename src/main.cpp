@@ -363,7 +363,8 @@ const uint8_t kSwitchbotCmdUnlock[] = {0x57, 0x0f, 0x4e, 0x01, 0x01, 0x00, 0x00,
 constexpr uint8_t kShellyBluButtonMax = 4;
 constexpr size_t kShellyBluButtonMacMaxLen = 17;
 constexpr uint32_t kShellyBluButtonPairScanTimeoutMs = 45000UL;
-constexpr uint32_t kShellyBluButtonConnectTimeoutMs = 10000UL;
+constexpr uint32_t kShellyBluButtonConnectTimeoutMs = 30000UL;
+constexpr uint32_t kShellyBluButtonPostScanSettleMs = 300UL;
 constexpr const char *kShellyBluButtonServiceUuid = "de8a5aac-a99b-c315-0c80-60d4cbb51225";
 constexpr const char *kShellyBluButtonBeaconModeUuid = "cb9e957e-952d-4761-a7e1-4416494a5bfa";
 
@@ -6339,6 +6340,27 @@ void shellyBluButtonCloseClient() {
   }
 }
 
+bool shellyBluButtonConnectClient(NimBLEClient *client, const char *mac, uint8_t preferred_type,
+                                  uint8_t &connected_type) {
+  if (!client || !mac || !mac[0]) return false;
+  const uint8_t primary_type = preferred_type == BLE_ADDR_RANDOM ? BLE_ADDR_RANDOM : BLE_ADDR_PUBLIC;
+  const uint8_t fallback_type = primary_type == BLE_ADDR_RANDOM ? BLE_ADDR_PUBLIC : BLE_ADDR_RANDOM;
+  const uint8_t address_types[2] = {primary_type, fallback_type};
+  for (uint8_t attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) delay(250);
+    NimBLEAddress address(std::string(mac), address_types[attempt]);
+    if (client->connect(address, true, false, false)) {
+      connected_type = address_types[attempt];
+      return true;
+    }
+    shelly_blu_button_last_error = client->getLastError();
+    if (shelly_blu_button_last_error == BLE_HS_HCI_ERR(BLE_ERR_REM_USER_CONN_TERM)) {
+      break;
+    }
+  }
+  return false;
+}
+
 bool shellyBluButtonRunPair(const char *mac, uint8_t address_type) {
   if (!mac || !mac[0]) return false;
   shellyBluButtonCloseClient();
@@ -6360,16 +6382,15 @@ bool shellyBluButtonRunPair(const char *mac, uint8_t address_type) {
   shelly_blu_button_client = client;
   client->setClientCallbacks(&shelly_blu_button_client_callbacks, false);
   client->setConnectTimeout(kShellyBluButtonConnectTimeoutMs);
-  client->setConnectRetries(1);
-  client->setConnectionParams(12, 24, 0, 60, 32, 16);
+  client->setConnectRetries(0);
 
-  NimBLEAddress address(std::string(mac), address_type);
-  if (!client->connect(address, true, false, true)) {
-    shelly_blu_button_last_error = client->getLastError();
+  uint8_t connected_type = address_type;
+  if (!shellyBluButtonConnectClient(client, mac, address_type, connected_type)) {
     setShellyBluButtonStatusCode("connect_e", shelly_blu_button_last_error);
     shellyBluButtonCloseClient();
     return false;
   }
+  NimBLEAddress address(std::string(mac), connected_type);
 
   NimBLERemoteService *service = client->getService(kShellyBluButtonServiceUuid);
   if (!service) {
@@ -6460,7 +6481,7 @@ void maintainShellyBluButton() {
     ibeacon_scan->stop();
     ble_scanning = false;
     ibeacon_scanning = false;
-    delay(50);
+    delay(kShellyBluButtonPostScanSettleMs);
   }
   shellyBluButtonRunPair(shelly_blu_pair.mac, shelly_blu_pair.address_type);
   shelly_blu_pair.active = false;
