@@ -10,6 +10,7 @@
 #include <esp_partition.h>
 #include <esp_system.h>
 #include <esp_wifi.h>
+#include <mbedtls/aes.h>
 #include <string.h>
 #include <math.h>
 
@@ -26,9 +27,21 @@
 #endif
 
 #if CONFIG_BT_ENABLED && CONFIG_BT_NIMBLE_ROLE_OBSERVER
+#define MYMOTA32_BLE_SCAN_SUPPORTED 1
+#else
+#define MYMOTA32_BLE_SCAN_SUPPORTED 0
+#endif
+
+#if MYMOTA32_BLE_SCAN_SUPPORTED
 #define MYMOTA32_IBEACON_SUPPORTED 1
 #else
 #define MYMOTA32_IBEACON_SUPPORTED 0
+#endif
+
+#if MYMOTA32_BLE_SCAN_SUPPORTED && CONFIG_BT_NIMBLE_ROLE_CENTRAL
+#define MYMOTA32_SWITCHBOT_LOCK_SUPPORTED 1
+#else
+#define MYMOTA32_SWITCHBOT_LOCK_SUPPORTED 0
 #endif
 
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -292,6 +305,28 @@ constexpr uint16_t kIBeaconFilter1DefaultSec = 60;
 constexpr uint16_t kIBeaconFilter2DefaultSec = 10;
 const uint16_t kIBeaconFilterIntervals[] = {1, 5, 10, 15, 30, 60, 120, 300, 600};
 
+constexpr size_t kSwitchbotLockMacMaxLen = 17;
+constexpr size_t kSwitchbotLockKeyIdMaxLen = 2;
+constexpr size_t kSwitchbotLockKeyMaxLen = 32;
+constexpr uint8_t kSwitchbotLockCandidateCount = 4;
+constexpr uint8_t kSwitchbotLockMaxPacketBytes = 48;
+constexpr uint16_t kSwitchbotManufacturerId = 2409;
+constexpr uint32_t kSwitchbotLockPollIntervalMs = 900000UL;
+constexpr uint32_t kSwitchbotLockRetryMs = 30000UL;
+constexpr uint32_t kSwitchbotLockResponseTimeoutMs = 5000UL;
+constexpr uint32_t kSwitchbotLockConnectTimeoutSec = 10;
+constexpr uint16_t kSwitchbotLockScanIntervalMs = 160;
+constexpr uint16_t kSwitchbotLockScanWindowMs = 80;
+constexpr uint8_t kSwitchbotLockStateUnknown = 255;
+constexpr uint8_t kSwitchbotLockStateLocked = 0;
+constexpr uint8_t kSwitchbotLockStateUnlocked = 1;
+constexpr const char *kSwitchbotServiceUuid = "cba20d00-224d-11e6-9fb8-0002a5d5c51b";
+constexpr const char *kSwitchbotTxUuid = "cba20002-224d-11e6-9fb8-0002a5d5c51b";
+constexpr const char *kSwitchbotRxUuid = "cba20003-224d-11e6-9fb8-0002a5d5c51b";
+const uint8_t kSwitchbotCmdLockInfo[] = {0x57, 0x0f, 0x4f, 0x81, 0x07};
+const uint8_t kSwitchbotCmdBasic[] = {0x57, 0x02};
+const uint8_t kSwitchbotCmdNotifOn[] = {0x57, 0x0e, 0x01, 0x00, 0x1e, 0x00, 0x00, 0x81, 0x07};
+
 constexpr uint8_t kPowerStateOff = 0;
 constexpr uint8_t kPowerStateOn = 1;
 constexpr uint8_t kPowerStateToggle = 2;
@@ -519,6 +554,11 @@ struct StoredConfig {
   char ibeacon_filter1_macs[kIBeaconFilterListMaxLen + 1];
   char ibeacon_filter2_macs[kIBeaconFilterListMaxLen + 1];
 
+  uint8_t switchbot_lock_enabled;
+  char switchbot_lock_mac[kSwitchbotLockMacMaxLen + 1];
+  char switchbot_lock_key_id[kSwitchbotLockKeyIdMaxLen + 1];
+  char switchbot_lock_key[kSwitchbotLockKeyMaxLen + 1];
+
   uint16_t power_saving_mode;
   uint8_t wifi_dynamic_power;
 };
@@ -550,6 +590,14 @@ struct IBeaconCacheEntry {
   uint8_t packet_id;
   bool has_packet_id;
   uint32_t sent_at;
+};
+
+struct SwitchbotLockCandidate {
+  bool used;
+  char mac[kSwitchbotLockMacMaxLen + 1];
+  uint8_t address_type;
+  int8_t rssi;
+  uint32_t seen_at;
 };
 
 struct EnergyChannelState {
@@ -700,13 +748,32 @@ IBeaconCacheEntry ibeacon_cache[kIBeaconCacheSize]{};
 uint32_t last_ibeacon_prune = 0;
 uint32_t next_ibeacon_start_attempt = 0;
 bool ibeacon_stack_started = false;
+bool ble_scanning = false;
 bool ibeacon_scanning = false;
 char ibeacon_status[24] = "idle";
 uint32_t ibeacon_mqtt_rate_window_start = 0;
 uint16_t ibeacon_mqtt_rate_window_count = 0;
 uint16_t ibeacon_mqtt_reports_per_minute = 0;
 
-#if MYMOTA32_IBEACON_SUPPORTED
+SwitchbotLockCandidate switchbot_lock_candidates[kSwitchbotLockCandidateCount]{};
+char switchbot_lock_status[28] = "disabled";
+char switchbot_lock_discovered_mac[kSwitchbotLockMacMaxLen + 1] = "";
+uint8_t switchbot_lock_discovered_type = 0;
+uint8_t switchbot_lock_state = kSwitchbotLockStateUnknown;
+int8_t switchbot_lock_battery = -1;
+bool switchbot_lock_door_open = false;
+bool switchbot_lock_door_known = false;
+uint32_t switchbot_lock_last_update_ms = 0;
+uint32_t switchbot_lock_next_poll_ms = 0;
+bool switchbot_lock_polling = false;
+uint8_t switchbot_lock_cipher_mode = 255;
+uint8_t switchbot_lock_iv[16]{};
+uint8_t switchbot_lock_iv_len = 0;
+volatile bool switchbot_lock_response_ready = false;
+uint8_t switchbot_lock_response[kSwitchbotLockMaxPacketBytes]{};
+size_t switchbot_lock_response_len = 0;
+
+#if MYMOTA32_BLE_SCAN_SUPPORTED
 IBeaconObservation ibeacon_queue[kIBeaconQueueDepth]{};
 uint8_t ibeacon_queue_head = 0;
 uint8_t ibeacon_queue_count = 0;
@@ -1609,6 +1676,68 @@ bool normalizeIBeaconMacList(const String &input, char *out, size_t out_size) {
   return true;
 }
 
+bool normalizeSwitchbotMac(const String &input, char *out, size_t out_size, bool allow_empty = true) {
+  if (out_size < kSwitchbotLockMacMaxLen + 1) return false;
+  char hex[12]{};
+  uint8_t count = 0;
+  const char *raw = input.c_str();
+  for (size_t i = 0; i < input.length(); i++) {
+    const char c = raw[i];
+    if (c == ':' || c == '-' || c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
+    if (!isHexChar(c) || count >= sizeof(hex)) return false;
+    hex[count++] = uppercaseHexChar(c);
+  }
+  if (count == 0 && allow_empty) {
+    out[0] = '\0';
+    return true;
+  }
+  if (count != sizeof(hex)) return false;
+  size_t pos = 0;
+  for (uint8_t i = 0; i < sizeof(hex); i++) {
+    if (i && (i % 2) == 0) out[pos++] = ':';
+    out[pos++] = hex[i];
+  }
+  out[pos] = '\0';
+  return true;
+}
+
+bool normalizeFixedHex(const String &input, char *out, size_t out_size, size_t expected_len, bool allow_empty = true) {
+  if (out_size < expected_len + 1) return false;
+  uint8_t count = 0;
+  const char *raw = input.c_str();
+  for (size_t i = 0; i < input.length(); i++) {
+    const char c = raw[i];
+    if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ':' || c == '-') continue;
+    if (!isHexChar(c) || count >= expected_len) return false;
+    out[count++] = uppercaseHexChar(c);
+  }
+  if (count == 0 && allow_empty) {
+    out[0] = '\0';
+    return true;
+  }
+  if (count != expected_len) return false;
+  out[count] = '\0';
+  return true;
+}
+
+int hexValue(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  c = uppercaseHexChar(c);
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+bool hexToBytes(const char *hex, uint8_t *out, size_t out_len) {
+  if (!hex || strlen(hex) != out_len * 2) return false;
+  for (size_t i = 0; i < out_len; i++) {
+    const int hi = hexValue(hex[i * 2]);
+    const int lo = hexValue(hex[i * 2 + 1]);
+    if (hi < 0 || lo < 0) return false;
+    out[i] = static_cast<uint8_t>((hi << 4) | lo);
+  }
+  return true;
+}
+
 bool clearGracefulRelaySnapshot();
 bool clearLastRelaySnapshot();
 void loadLastRelaySnapshot();
@@ -1617,6 +1746,7 @@ void refreshRelayEnforcementRuntime(bool schedule_off_relays);
 void refreshRelayPulseRuntime(bool schedule_on_relays);
 void setupLightRuntime();
 void maintainLight();
+void maintainSwitchbotLock();
 void scheduleMqttLightPublish(uint8_t mask);
 bool persistLightConfig(bool force = false);
 
@@ -1670,6 +1800,10 @@ void setDefaultConfig() {
   config.ibeacon_filter2_interval_sec = kIBeaconFilter2DefaultSec;
   config.ibeacon_filter1_macs[0] = '\0';
   config.ibeacon_filter2_macs[0] = '\0';
+  config.switchbot_lock_enabled = 0;
+  config.switchbot_lock_mac[0] = '\0';
+  config.switchbot_lock_key_id[0] = '\0';
+  config.switchbot_lock_key[0] = '\0';
   config.power_saving_mode = kPowerSavingOff;
   config.wifi_dynamic_power = kWifiDynamicPowerDefault;
 }
@@ -1799,6 +1933,10 @@ bool loadConfig() {
   uint16_t ibeacon_filter2_interval = prefs.getUShort("ib_f2_int", kIBeaconFilter2DefaultSec);
   String ibeacon_filter1_macs = prefs.getString("ib_f1_mac", "");
   String ibeacon_filter2_macs = prefs.getString("ib_f2_mac", "");
+  uint8_t switchbot_lock_enabled = prefs.getUChar("sb_lock", 0);
+  String switchbot_lock_mac = prefs.getString("sb_mac", "");
+  String switchbot_lock_key_id = prefs.getString("sb_key_id", "");
+  String switchbot_lock_key = prefs.getString("sb_key", "");
   uint16_t power_saving_mode = prefs.getUShort("pwr_save", kPowerSavingOff);
   uint8_t wifi_dynamic_power = prefs.getUChar("wifi_dyn", kWifiDynamicPowerDefault);
   prefs.end();
@@ -1920,6 +2058,18 @@ bool loadConfig() {
   if (!normalizeIBeaconMacList(ibeacon_filter2_macs, config.ibeacon_filter2_macs, sizeof(config.ibeacon_filter2_macs))) {
     config.ibeacon_filter2_macs[0] = '\0';
   }
+  config.switchbot_lock_enabled = switchbot_lock_enabled ? 1 : 0;
+  if (!normalizeSwitchbotMac(switchbot_lock_mac, config.switchbot_lock_mac, sizeof(config.switchbot_lock_mac))) {
+    config.switchbot_lock_mac[0] = '\0';
+  }
+  if (!normalizeFixedHex(switchbot_lock_key_id, config.switchbot_lock_key_id, sizeof(config.switchbot_lock_key_id),
+                         kSwitchbotLockKeyIdMaxLen)) {
+    config.switchbot_lock_key_id[0] = '\0';
+  }
+  if (!normalizeFixedHex(switchbot_lock_key, config.switchbot_lock_key, sizeof(config.switchbot_lock_key),
+                         kSwitchbotLockKeyMaxLen)) {
+    config.switchbot_lock_key[0] = '\0';
+  }
   config.power_saving_mode = sanitizePowerSavingMode(power_saving_mode);
   config.wifi_dynamic_power = wifi_dynamic_power ? 1 : 0;
 
@@ -2017,6 +2167,16 @@ bool saveIBeaconConfig(bool enabled, uint16_t filter1_interval, const char *filt
   prefs.putString("ib_f1_mac", filter1_macs ? filter1_macs : "");
   prefs.putUShort("ib_f2_int", sanitizeIBeaconFilterInterval(filter2_interval, kIBeaconFilter2DefaultSec));
   prefs.putString("ib_f2_mac", filter2_macs ? filter2_macs : "");
+  prefs.end();
+  return loadConfig();
+}
+
+bool saveSwitchbotLockConfig(bool enabled, const char *mac, const char *key_id, const char *key) {
+  if (!prefs.begin("mymota32", false)) return false;
+  prefs.putUChar("sb_lock", enabled ? 1 : 0);
+  prefs.putString("sb_mac", mac ? mac : "");
+  prefs.putString("sb_key_id", key_id ? key_id : "");
+  prefs.putString("sb_key", key ? key : "");
   prefs.end();
   return loadConfig();
 }
@@ -4428,8 +4588,16 @@ bool iBeaconCaptureSupported() {
   return MYMOTA32_IBEACON_SUPPORTED != 0;
 }
 
+bool switchbotLockSupported() {
+  return MYMOTA32_SWITCHBOT_LOCK_SUPPORTED != 0;
+}
+
 void setIBeaconStatus(const char *status) {
   strlcpy(ibeacon_status, status ? status : "unknown", sizeof(ibeacon_status));
+}
+
+void setSwitchbotLockStatus(const char *status) {
+  strlcpy(switchbot_lock_status, status ? status : "unknown", sizeof(switchbot_lock_status));
 }
 
 void updateIBeaconMqttReportRate(uint32_t now) {
@@ -4717,11 +4885,78 @@ bool mqttPublishIBeacon(const IBeaconObservation &obs) {
   return mqttPublish(topic.c_str(), payload.c_str());
 }
 
-#if MYMOTA32_IBEACON_SUPPORTED
+#if MYMOTA32_BLE_SCAN_SUPPORTED
 void normalizeIBeaconMac(char *mac) {
   for (char *p = mac; *p; p++) {
     if (*p >= 'a' && *p <= 'f') *p = static_cast<char>(*p - 'a' + 'A');
   }
+}
+
+void rememberSwitchbotLockCandidate(const char *mac, uint8_t address_type, int8_t rssi, uint32_t now) {
+  if (!mac || !mac[0]) return;
+  SwitchbotLockCandidate *slot = nullptr;
+  for (uint8_t i = 0; i < kSwitchbotLockCandidateCount; i++) {
+    if (switchbot_lock_candidates[i].used && strcmp(switchbot_lock_candidates[i].mac, mac) == 0) {
+      slot = &switchbot_lock_candidates[i];
+      break;
+    }
+    if (!switchbot_lock_candidates[i].used && !slot) slot = &switchbot_lock_candidates[i];
+  }
+  if (!slot) {
+    slot = &switchbot_lock_candidates[0];
+    for (uint8_t i = 1; i < kSwitchbotLockCandidateCount; i++) {
+      if (static_cast<uint32_t>(switchbot_lock_candidates[i].seen_at - slot->seen_at) > 0x7fffffffUL) {
+        slot = &switchbot_lock_candidates[i];
+      }
+    }
+  }
+  slot->used = true;
+  strlcpy(slot->mac, mac, sizeof(slot->mac));
+  slot->address_type = address_type;
+  slot->rssi = rssi;
+  slot->seen_at = now;
+}
+
+bool parseSwitchbotLockManufacturer(const NimBLEAdvertisedDevice *device, uint8_t &state, bool &door_open, int8_t &battery) {
+  if (!device) return false;
+  const uint8_t count = device->getManufacturerDataCount();
+  for (uint8_t i = 0; i < count; i++) {
+    const std::string data = device->getManufacturerData(i);
+    if (data.length() < 12) continue;
+    const uint8_t *raw = reinterpret_cast<const uint8_t *>(data.data());
+    const uint16_t manufacturer = static_cast<uint16_t>(raw[0]) | (static_cast<uint16_t>(raw[1]) << 8);
+    if (manufacturer != kSwitchbotManufacturerId) continue;
+    state = (raw[9] & 0x78) >> 3;
+    door_open = (raw[10] & 0x10) != 0;
+    battery = static_cast<int8_t>(raw[11] & 0x7f);
+    return true;
+  }
+  return false;
+}
+
+void processSwitchbotLockAdvertisement(const NimBLEAdvertisedDevice *device) {
+  if (!device || !config.switchbot_lock_enabled) return;
+  uint8_t state = kSwitchbotLockStateUnknown;
+  bool door_open = false;
+  int8_t battery = -1;
+  if (!parseSwitchbotLockManufacturer(device, state, door_open, battery)) return;
+
+  char mac[kSwitchbotLockMacMaxLen + 1]{};
+  std::string mac_string = device->getAddress().toString();
+  strlcpy(mac, mac_string.c_str(), sizeof(mac));
+  normalizeIBeaconMac(mac);
+  if (config.switchbot_lock_mac[0] && strcmp(config.switchbot_lock_mac, mac) != 0) return;
+
+  const uint32_t now = millis();
+  rememberSwitchbotLockCandidate(mac, device->getAddressType(), device->getRSSI(), now);
+  strlcpy(switchbot_lock_discovered_mac, mac, sizeof(switchbot_lock_discovered_mac));
+  switchbot_lock_discovered_type = device->getAddressType();
+  switchbot_lock_state = state;
+  switchbot_lock_door_open = door_open;
+  switchbot_lock_door_known = true;
+  switchbot_lock_battery = battery;
+  switchbot_lock_last_update_ms = now;
+  if (!switchbot_lock_polling) setSwitchbotLockStatus("advertisement");
 }
 
 void pushIBeaconObservation(const IBeaconObservation &obs) {
@@ -4757,20 +4992,23 @@ void resetIBeaconObservationQueue() {
 }
 
 void IBeaconScanCallbacks::onResult(const NimBLEAdvertisedDevice *device) {
-  if (!device || !config.ibeacon_enabled) return;
-  IBeaconObservation obs{};
-  std::string mac = device->getAddress().toString();
-  strlcpy(obs.mac, mac.c_str(), sizeof(obs.mac));
-  normalizeIBeaconMac(obs.mac);
-  if (!iBeaconMacAllowedByFilters(obs.mac)) return;
-  obs.rssi = device->getRSSI();
-  const std::vector<uint8_t> &payload = device->getPayload();
-  obs.payload_len = static_cast<uint8_t>(min(payload.size(), static_cast<size_t>(kIBeaconMaxPacketBytes)));
-  if (obs.payload_len > 0) {
-    memcpy(obs.payload, payload.data(), obs.payload_len);
+  if (!device) return;
+  processSwitchbotLockAdvertisement(device);
+  if (config.ibeacon_enabled) {
+    IBeaconObservation obs{};
+    std::string mac = device->getAddress().toString();
+    strlcpy(obs.mac, mac.c_str(), sizeof(obs.mac));
+    normalizeIBeaconMac(obs.mac);
+    if (!iBeaconMacAllowedByFilters(obs.mac)) return;
+    obs.rssi = device->getRSSI();
+    const std::vector<uint8_t> &payload = device->getPayload();
+    obs.payload_len = static_cast<uint8_t>(min(payload.size(), static_cast<size_t>(kIBeaconMaxPacketBytes)));
+    if (obs.payload_len > 0) {
+      memcpy(obs.payload, payload.data(), obs.payload_len);
+    }
+    obs.seen_at = millis();
+    pushIBeaconObservation(obs);
   }
-  obs.seen_at = millis();
-  pushIBeaconObservation(obs);
 }
 #endif
 
@@ -4785,12 +5023,72 @@ void resetIBeaconRuntimeState() {
 #endif
 }
 
-void stopIBeaconCapture() {
-#if MYMOTA32_IBEACON_SUPPORTED
+bool ensureBleScanner(const char *status_owner) {
+#if MYMOTA32_BLE_SCAN_SUPPORTED
+  const uint32_t now = millis();
+  if (next_ibeacon_start_attempt && now - next_ibeacon_start_attempt < 30000UL) return false;
+  if (!ibeacon_stack_started) {
+    next_ibeacon_start_attempt = now;
+    if (status_owner && strcmp(status_owner, "ibeacon") == 0) setIBeaconStatus("starting");
+    if (status_owner && strcmp(status_owner, "switchbot") == 0) setSwitchbotLockStatus("starting");
+    if (!NimBLEDevice::init("mymota32")) {
+      if (status_owner && strcmp(status_owner, "ibeacon") == 0) setIBeaconStatus("init_failed");
+      if (status_owner && strcmp(status_owner, "switchbot") == 0) setSwitchbotLockStatus("init_failed");
+      return false;
+    }
+    ibeacon_stack_started = true;
+    ibeacon_scan = NimBLEDevice::getScan();
+    if (!ibeacon_scan) {
+      if (status_owner && strcmp(status_owner, "ibeacon") == 0) setIBeaconStatus("scan_missing");
+      if (status_owner && strcmp(status_owner, "switchbot") == 0) setSwitchbotLockStatus("scan_missing");
+      return false;
+    }
+    ibeacon_scan->setScanCallbacks(&ibeacon_scan_callbacks, true);
+    ibeacon_scan->setActiveScan(false);
+    ibeacon_scan->setInterval(kSwitchbotLockScanIntervalMs);
+    ibeacon_scan->setWindow(kSwitchbotLockScanWindowMs);
+    ibeacon_scan->setMaxResults(0);
+  }
+  return ibeacon_scan != nullptr;
+#else
+  (void)status_owner;
+  return false;
+#endif
+}
+
+bool startBleScan(const char *status_owner) {
+#if MYMOTA32_BLE_SCAN_SUPPORTED
+  if (!ensureBleScanner(status_owner)) return false;
+  if (!ibeacon_scan) return false;
+  if (!ibeacon_scan->isScanning()) {
+    if (!ibeacon_scan->start(0, true, false)) {
+      ble_scanning = false;
+      if (status_owner && strcmp(status_owner, "ibeacon") == 0) setIBeaconStatus("scan_failed");
+      if (status_owner && strcmp(status_owner, "switchbot") == 0) setSwitchbotLockStatus("scan_failed");
+      return false;
+    }
+  }
+  next_ibeacon_start_attempt = 0;
+  ble_scanning = true;
+  return true;
+#else
+  (void)status_owner;
+  return false;
+#endif
+}
+
+void stopBleScanIfIdle() {
+#if MYMOTA32_BLE_SCAN_SUPPORTED
+  if (config.ibeacon_enabled || config.switchbot_lock_enabled) return;
   if (ibeacon_scan && ibeacon_scan->isScanning()) {
     ibeacon_scan->stop();
   }
+  ble_scanning = false;
 #endif
+}
+
+void stopIBeaconCapture() {
+  if (!config.switchbot_lock_enabled) stopBleScanIfIdle();
   ibeacon_scanning = false;
   setIBeaconStatus(config.ibeacon_enabled ? "stopped" : "disabled");
 }
@@ -4805,44 +5103,12 @@ void startIBeaconCapture() {
     setIBeaconStatus("unsupported");
     return;
   }
-#if MYMOTA32_IBEACON_SUPPORTED
-  const uint32_t now = millis();
-  if (next_ibeacon_start_attempt && now - next_ibeacon_start_attempt < 30000UL) return;
-  if (!ibeacon_stack_started) {
-    next_ibeacon_start_attempt = now;
-    setIBeaconStatus("starting");
-    if (!NimBLEDevice::init("mymota32")) {
-      setIBeaconStatus("init_failed");
-      return;
-    }
-    ibeacon_stack_started = true;
-    ibeacon_scan = NimBLEDevice::getScan();
-    if (!ibeacon_scan) {
-      setIBeaconStatus("scan_missing");
-      return;
-    }
-    ibeacon_scan->setScanCallbacks(&ibeacon_scan_callbacks, true);
-    ibeacon_scan->setActiveScan(false);
-    ibeacon_scan->setInterval(kIBeaconScanIntervalMs);
-    ibeacon_scan->setWindow(kIBeaconScanWindowMs);
-    ibeacon_scan->setMaxResults(0);
-  }
-  if (!ibeacon_scan) {
+  if (!startBleScan("ibeacon")) {
     ibeacon_scanning = false;
-    setIBeaconStatus("scan_missing");
     return;
   }
-  if (!ibeacon_scan->isScanning()) {
-    if (!ibeacon_scan->start(0, true, false)) {
-      ibeacon_scanning = false;
-      setIBeaconStatus("scan_failed");
-      return;
-    }
-  }
-  next_ibeacon_start_attempt = 0;
   ibeacon_scanning = true;
   setIBeaconStatus("scanning");
-#endif
 }
 
 void processIBeaconObservation(const IBeaconObservation &obs) {
@@ -4857,6 +5123,403 @@ void processIBeaconObservation(const IBeaconObservation &obs) {
     recordIBeaconMqttReport(now);
     rememberPublishedIBeacon(obs, climate, bthome, now);
   }
+}
+
+const char *switchbotLockStateName(uint8_t state) {
+  switch (state) {
+    case 0: return "LOCKED";
+    case 1: return "UNLOCKED";
+    case 2: return "LOCKING";
+    case 3: return "UNLOCKING";
+    case 4: return "LOCKING_STOP";
+    case 5: return "UNLOCKING_STOP";
+    case 6: return "NOT_FULLY_LOCKED";
+    case 7: return "HALF_LOCKED";
+    default: return "UNKNOWN";
+  }
+}
+
+bool switchbotLockCredentialsReady(uint8_t &key_id, uint8_t (&key)[16]) {
+  uint8_t key_id_buf[1]{};
+  if (!hexToBytes(config.switchbot_lock_key_id, key_id_buf, sizeof(key_id_buf))) return false;
+  if (!hexToBytes(config.switchbot_lock_key, key, sizeof(key))) return false;
+  key_id = key_id_buf[0];
+  return true;
+}
+
+bool switchbotLockAesCtr(const uint8_t *input, size_t len, uint8_t *output, const uint8_t (&key)[16]) {
+  if (switchbot_lock_iv_len != 16) return false;
+  mbedtls_aes_context aes;
+  mbedtls_aes_init(&aes);
+  if (mbedtls_aes_setkey_enc(&aes, key, 128) != 0) {
+    mbedtls_aes_free(&aes);
+    return false;
+  }
+  size_t offset = 0;
+  uint8_t nonce_counter[16];
+  uint8_t stream_block[16]{};
+  memcpy(nonce_counter, switchbot_lock_iv, sizeof(nonce_counter));
+  const int rc = mbedtls_aes_crypt_ctr(&aes, len, &offset, nonce_counter, stream_block, input, output);
+  mbedtls_aes_free(&aes);
+  return rc == 0;
+}
+
+bool switchbotLockAesBlock(mbedtls_aes_context &aes, const uint8_t *input, uint8_t *output) {
+  return mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, input, output) == 0;
+}
+
+void switchbotLockGfMul(const uint8_t (&x)[16], const uint8_t (&y)[16], uint8_t (&out)[16]) {
+  uint8_t z[16]{};
+  uint8_t v[16];
+  memcpy(v, y, sizeof(v));
+  for (uint8_t i = 0; i < 128; i++) {
+    if (x[i / 8] & (0x80 >> (i % 8))) {
+      for (uint8_t j = 0; j < 16; j++) z[j] ^= v[j];
+    }
+    const bool lsb = (v[15] & 1) != 0;
+    for (int8_t j = 15; j >= 0; j--) {
+      v[j] = static_cast<uint8_t>((v[j] >> 1) | (j > 0 && (v[j - 1] & 1) ? 0x80 : 0));
+    }
+    if (lsb) v[0] ^= 0xe1;
+  }
+  memcpy(out, z, sizeof(z));
+}
+
+void switchbotLockGhashBlock(uint8_t (&y)[16], const uint8_t (&h)[16], const uint8_t *block, size_t len) {
+  uint8_t x[16]{};
+  if (block && len > 0) memcpy(x, block, len > sizeof(x) ? sizeof(x) : len);
+  for (uint8_t i = 0; i < 16; i++) y[i] ^= x[i];
+  uint8_t product[16]{};
+  switchbotLockGfMul(y, h, product);
+  memcpy(y, product, sizeof(product));
+}
+
+void switchbotLockInc32(uint8_t (&counter)[16]) {
+  for (int8_t i = 15; i >= 12; i--) {
+    if (++counter[i] != 0) break;
+  }
+}
+
+bool switchbotLockAesGcmCrypt(const uint8_t *input, size_t len, uint8_t *output,
+                              uint8_t (&tag)[16], const uint8_t (&key)[16], bool encrypt) {
+  if (switchbot_lock_iv_len != 12 || len > kSwitchbotLockMaxPacketBytes) return false;
+  mbedtls_aes_context aes;
+  mbedtls_aes_init(&aes);
+  if (mbedtls_aes_setkey_enc(&aes, key, 128) != 0) {
+    mbedtls_aes_free(&aes);
+    return false;
+  }
+
+  uint8_t zero[16]{};
+  uint8_t h[16]{};
+  if (!switchbotLockAesBlock(aes, zero, h)) {
+    mbedtls_aes_free(&aes);
+    return false;
+  }
+
+  uint8_t j0[16]{};
+  memcpy(j0, switchbot_lock_iv, 12);
+  j0[15] = 1;
+  uint8_t counter[16];
+  memcpy(counter, j0, sizeof(counter));
+  switchbotLockInc32(counter);
+
+  for (size_t pos = 0; pos < len; pos += 16) {
+    uint8_t stream[16]{};
+    if (!switchbotLockAesBlock(aes, counter, stream)) {
+      mbedtls_aes_free(&aes);
+      return false;
+    }
+    const size_t chunk = (len - pos) > 16 ? 16 : (len - pos);
+    for (size_t i = 0; i < chunk; i++) output[pos + i] = input[pos + i] ^ stream[i];
+    switchbotLockInc32(counter);
+  }
+
+  uint8_t y[16]{};
+  const uint8_t *auth_data = encrypt ? output : input;
+  for (size_t pos = 0; pos < len; pos += 16) {
+    const size_t chunk = (len - pos) > 16 ? 16 : (len - pos);
+    switchbotLockGhashBlock(y, h, auth_data + pos, chunk);
+  }
+  uint8_t len_block[16]{};
+  const uint64_t cipher_bits = static_cast<uint64_t>(len) * 8ULL;
+  for (uint8_t i = 0; i < 8; i++) {
+    len_block[15 - i] = static_cast<uint8_t>((cipher_bits >> (i * 8)) & 0xff);
+  }
+  switchbotLockGhashBlock(y, h, len_block, sizeof(len_block));
+
+  uint8_t tag_mask[16]{};
+  if (!switchbotLockAesBlock(aes, j0, tag_mask)) {
+    mbedtls_aes_free(&aes);
+    return false;
+  }
+  for (uint8_t i = 0; i < 16; i++) tag[i] = tag_mask[i] ^ y[i];
+  mbedtls_aes_free(&aes);
+  return true;
+}
+
+bool switchbotLockAesGcmEncrypt(const uint8_t *input, size_t len, uint8_t *output, uint8_t (&tag)[16], const uint8_t (&key)[16]) {
+  return switchbotLockAesGcmCrypt(input, len, output, tag, key, true);
+}
+
+bool switchbotLockAesGcmDecrypt(const uint8_t *input, size_t len, uint8_t *output, const uint8_t (&key)[16]) {
+  uint8_t tag[16]{};
+  return switchbotLockAesGcmCrypt(input, len, output, tag, key, false);
+}
+
+bool switchbotLockEncryptCommand(const uint8_t *cmd, size_t cmd_len, uint8_t key_id,
+                                 const uint8_t (&key)[16], uint8_t *out, size_t &out_len) {
+  if (!cmd || cmd_len < 1 || !out) return false;
+  out[0] = cmd[0];
+  out[1] = key_id;
+  if (switchbot_lock_cipher_mode == 0) {
+    if (switchbot_lock_iv_len != 16 || cmd_len + 3 > kSwitchbotLockMaxPacketBytes) return false;
+    out[2] = switchbot_lock_iv[0];
+    out[3] = switchbot_lock_iv[1];
+    if (!switchbotLockAesCtr(cmd + 1, cmd_len - 1, out + 4, key)) return false;
+    out_len = cmd_len + 3;
+    return true;
+  }
+  if (switchbot_lock_cipher_mode == 1) {
+    uint8_t tag[16]{};
+    if (switchbot_lock_iv_len != 12 || cmd_len + 3 > kSwitchbotLockMaxPacketBytes) return false;
+    if (!switchbotLockAesGcmEncrypt(cmd + 1, cmd_len - 1, out + 4, tag, key)) return false;
+    out[2] = tag[0];
+    out[3] = tag[1];
+    out_len = cmd_len + 3;
+    return true;
+  }
+  return false;
+}
+
+bool switchbotLockDecryptResponse(const uint8_t *raw, size_t raw_len, const uint8_t (&key)[16],
+                                  uint8_t *out, size_t &out_len) {
+  if (!raw || raw_len < 4 || !out) return false;
+  out[0] = raw[0];
+  const size_t cipher_len = raw_len - 4;
+  bool ok = false;
+  if (switchbot_lock_cipher_mode == 0) {
+    ok = switchbotLockAesCtr(raw + 4, cipher_len, out + 1, key);
+  } else if (switchbot_lock_cipher_mode == 1) {
+    ok = switchbotLockAesGcmDecrypt(raw + 4, cipher_len, out + 1, key);
+  }
+  if (!ok) return false;
+  out_len = cipher_len + 1;
+  if (switchbot_lock_cipher_mode == 1 && switchbot_lock_iv_len == 12) {
+    for (int8_t i = 11; i >= 0; i--) {
+      if (++switchbot_lock_iv[i] != 0) break;
+    }
+  }
+  return true;
+}
+
+void switchbotLockParsePush(const uint8_t *plain, size_t len) {
+  if (!plain || len < 2) return;
+  const uint8_t state = (plain[0] & 0x78) >> 3;
+  switchbot_lock_state = state;
+  switchbot_lock_door_open = (plain[1] & 0x10) != 0;
+  switchbot_lock_door_known = true;
+  switchbot_lock_last_update_ms = millis();
+}
+
+#if MYMOTA32_SWITCHBOT_LOCK_SUPPORTED
+void switchbotLockNotifyCallback(NimBLERemoteCharacteristic *, uint8_t *data, size_t length, bool) {
+  if (!data || length == 0) return;
+  if (data[0] == 0x0f) {
+    return;
+  }
+  const size_t copy_len = length > sizeof(switchbot_lock_response) ? sizeof(switchbot_lock_response) : length;
+  memcpy(switchbot_lock_response, data, copy_len);
+  switchbot_lock_response_len = copy_len;
+  switchbot_lock_response_ready = true;
+}
+
+bool switchbotLockRawSend(NimBLERemoteCharacteristic *tx, const uint8_t *data, size_t len,
+                          uint8_t *response, size_t &response_len) {
+  if (!tx || !data || !response) return false;
+  switchbot_lock_response_ready = false;
+  switchbot_lock_response_len = 0;
+  if (!tx->writeValue(data, len, true)) return false;
+  const uint32_t start = millis();
+  while (!switchbot_lock_response_ready && millis() - start < kSwitchbotLockResponseTimeoutMs) {
+    server.handleClient();
+    delay(10);
+  }
+  if (!switchbot_lock_response_ready || switchbot_lock_response_len == 0) return false;
+  response_len = switchbot_lock_response_len;
+  memcpy(response, switchbot_lock_response, response_len);
+  switchbot_lock_response_ready = false;
+  return true;
+}
+
+bool switchbotLockEncryptedSend(NimBLERemoteCharacteristic *tx, const uint8_t *cmd, size_t cmd_len,
+                                uint8_t key_id, const uint8_t (&key)[16],
+                                uint8_t *plain, size_t &plain_len) {
+  uint8_t encrypted[kSwitchbotLockMaxPacketBytes]{};
+  size_t encrypted_len = 0;
+  if (!switchbotLockEncryptCommand(cmd, cmd_len, key_id, key, encrypted, encrypted_len)) return false;
+  uint8_t raw[kSwitchbotLockMaxPacketBytes]{};
+  size_t raw_len = 0;
+  if (!switchbotLockRawSend(tx, encrypted, encrypted_len, raw, raw_len)) return false;
+  return switchbotLockDecryptResponse(raw, raw_len, key, plain, plain_len);
+}
+
+bool switchbotLockPollCandidate(const char *mac, uint8_t address_type, uint8_t key_id, const uint8_t (&key)[16]) {
+  if (!mac || !mac[0]) return false;
+  NimBLEClient *client = NimBLEDevice::createClient();
+  if (!client) return false;
+  bool ok = false;
+  client->setConnectTimeout(kSwitchbotLockConnectTimeoutSec);
+  client->setConnectRetries(1);
+  client->setConnectionParams(12, 24, 0, 60, 32, 16);
+  NimBLEAddress address(std::string(mac), address_type);
+  if (!client->connect(address, true, false, true)) goto done;
+  {
+    NimBLERemoteService *service = client->getService(kSwitchbotServiceUuid);
+    if (!service) goto done;
+    NimBLERemoteCharacteristic *tx = service->getCharacteristic(kSwitchbotTxUuid);
+    NimBLERemoteCharacteristic *rx = service->getCharacteristic(kSwitchbotRxUuid);
+    if (!tx || !rx) goto done;
+    rx->subscribe(true, switchbotLockNotifyCallback, true);
+
+    uint8_t init_cmd[8] = {0x57, 0x00, 0x00, 0x00, 0x0f, 0x21, 0x03, key_id};
+    uint8_t raw[kSwitchbotLockMaxPacketBytes]{};
+    size_t raw_len = 0;
+    if (!switchbotLockRawSend(tx, init_cmd, sizeof(init_cmd), raw, raw_len)) goto done;
+    if (raw_len < 16 || (raw[0] != 1 && raw[0] != 6)) goto done;
+    switchbot_lock_cipher_mode = raw[2];
+    if (switchbot_lock_cipher_mode == 0) {
+      if (raw_len < 20) goto done;
+      memcpy(switchbot_lock_iv, raw + 4, 16);
+      switchbot_lock_iv_len = 16;
+    } else if (switchbot_lock_cipher_mode == 1) {
+      if (raw_len < 16) goto done;
+      memcpy(switchbot_lock_iv, raw + 4, 12);
+      switchbot_lock_iv_len = 12;
+    } else {
+      goto done;
+    }
+
+    uint8_t plain[kSwitchbotLockMaxPacketBytes]{};
+    size_t plain_len = 0;
+    switchbotLockEncryptedSend(tx, kSwitchbotCmdNotifOn, sizeof(kSwitchbotCmdNotifOn), key_id, key, plain, plain_len);
+    if (switchbotLockEncryptedSend(tx, kSwitchbotCmdLockInfo, sizeof(kSwitchbotCmdLockInfo), key_id, key, plain, plain_len) &&
+        plain_len > 2) {
+      switchbot_lock_state = (plain[1] & 0x78) >> 3;
+      switchbot_lock_door_open = (plain[2] & 0x10) != 0;
+      switchbot_lock_door_known = true;
+      ok = true;
+    }
+    if (switchbotLockEncryptedSend(tx, kSwitchbotCmdBasic, sizeof(kSwitchbotCmdBasic), key_id, key, plain, plain_len) &&
+        plain_len > 1) {
+      switchbot_lock_battery = static_cast<int8_t>(plain[1]);
+      ok = true;
+    }
+    if (ok) {
+      strlcpy(switchbot_lock_discovered_mac, mac, sizeof(switchbot_lock_discovered_mac));
+      switchbot_lock_discovered_type = address_type;
+      switchbot_lock_last_update_ms = millis();
+      setSwitchbotLockStatus("ok");
+    }
+  }
+done:
+  if (client->isConnected()) client->disconnect();
+  NimBLEDevice::deleteClient(client);
+  return ok;
+}
+#endif
+
+void resetSwitchbotLockRuntimeState() {
+  memset(switchbot_lock_candidates, 0, sizeof(switchbot_lock_candidates));
+  switchbot_lock_discovered_mac[0] = '\0';
+  switchbot_lock_state = kSwitchbotLockStateUnknown;
+  switchbot_lock_battery = -1;
+  switchbot_lock_door_open = false;
+  switchbot_lock_door_known = false;
+  switchbot_lock_last_update_ms = 0;
+  switchbot_lock_next_poll_ms = 0;
+  switchbot_lock_cipher_mode = 255;
+  switchbot_lock_iv_len = 0;
+  switchbot_lock_polling = false;
+  setSwitchbotLockStatus(config.switchbot_lock_enabled ? "idle" : "disabled");
+}
+
+bool switchbotLockPollOnce() {
+  if (!switchbotLockSupported()) {
+    setSwitchbotLockStatus("unsupported");
+    return false;
+  }
+  if (config.switchbot_lock_key_id[0] == '\0' || config.switchbot_lock_key[0] == '\0') {
+    setSwitchbotLockStatus("missing_key");
+    return false;
+  }
+#if MYMOTA32_SWITCHBOT_LOCK_SUPPORTED
+  uint8_t key_id = 0;
+  uint8_t key[16]{};
+  if (!switchbotLockCredentialsReady(key_id, key)) {
+    setSwitchbotLockStatus("bad_key");
+    return false;
+  }
+  if (!ensureBleScanner("switchbot")) return false;
+  bool restart_scan = false;
+  if (ibeacon_scan && ibeacon_scan->isScanning()) {
+    restart_scan = true;
+    ibeacon_scan->stop();
+    ble_scanning = false;
+    ibeacon_scanning = false;
+    delay(50);
+  }
+  switchbot_lock_polling = true;
+  setSwitchbotLockStatus("polling");
+  bool ok = false;
+  if (config.switchbot_lock_mac[0]) {
+    uint8_t type = switchbot_lock_discovered_type;
+    if (switchbot_lock_discovered_mac[0] && strcmp(switchbot_lock_discovered_mac, config.switchbot_lock_mac) == 0) {
+      ok = switchbotLockPollCandidate(config.switchbot_lock_mac, type, key_id, key);
+    }
+    if (!ok) ok = switchbotLockPollCandidate(config.switchbot_lock_mac, 0, key_id, key);
+    if (!ok) ok = switchbotLockPollCandidate(config.switchbot_lock_mac, 1, key_id, key);
+  } else {
+    for (uint8_t pass = 0; pass < kSwitchbotLockCandidateCount && !ok; pass++) {
+      int8_t best = -1;
+      for (uint8_t i = 0; i < kSwitchbotLockCandidateCount; i++) {
+        if (!switchbot_lock_candidates[i].used) continue;
+        if (best < 0 || switchbot_lock_candidates[i].rssi > switchbot_lock_candidates[best].rssi) best = i;
+      }
+      if (best < 0) break;
+      ok = switchbotLockPollCandidate(switchbot_lock_candidates[best].mac,
+                                      switchbot_lock_candidates[best].address_type,
+                                      key_id, key);
+      switchbot_lock_candidates[best].used = false;
+    }
+  }
+  switchbot_lock_polling = false;
+  if (!ok) setSwitchbotLockStatus("poll_failed");
+  if ((restart_scan || config.ibeacon_enabled || config.switchbot_lock_enabled) && startBleScan("switchbot")) {
+    ibeacon_scanning = config.ibeacon_enabled;
+    if (!config.ibeacon_enabled && ok) setSwitchbotLockStatus("ok");
+  }
+  return ok;
+#else
+  return false;
+#endif
+}
+
+void maintainSwitchbotLock() {
+  if (!config.switchbot_lock_enabled) {
+    if (strcmp(switchbot_lock_status, "disabled") != 0) resetSwitchbotLockRuntimeState();
+    if (!config.ibeacon_enabled) stopBleScanIfIdle();
+    return;
+  }
+  if (!switchbotLockSupported()) {
+    setSwitchbotLockStatus("unsupported");
+    return;
+  }
+  startBleScan("switchbot");
+  const uint32_t now = millis();
+  if (switchbot_lock_next_poll_ms != 0 && static_cast<int32_t>(now - switchbot_lock_next_poll_ms) < 0) return;
+  const bool ok = switchbotLockPollOnce();
+  switchbot_lock_next_poll_ms = now + (ok ? kSwitchbotLockPollIntervalMs : kSwitchbotLockRetryMs);
 }
 
 void maintainIBeacon() {
@@ -5720,6 +6383,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("if(d.light){p('live-light-power',d.light.power?'on':'off',d.light.power?'pill ok':'pill bad');t('live-light-dimmer',d.light.dimmer+'%');t('live-light-ct',d.light.ct+' mired');t('live-light-color',d.light.color||'000000');t('live-light-on-dimmer',d.light.on_dimmer+'%');t('live-light-fade',d.light.fade?'on':'off');t('live-light-speed',d.light.speed);}");
 #endif
   page += F("if(d.ibeacon){t('live-ibeacon-mqtt-rpm',d.ibeacon.mqtt_reports_per_minute+'/min');}");
+  page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,sc=!sl.enabled?'pill':((sl.status=='ok'||sl.status=='advertisement')?'pill ok':'pill warn');p('live-switchbot-lock-status',sl.enabled?(sl.status||'unknown'):'disabled',sc);t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-updated',sl.last_update_ms_ago==null?'n/a':Math.floor(sl.last_update_ms_ago/1000)+'s ago');t('live-switchbot-lock-mac',sl.mac||'n/a');}");
   page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!==null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
@@ -6658,6 +7322,65 @@ void appendIBeaconForm(String &page) {
   page += F(">Save iBeacon</button></form></section>");
 }
 
+void appendSwitchbotLockForm(String &page) {
+  const bool unsupported = !switchbotLockSupported();
+  page += F("<section class='panel'><div class='panel-title'><h2>Switchbot Lock Ultra</h2>");
+  if (unsupported) {
+    page += F("<span class='pill bad'>unsupported</span>");
+  } else if (config.switchbot_lock_enabled) {
+    page += F("<span id='live-switchbot-lock-status' class='pill ");
+    if (strcmp(switchbot_lock_status, "ok") == 0 || strcmp(switchbot_lock_status, "advertisement") == 0) page += F("ok");
+    else page += F("warn");
+    page += F("'>");
+    page += htmlEscape(switchbot_lock_status);
+    page += F("</span>");
+  } else {
+    page += F("<span id='live-switchbot-lock-status' class='pill'>disabled</span>");
+  }
+  page += F("</div><form data-inline='1' method='post' action='/switchbot-lock'>");
+  page += F("<div class='row'><label><input type='checkbox' name='enabled' value='1'");
+  if (config.switchbot_lock_enabled) page += F(" checked");
+  if (unsupported) page += F(" disabled");
+  page += F(">Enable</label></div>");
+  page += F("<div class='row'><label>Lock MAC<br><input name='mac' maxlength='17' value='");
+  page += htmlEscape(config.switchbot_lock_mac);
+  page += F("'");
+  if (unsupported) page += F(" disabled");
+  page += F("></label></div>");
+  page += F("<div class='row'><label>BLE key ID<br><input name='key_id' maxlength='2' value='");
+  page += htmlEscape(config.switchbot_lock_key_id);
+  page += F("'");
+  if (unsupported) page += F(" disabled");
+  page += F("></label></div>");
+  page += F("<div class='row'><label>BLE key<br><input type='password' name='key' maxlength='32' autocomplete='off' value='");
+  page += htmlEscape(config.switchbot_lock_key);
+  page += F("' onfocus=\"this.type='text'\" onclick=\"this.type='text'\"");
+  if (unsupported) page += F(" disabled");
+  page += F("></label></div>");
+  page += F("<button type='submit'");
+  if (unsupported) page += F(" disabled");
+  page += F(">Save Switchbot Lock</button></form>");
+  page += F("<div class='bb'><h3>State</h3><div class='kv'><span>Lock</span><div><code id='live-switchbot-lock-state'>");
+  page += switchbotLockStateName(switchbot_lock_state);
+  page += F("</code></div><span>Battery</span><div><code id='live-switchbot-lock-battery'>");
+  if (switchbot_lock_battery >= 0) {
+    page += String(switchbot_lock_battery);
+    page += F("%");
+  } else {
+    page += F("n/a");
+  }
+  page += F("</code></div><span>Last updated</span><div><code id='live-switchbot-lock-updated'>");
+  if (switchbot_lock_last_update_ms == 0) {
+    page += F("n/a");
+  } else {
+    page += String((millis() - switchbot_lock_last_update_ms) / 1000);
+    page += F("s ago");
+  }
+  page += F("</code></div><span>MAC</span><div><code id='live-switchbot-lock-mac'>");
+  page += switchbot_lock_discovered_mac[0] ? htmlEscape(switchbot_lock_discovered_mac) : String(F("n/a"));
+  page += F("</code></div></div></div></section>");
+}
+
 void appendPowerSavingOption(String &page, uint8_t mode, const __FlashStringHelper *label) {
   page += F("<option value='");
   page += mode;
@@ -6718,6 +7441,8 @@ void handleRoot() {
   appendRelayPulseSettings(page);
   flushStreamChunk(page);
   appendIBeaconForm(page);
+  flushStreamChunk(page);
+  appendSwitchbotLockForm(page);
   flushStreamChunk(page);
 
   page += F("<section class='panel'><h2>Wi-Fi</h2><form method='post' action='/wifi'>");
@@ -7788,6 +8513,41 @@ void handleIBeaconSave() {
   sendInlineOkOrHome();
 }
 
+void handleSwitchbotLockSave() {
+  const bool enabled = server.hasArg("enabled") && server.arg("enabled") == "1";
+  if (enabled && !switchbotLockSupported()) {
+    sendPlain(400, F("unsupported"));
+    return;
+  }
+
+  char mac[kSwitchbotLockMacMaxLen + 1]{};
+  char key_id[kSwitchbotLockKeyIdMaxLen + 1]{};
+  char key[kSwitchbotLockKeyMaxLen + 1]{};
+  if (!normalizeSwitchbotMac(server.hasArg("mac") ? server.arg("mac") : String(), mac, sizeof(mac)) ||
+      !normalizeFixedHex(server.hasArg("key_id") ? server.arg("key_id") : String(), key_id, sizeof(key_id),
+                         kSwitchbotLockKeyIdMaxLen) ||
+      !normalizeFixedHex(server.hasArg("key") ? server.arg("key") : String(), key, sizeof(key),
+                         kSwitchbotLockKeyMaxLen)) {
+    sendPlain(400, F("invalid switchbot lock settings"));
+    return;
+  }
+
+  if (!saveSwitchbotLockConfig(enabled, mac, key_id, key)) {
+    sendPlain(500, F("save failed"));
+    return;
+  }
+
+  resetSwitchbotLockRuntimeState();
+  if (config.switchbot_lock_enabled) {
+    startBleScan("switchbot");
+    switchbot_lock_next_poll_ms = millis() + 1000UL;
+  } else if (!config.ibeacon_enabled) {
+    stopBleScanIfIdle();
+  }
+
+  sendInlineOkOrHome();
+}
+
 void handleSystemSave() {
   uint8_t mode = kPowerSavingOff;
   if (!parsePowerSavingMode(server.arg("power_saving"), mode)) {
@@ -8121,6 +8881,13 @@ bool iBeaconConfigDiffers(const StoredConfig &a, const StoredConfig &b) {
          strcmp(a.ibeacon_filter2_macs, b.ibeacon_filter2_macs) != 0;
 }
 
+bool switchbotLockConfigDiffers(const StoredConfig &a, const StoredConfig &b) {
+  return a.switchbot_lock_enabled != b.switchbot_lock_enabled ||
+         strcmp(a.switchbot_lock_mac, b.switchbot_lock_mac) != 0 ||
+         strcmp(a.switchbot_lock_key_id, b.switchbot_lock_key_id) != 0 ||
+         strcmp(a.switchbot_lock_key, b.switchbot_lock_key) != 0;
+}
+
 bool commitStoredConfig(const StoredConfig &source) {
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putString("ssid", source.ssid);
@@ -8177,6 +8944,10 @@ bool commitStoredConfig(const StoredConfig &source) {
   prefs.putString("ib_f1_mac", source.ibeacon_filter1_macs);
   prefs.putUShort("ib_f2_int", sanitizeIBeaconFilterInterval(source.ibeacon_filter2_interval_sec, kIBeaconFilter2DefaultSec));
   prefs.putString("ib_f2_mac", source.ibeacon_filter2_macs);
+  prefs.putUChar("sb_lock", source.switchbot_lock_enabled ? 1 : 0);
+  prefs.putString("sb_mac", source.switchbot_lock_mac);
+  prefs.putString("sb_key_id", source.switchbot_lock_key_id);
+  prefs.putString("sb_key", source.switchbot_lock_key);
   prefs.putUShort("pwr_save", sanitizePowerSavingMode(source.power_saving_mode));
   prefs.end();
   return loadConfig();
@@ -8302,6 +9073,14 @@ void appendSettingsExportJson(String &out) {
   out += config.ibeacon_filter2_interval_sec;
   out += F(",\"filter2_macs\":\"");
   out += jsonEscape(config.ibeacon_filter2_macs);
+  out += F("\"},\"switchbot_lock\":{\"enabled\":");
+  out += config.switchbot_lock_enabled ? F("true") : F("false");
+  out += F(",\"mac\":\"");
+  out += jsonEscape(config.switchbot_lock_mac);
+  out += F("\",\"key_id\":\"");
+  out += jsonEscape(config.switchbot_lock_key_id);
+  out += F("\",\"key\":\"");
+  out += jsonEscape(config.switchbot_lock_key);
   out += F("\"},\"inputs\":{\"hold_ms\":");
   out += config.button_hold_ms;
   out += F(",\"debounce_ms\":");
@@ -8793,6 +9572,57 @@ void importSettingsIBeacon(const cJSON *root, StoredConfig &target, SettingsImpo
   }
 }
 
+void importSettingsSwitchbotLock(const cJSON *root, StoredConfig &target, SettingsImportStats &stats) {
+  const cJSON *lock = cjsonObjectItem(root, "switchbot_lock");
+  if (!lock) return;
+  if (!cjsonIsType(lock, cJSON_Object)) {
+    recordSettingsSkipped(stats, F("switchbot_lock"));
+    return;
+  }
+  if (const cJSON *value = cjsonObjectItem(lock, "enabled")) {
+    bool enabled = false;
+    if (settingsReadBool(value, enabled) && (!enabled || switchbotLockSupported())) {
+      target.switchbot_lock_enabled = enabled ? 1 : 0;
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("switchbot_lock.enabled"));
+    }
+  }
+  if (const cJSON *value = cjsonObjectItem(lock, "mac")) {
+    String mac;
+    char normalized[kSwitchbotLockMacMaxLen + 1]{};
+    if (settingsReadString(value, mac, kSwitchbotLockMacMaxLen) &&
+        normalizeSwitchbotMac(mac, normalized, sizeof(normalized))) {
+      strlcpy(target.switchbot_lock_mac, normalized, sizeof(target.switchbot_lock_mac));
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("switchbot_lock.mac"));
+    }
+  }
+  if (const cJSON *value = cjsonObjectItem(lock, "key_id")) {
+    String key_id;
+    char normalized[kSwitchbotLockKeyIdMaxLen + 1]{};
+    if (settingsReadString(value, key_id, kSwitchbotLockKeyIdMaxLen) &&
+        normalizeFixedHex(key_id, normalized, sizeof(normalized), kSwitchbotLockKeyIdMaxLen)) {
+      strlcpy(target.switchbot_lock_key_id, normalized, sizeof(target.switchbot_lock_key_id));
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("switchbot_lock.key_id"));
+    }
+  }
+  if (const cJSON *value = cjsonObjectItem(lock, "key")) {
+    String key;
+    char normalized[kSwitchbotLockKeyMaxLen + 1]{};
+    if (settingsReadString(value, key, kSwitchbotLockKeyMaxLen) &&
+        normalizeFixedHex(key, normalized, sizeof(normalized), kSwitchbotLockKeyMaxLen)) {
+      strlcpy(target.switchbot_lock_key, normalized, sizeof(target.switchbot_lock_key));
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("switchbot_lock.key"));
+    }
+  }
+}
+
 void importSettingsAction(const cJSON *value, StoredConfig &target, const RuntimeTemplate &rt,
                           uint8_t button, bool hold, SettingsImportStats &stats, const String &field) {
   if (!value) return;
@@ -9040,6 +9870,7 @@ void handleSettingsImport() {
   importSettingsRelayEnforcement(doc, candidate, candidate_runtime, stats);
   importSettingsRelayPulsing(doc, candidate, candidate_runtime, stats);
   importSettingsIBeacon(doc, candidate, stats);
+  importSettingsSwitchbotLock(doc, candidate, stats);
   importSettingsInputs(doc, candidate, candidate_runtime, stats);
   cJSON_Delete(doc);
 
@@ -9064,6 +9895,7 @@ void handleSettingsImport() {
   const bool relay_pulse_changed = relayPulseConfigDiffers(before, candidate);
   const bool input_changed = inputConfigDiffers(before, candidate);
   const bool ibeacon_changed = iBeaconConfigDiffers(before, candidate);
+  const bool switchbot_lock_changed = switchbotLockConfigDiffers(before, candidate);
   const bool wifi_dynamic_power_changed = before.wifi_dynamic_power != candidate.wifi_dynamic_power;
 
   if (!commitStoredConfig(candidate)) {
@@ -9109,6 +9941,15 @@ void handleSettingsImport() {
     resetIBeaconRuntimeState();
     if (config.ibeacon_enabled) startIBeaconCapture();
     else stopIBeaconCapture();
+  }
+  if (switchbot_lock_changed) {
+    resetSwitchbotLockRuntimeState();
+    if (config.switchbot_lock_enabled) {
+      startBleScan("switchbot");
+      switchbot_lock_next_poll_ms = millis() + 1000UL;
+    } else if (!config.ibeacon_enabled) {
+      stopBleScanIfIdle();
+    }
   }
   if (wifi_dynamic_power_changed) resetWifiDynamicPowerRuntime(true);
 
@@ -9459,6 +10300,31 @@ void handleHealth() {
   out += F("\",\"mqtt_reports_per_minute\":");
   out += ibeacon_mqtt_reports_per_minute;
   out += F("}");
+  out += F(",\"switchbot_lock\":{\"enabled\":");
+  out += config.switchbot_lock_enabled ? F("true") : F("false");
+  out += F(",\"status\":\"");
+  out += jsonEscape(switchbot_lock_status);
+  out += F("\",\"state\":\"");
+  out += switchbotLockStateName(switchbot_lock_state);
+  out += F("\",\"state_id\":");
+  if (switchbot_lock_state == kSwitchbotLockStateUnknown) out += F("null");
+  else out += switchbot_lock_state;
+  out += F(",\"locked\":");
+  if (switchbot_lock_state == kSwitchbotLockStateLocked) out += F("true");
+  else if (switchbot_lock_state == kSwitchbotLockStateUnlocked) out += F("false");
+  else out += F("null");
+  out += F(",\"door_open\":");
+  if (switchbot_lock_door_known) out += switchbot_lock_door_open ? F("true") : F("false");
+  else out += F("null");
+  out += F(",\"battery\":");
+  if (switchbot_lock_battery >= 0) out += switchbot_lock_battery;
+  else out += F("null");
+  out += F(",\"last_update_ms_ago\":");
+  if (switchbot_lock_last_update_ms == 0) out += F("null");
+  else out += millis() - switchbot_lock_last_update_ms;
+  out += F(",\"mac\":\"");
+  out += jsonEscape(switchbot_lock_discovered_mac);
+  out += F("\"}");
   out += F(",\"mqtt\":{\"enabled\":");
   out += (mqttConfigured() ? F("true") : F("false"));
   out += F(",\"connected\":");
@@ -9700,6 +10566,7 @@ void setupRoutes() {
   server.on("/mqtt", HTTP_POST, handleMqttSave);
   server.on("/energy", HTTP_POST, handleEnergySave);
   server.on("/ibeacon", HTTP_POST, handleIBeaconSave);
+  server.on("/switchbot-lock", HTTP_POST, handleSwitchbotLockSave);
   server.on("/system", HTTP_POST, handleSystemSave);
   server.on("/settings/export", HTTP_GET, handleSettingsExport);
   server.on("/settings/import", HTTP_POST, handleSettingsImport);
@@ -9754,6 +10621,7 @@ void loop() {
   server.handleClient();
   maintainMqtt();
   maintainIBeacon();
+  maintainSwitchbotLock();
   server.handleClient();
 
   if (restartDue()) {

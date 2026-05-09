@@ -22,8 +22,9 @@
 #undef CONFIG_PPP_NOTIFY_PHASE_SUPPORT
 #undef CONFIG_PPP_PAP_SUPPORT
 
-// The C host must keep central enabled for ESP-IDF link compatibility, but
-// mymota32 never acts as a BLE peripheral or advertiser.
+// The C host keeps central enabled for ESP-IDF link compatibility and for
+// SwitchBot Lock Ultra GATT state reads. mymota32 never acts as a BLE
+// peripheral or advertiser.
 #undef CONFIG_BT_NIMBLE_ROLE_PERIPHERAL
 #undef CONFIG_BT_NIMBLE_ROLE_BROADCASTER
 #undef CONFIG_NIMBLE_ROLE_PERIPHERAL
@@ -31,8 +32,10 @@
 #define CONFIG_BT_NIMBLE_ROLE_PERIPHERAL 0
 #define CONFIG_BT_NIMBLE_ROLE_BROADCASTER 0
 
-// The application only uses NimBLEDevice + NimBLEScan. Limit role pruning to
-// C++ wrapper code so ESP-IDF's prebuilt Bluetooth host stays link-compatible.
+// The application uses observer scanning for iBeacon/SwitchBot discovery and
+// central/client GATT for SwitchBot Lock Ultra state reads. Limit peripheral
+// role pruning to C++ wrapper code so ESP-IDF's prebuilt Bluetooth host stays
+// link-compatible.
 #if defined(__cplusplus)
 #undef CONFIG_BT_NIMBLE_ROLE_CENTRAL
 #undef CONFIG_BT_NIMBLE_ROLE_PERIPHERAL
@@ -42,13 +45,14 @@
 #undef CONFIG_NIMBLE_ROLE_PERIPHERAL
 #undef CONFIG_NIMBLE_ROLE_BROADCASTER
 #undef CONFIG_NIMBLE_ROLE_OBSERVER
-#define CONFIG_BT_NIMBLE_ROLE_CENTRAL 0
+#define CONFIG_BT_NIMBLE_ROLE_CENTRAL 1
 #define CONFIG_BT_NIMBLE_ROLE_PERIPHERAL 0
 #define CONFIG_BT_NIMBLE_ROLE_BROADCASTER 0
 #define CONFIG_BT_NIMBLE_ROLE_OBSERVER 1
 #endif
 
-// Passive scanning never pairs or opens encrypted BLE links.
+// The Lock Ultra protocol uses its own application-layer AES key and does not
+// require BLE pairing/bonding.
 #define CONFIG_BT_NIMBLE_CRYPTO_STACK_MBEDTLS 1
 #define MYNEWT_VAL_BLE_SM_LEGACY 0
 #define MYNEWT_VAL_BLE_SM_SC 0
