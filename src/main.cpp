@@ -5584,6 +5584,7 @@ void resolveSwitchbotLockActiveCommands(uint8_t status) {
     }
   }
   if (status == kSwitchbotLockCommandStatusSuccess) {
+    switchbotLockQueueStatusCallback(desired);
     setSwitchbotLockStatus(desired == kSwitchbotLockStateLocked ? "lock_confirmed" : "unlock_confirmed");
   } else if (status == kSwitchbotLockCommandStatusTimeout) {
     setSwitchbotLockStatus(desired == kSwitchbotLockStateLocked ? "lock_timeout" : "unlock_timeout");
@@ -6221,6 +6222,8 @@ void maintainSwitchbotLockCommand() {
     switchbot_lock_active_ble_sent = true;
     switchbot_lock_active_ble_sent_ms = now;
     if (!ok) {
+      switchbotLockResolveActiveIfMatched();
+      if (switchbot_lock_active_direction == kSwitchbotLockStateUnknown) return;
       resolveSwitchbotLockActiveCommands(kSwitchbotLockCommandStatusTimeout);
       return;
     }
