@@ -798,6 +798,47 @@ uint8_t activePhyMode() {
   return kPhyModeAuto;
 }
 
+bool ipAddressSet(const IPAddress &ip);
+
+bool wifiSdkConnected() {
+  return WiFi.status() == WL_CONNECTED;
+}
+
+bool wifiStationHasIp() {
+  return ipAddressSet(WiFi.localIP());
+}
+
+bool wifiUsable() {
+  return wifiSdkConnected() || wifiStationHasIp();
+}
+
+const __FlashStringHelper *wifiStatusName(wl_status_t status) {
+  switch (status) {
+    case WL_IDLE_STATUS: return F("idle");
+    case WL_NO_SSID_AVAIL: return F("no_ssid");
+    case WL_SCAN_COMPLETED: return F("scan_done");
+    case WL_CONNECTED: return F("connected");
+    case WL_CONNECT_FAILED: return F("connect_failed");
+    case WL_CONNECTION_LOST: return F("connection_lost");
+    case WL_DISCONNECTED: return F("disconnected");
+    case WL_STOPPED: return F("stopped");
+    case WL_NO_SHIELD: return F("no_shield");
+    default: return F("unknown");
+  }
+}
+
+const __FlashStringHelper *wifiDisplayLabel(wl_status_t status, bool has_station_ip) {
+  if (status == WL_CONNECTED) return F("connected");
+  if (has_station_ip) return F("usable");
+  return F("disconnected");
+}
+
+const __FlashStringHelper *wifiDisplayClass(wl_status_t status, bool has_station_ip) {
+  if (status == WL_CONNECTED) return F("pill ok");
+  if (has_station_ip) return F("pill warn");
+  return F("pill bad");
+}
+
 uint32_t chipIdValue() {
   const uint64_t mac = ESP.getEfuseMac();
   uint32_t id = 0;
@@ -908,6 +949,10 @@ String jsonEscape(const char *input) {
 
 String ipToString(IPAddress ip) {
   return ip.toString();
+}
+
+bool ipAddressSet(const IPAddress &ip) {
+  return ip[0] != 0 || ip[1] != 0 || ip[2] != 0 || ip[3] != 0;
 }
 
 String pinName(uint8_t pin) {
@@ -5637,14 +5682,14 @@ void appendHeader(String &page, const __FlashStringHelper *title, bool show_spin
     page += F(" &middot; ");
     page += htmlEscape(config.hostname);
   }
-  page += F("</title><style>:root{--bg:#f6f7f9;--panel:#fff;--line:#d8dee8;--text:#17202a;--muted:#687386;--ok:#177245;--bad:#a23a36;--accent:#1f7a5f;--accent2:#205c8a}");
+  page += F("</title><style>:root{--bg:#f6f7f9;--panel:#fff;--line:#d8dee8;--text:#17202a;--muted:#687386;--ok:#177245;--warn:#8a5d00;--bad:#a23a36;--accent:#1f7a5f;--accent2:#205c8a}");
   page += F("*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Arial,sans-serif;font-size:15px;line-height:1.4}");
   page += F(".top{background:#17202a;color:#fff;border-bottom:4px solid var(--accent);padding:18px 16px}.topin{max-width:1080px;margin:0 auto;display:flex;align-items:end;justify-content:space-between;gap:12px;flex-wrap:wrap}");
   page += F(".brand{font-size:28px;font-weight:700;letter-spacing:0;color:inherit;text-decoration:none}.brand span{color:#7dd3aa}.sub{color:#c7d0dc;font-size:13px}.meta{display:flex;align-items:center;gap:8px}");
   page += F(".spin{width:13px;height:13px;border:2px solid rgba(255,255,255,.35);border-top-color:#7dd3aa;border-radius:50%;opacity:.55}.spin.active{opacity:1;animation:rot .7s linear infinite}@keyframes rot{to{transform:rotate(360deg)}}main{max-width:1080px;margin:18px auto 28px;padding:0 14px}");
   page += F(".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}.wide{grid-column:1/-1}");
   page += F(".panel h2{font-size:17px;margin:0 0 12px}.panel h3{font-size:14px;margin:0 0 10px}.panel-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px}.panel-title h2{margin:0}.kv{display:grid;grid-template-columns:minmax(110px,42%) 1fr;gap:8px 12px}.kv span,.hint{color:var(--muted)}.kv div{min-width:0}");
-  page += F("code{background:#eef2f6;border:1px solid #dce3ea;border-radius:4px;padding:1px 4px;word-break:break-word}.pill{display:inline-block;border-radius:999px;padding:2px 8px;background:#eef2f6;color:#364152}.pill.ok{background:var(--ok);color:#fff}.pill.bad{background:var(--bad);color:#fff}.panel h2 .pill{font-size:13px;font-weight:400;vertical-align:1px}.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}");
+  page += F("code{background:#eef2f6;border:1px solid #dce3ea;border-radius:4px;padding:1px 4px;word-break:break-word}.pill{display:inline-block;border-radius:999px;padding:2px 8px;background:#eef2f6;color:#364152}.pill.ok{background:var(--ok);color:#fff}.pill.warn{background:var(--warn);color:#fff}.pill.bad{background:var(--bad);color:#fff}.panel h2 .pill{font-size:13px;font-weight:400;vertical-align:1px}.ok{color:var(--ok)}.bad{color:var(--bad)}.muted{color:var(--muted)}");
   page += F(".tokens{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.tokens div{display:flex;flex-direction:column;gap:3px}.help{position:relative;margin-left:auto}.help-q{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border:1px solid var(--line);border-radius:50%;background:#eef2f6;color:var(--accent2);font-size:14px;font-weight:700;cursor:help}.help-box{display:none;position:absolute;right:0;top:30px;z-index:30;width:520px;max-width:calc(100vw - 48px);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;box-shadow:0 8px 24px rgba(0,0,0,.18);color:var(--text);font-size:14px;font-weight:400;line-height:1.4}.help:hover .help-box,.help:focus-within .help-box{display:block}.help-box p{margin:0 0 8px}.bb{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}.ae,.me{display:none}.ae.show,.me.show{display:block}.hidden{display:none}");
   page += F("form{margin:0}.row{margin:10px 0}label{display:block;font-weight:600;color:#344054}input,button,select,textarea{font:inherit}input,select,textarea{width:100%;margin-top:4px;padding:9px;border:1px solid #b9c4d0;border-radius:6px;background:#fff}input[type=checkbox]{width:auto;margin:0 6px 0 0;padding:0;vertical-align:-1px}textarea{min-height:92px;resize:vertical}");
   page += F("button,.btn{display:inline-block;margin:4px 4px 0 0;padding:8px 12px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff;text-decoration:none;cursor:pointer}.secondary{background:#fff;color:var(--accent2);border-color:#9eb7cf}.danger{background:#fff;color:var(--bad);border-color:#d4aaa7}.inline{display:inline}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.inline button{margin:0 4px 0 0}.list{margin:0;padding-left:18px}@media(max-width:520px){.kv{grid-template-columns:1fr}.brand{font-size:24px}}</style></head><body>");
@@ -5668,7 +5713,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("t('live-heap',d.heap+' bytes');if(d.flash){t('live-flash-used',d.flash.used+' bytes');t('live-flash-total',d.flash.total+' bytes');t('live-flash-free',d.flash.free+' bytes');}t('live-uptime',d.uptime+'s');t('live-active-phy',d.active_phy);");
   page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',Number(d.perf.loop_max_us/1000).toFixed(1)+' ms');}");
   page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);");
-  page += F("p('live-wifi',d.wifi?'connected':'disconnected',d.wifi?'pill ok':'pill bad');t('live-ssid',d.wifi_ssid||'n/a');t('live-ip',d.ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
+  page += F("var wu=d.wifi_usable!=null?d.wifi_usable:d.wifi,ws=!!d.wifi_sdk_connected,wl=ws?'connected':(wu?'usable':'disconnected'),wc=ws?'pill ok':(wu?'pill warn':'pill bad');p('live-wifi',wl,wc);t('live-ssid',d.wifi_ssid||'n/a');t('live-wifi-sdk',(d.wifi_status_name||'unknown')+' ('+(d.wifi_status==null?'?':d.wifi_status)+')');t('live-ip',d.ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
   page += F("if(d.mqtt){t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',d.mqtt.last_attempt_ms_ago==null?'n/a':d.mqtt.last_attempt_ms_ago+' ms ago');}");
 #if MYMOTA32_LIGHT_SUPPORTED
@@ -5845,18 +5890,32 @@ void appendStatusBlock(String &page) {
   }
   page += F("</div>");
 
-  if (WiFi.status() == WL_CONNECTED) {
-    page += F("<span>Wi-Fi</span><div><span id='live-wifi' class='pill ok'>connected</span> <code id='live-ssid'>");
-    page += htmlEscape(WiFi.SSID());
-    page += F("</code></div><span>IP</span><div><code id='live-ip'>");
-    page += ipToString(WiFi.localIP());
-    page += F("</code></div><span>RSSI</span><div><code id='live-rssi'>");
+  const wl_status_t wifi_status = WiFi.status();
+  const IPAddress station_ip = WiFi.localIP();
+  const bool station_has_ip = ipAddressSet(station_ip);
+  const bool wifi_sdk_connected = wifi_status == WL_CONNECTED;
+  const bool wifi_usable = wifi_sdk_connected || station_has_ip;
+  page += F("<span>Wi-Fi</span><div><span id='live-wifi' class='");
+  page += wifiDisplayClass(wifi_status, station_has_ip);
+  page += F("'>");
+  page += wifiDisplayLabel(wifi_status, station_has_ip);
+  page += F("</span> <code id='live-ssid'>");
+  if (wifi_usable) page += htmlEscape(wifi_sdk_connected ? WiFi.SSID() : String(config.ssid));
+  else page += F("n/a");
+  page += F("</code></div><span>Wi-Fi SDK</span><div><code id='live-wifi-sdk'>");
+  page += wifiStatusName(wifi_status);
+  page += F(" (");
+  page += String(static_cast<uint8_t>(wifi_status));
+  page += F(")</code></div><span>IP</span><div><code id='live-ip'>");
+  page += station_has_ip ? ipToString(station_ip) : String(F("n/a"));
+  page += F("</code></div><span>RSSI</span><div><code id='live-rssi'>");
+  if (wifi_usable) {
     page += String(WiFi.RSSI());
-    page += F(" dBm</code></div>");
+    page += F(" dBm");
   } else {
-    page += F("<span>Wi-Fi</span><div><span id='live-wifi' class='pill bad'>disconnected</span> <code id='live-ssid'>n/a</code></div>");
-    page += F("<span>IP</span><div><code id='live-ip'>n/a</code></div><span>RSSI</span><div><code id='live-rssi'>n/a</code></div>");
+    page += F("n/a");
   }
+  page += F("</code></div>");
   page += F("<span>Tx power</span><div><code id='live-wifi-tx-power'>");
   appendWifiTxPowerText(page);
   page += F("</code></div>");
@@ -9138,7 +9197,7 @@ void appendHealthPartitionsJson(String &out) {
 void handleHealth() {
   updateIBeaconMqttReportRate(millis());
   String out;
-  out.reserve(2300);
+  out.reserve(2400);
   beginStreamedResponse("application/json");
   out += F("{\"name\":\"myMota32\",\"version\":\"");
   out += F(MYMOTA32_VERSION);
@@ -9172,14 +9231,30 @@ void handleHealth() {
   out += perf_last_loop_load;
   out += F(",\"loop_max_us\":");
   out += perf_last_loop_max_us;
+  const wl_status_t wifi_status = WiFi.status();
+  const IPAddress station_ip = WiFi.localIP();
+  const bool station_has_ip = ipAddressSet(station_ip);
+  const bool wifi_sdk_connected = wifi_status == WL_CONNECTED;
+  const bool wifi_usable = wifi_sdk_connected || station_has_ip;
   out += F("},\"wifi\":");
-  out += ((WiFi.status() == WL_CONNECTED) ? F("true") : F("false"));
+  out += (wifi_usable ? F("true") : F("false"));
+  out += F(",\"wifi_usable\":");
+  out += (wifi_usable ? F("true") : F("false"));
+  out += F(",\"wifi_sdk_connected\":");
+  out += (wifi_sdk_connected ? F("true") : F("false"));
+  out += F(",\"wifi_status\":");
+  out += String(static_cast<uint8_t>(wifi_status));
+  out += F(",\"wifi_status_name\":\"");
+  out += wifiStatusName(wifi_status);
   out += F(",\"wifi_ssid\":\"");
-  out += (WiFi.status() == WL_CONNECTED ? jsonEscape(WiFi.SSID().c_str()) : String());
+  if (wifi_usable) {
+    const String ssid = wifi_sdk_connected ? WiFi.SSID() : String(config.ssid);
+    out += jsonEscape(ssid.c_str());
+  }
   out += F("\",\"ip\":\"");
-  out += (WiFi.status() == WL_CONNECTED ? ipToString(WiFi.localIP()) : String());
+  if (station_has_ip) out += ipToString(station_ip);
   out += F("\",\"rssi\":");
-  if (WiFi.status() == WL_CONNECTED) out += WiFi.RSSI();
+  if (wifi_usable) out += WiFi.RSSI();
   else out += F("null");
   out += F(",\"wifi_tx_power\":{\"dynamic\":");
   out += config.wifi_dynamic_power ? F("true") : F("false");
