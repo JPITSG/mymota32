@@ -320,12 +320,16 @@ constexpr uint16_t kSwitchbotLockScanWindowMs = 80;
 constexpr uint8_t kSwitchbotLockStateUnknown = 255;
 constexpr uint8_t kSwitchbotLockStateLocked = 0;
 constexpr uint8_t kSwitchbotLockStateUnlocked = 1;
+constexpr uint8_t kSwitchbotLockStateLocking = 2;
+constexpr uint8_t kSwitchbotLockStateUnlocking = 3;
 constexpr const char *kSwitchbotServiceUuid = "cba20d00-224d-11e6-9fb8-0002a5d5c51b";
 constexpr const char *kSwitchbotTxUuid = "cba20002-224d-11e6-9fb8-0002a5d5c51b";
 constexpr const char *kSwitchbotRxUuid = "cba20003-224d-11e6-9fb8-0002a5d5c51b";
 const uint8_t kSwitchbotCmdLockInfo[] = {0x57, 0x0f, 0x4f, 0x81, 0x07};
 const uint8_t kSwitchbotCmdBasic[] = {0x57, 0x02};
 const uint8_t kSwitchbotCmdNotifOn[] = {0x57, 0x0e, 0x01, 0x00, 0x1e, 0x00, 0x00, 0x81, 0x07};
+const uint8_t kSwitchbotCmdLock[] = {0x57, 0x0f, 0x4e, 0x01, 0x01, 0x00, 0x00, 0x00};
+const uint8_t kSwitchbotCmdUnlock[] = {0x57, 0x0f, 0x4e, 0x01, 0x01, 0x00, 0x00, 0x80};
 
 constexpr uint8_t kPowerStateOff = 0;
 constexpr uint8_t kPowerStateOn = 1;
@@ -5364,11 +5368,14 @@ bool switchbotLockEncryptedSend(NimBLERemoteCharacteristic *tx, const uint8_t *c
   return switchbotLockDecryptResponse(raw, raw_len, key, plain, plain_len);
 }
 
-bool switchbotLockPollCandidate(const char *mac, uint8_t address_type, uint8_t key_id, const uint8_t (&key)[16]) {
+bool switchbotLockPollCandidate(const char *mac, uint8_t address_type, uint8_t key_id, const uint8_t (&key)[16],
+                                const uint8_t *action_cmd = nullptr, size_t action_cmd_len = 0,
+                                uint8_t optimistic_state = kSwitchbotLockStateUnknown) {
   if (!mac || !mac[0]) return false;
   NimBLEClient *client = NimBLEDevice::createClient();
   if (!client) return false;
   bool ok = false;
+  bool command_ok = false;
   client->setConnectTimeout(kSwitchbotLockConnectTimeoutSec);
   client->setConnectRetries(1);
   client->setConnectionParams(12, 24, 0, 60, 32, 16);
@@ -5403,19 +5410,31 @@ bool switchbotLockPollCandidate(const char *mac, uint8_t address_type, uint8_t k
     uint8_t plain[kSwitchbotLockMaxPacketBytes]{};
     size_t plain_len = 0;
     switchbotLockEncryptedSend(tx, kSwitchbotCmdNotifOn, sizeof(kSwitchbotCmdNotifOn), key_id, key, plain, plain_len);
-    if (switchbotLockEncryptedSend(tx, kSwitchbotCmdLockInfo, sizeof(kSwitchbotCmdLockInfo), key_id, key, plain, plain_len) &&
-        plain_len > 2) {
-      switchbot_lock_state = (plain[1] & 0x78) >> 3;
-      switchbot_lock_door_open = (plain[2] & 0x10) != 0;
-      switchbot_lock_door_known = true;
-      ok = true;
+    if (action_cmd && action_cmd_len > 0) {
+      if (!switchbotLockEncryptedSend(tx, action_cmd, action_cmd_len, key_id, key, plain, plain_len) ||
+          plain_len == 0 || (plain[0] != 1 && plain[0] != 6)) {
+        goto done;
+      }
+      command_ok = true;
+      if (optimistic_state != kSwitchbotLockStateUnknown) {
+        switchbot_lock_state = optimistic_state;
+        switchbot_lock_last_update_ms = millis();
+      }
+    } else {
+      if (switchbotLockEncryptedSend(tx, kSwitchbotCmdLockInfo, sizeof(kSwitchbotCmdLockInfo), key_id, key, plain, plain_len) &&
+          plain_len > 2) {
+        switchbot_lock_state = (plain[1] & 0x78) >> 3;
+        switchbot_lock_door_open = (plain[2] & 0x10) != 0;
+        switchbot_lock_door_known = true;
+        ok = true;
+      }
     }
     if (switchbotLockEncryptedSend(tx, kSwitchbotCmdBasic, sizeof(kSwitchbotCmdBasic), key_id, key, plain, plain_len) &&
         plain_len > 1) {
       switchbot_lock_battery = static_cast<int8_t>(plain[1]);
       ok = true;
     }
-    if (ok) {
+    if (ok || command_ok) {
       strlcpy(switchbot_lock_discovered_mac, mac, sizeof(switchbot_lock_discovered_mac));
       switchbot_lock_discovered_type = address_type;
       switchbot_lock_last_update_ms = millis();
@@ -5425,7 +5444,7 @@ bool switchbotLockPollCandidate(const char *mac, uint8_t address_type, uint8_t k
 done:
   if (client->isConnected()) client->disconnect();
   NimBLEDevice::deleteClient(client);
-  return ok;
+  return ok || command_ok;
 }
 #endif
 
@@ -5444,7 +5463,9 @@ void resetSwitchbotLockRuntimeState() {
   setSwitchbotLockStatus(config.switchbot_lock_enabled ? "idle" : "disabled");
 }
 
-bool switchbotLockPollOnce() {
+bool switchbotLockRunWithCandidates(const uint8_t *action_cmd, size_t action_cmd_len,
+                                    uint8_t optimistic_state, const char *busy_status,
+                                    const char *failure_status, const char *success_status) {
   if (!switchbotLockSupported()) {
     setSwitchbotLockStatus("unsupported");
     return false;
@@ -5470,15 +5491,18 @@ bool switchbotLockPollOnce() {
     delay(50);
   }
   switchbot_lock_polling = true;
-  setSwitchbotLockStatus("polling");
+  setSwitchbotLockStatus(busy_status);
   bool ok = false;
   if (config.switchbot_lock_mac[0]) {
     uint8_t type = switchbot_lock_discovered_type;
     if (switchbot_lock_discovered_mac[0] && strcmp(switchbot_lock_discovered_mac, config.switchbot_lock_mac) == 0) {
-      ok = switchbotLockPollCandidate(config.switchbot_lock_mac, type, key_id, key);
+      ok = switchbotLockPollCandidate(config.switchbot_lock_mac, type, key_id, key,
+                                      action_cmd, action_cmd_len, optimistic_state);
     }
-    if (!ok) ok = switchbotLockPollCandidate(config.switchbot_lock_mac, 0, key_id, key);
-    if (!ok) ok = switchbotLockPollCandidate(config.switchbot_lock_mac, 1, key_id, key);
+    if (!ok) ok = switchbotLockPollCandidate(config.switchbot_lock_mac, 0, key_id, key,
+                                             action_cmd, action_cmd_len, optimistic_state);
+    if (!ok) ok = switchbotLockPollCandidate(config.switchbot_lock_mac, 1, key_id, key,
+                                             action_cmd, action_cmd_len, optimistic_state);
   } else {
     for (uint8_t pass = 0; pass < kSwitchbotLockCandidateCount && !ok; pass++) {
       int8_t best = -1;
@@ -5489,20 +5513,36 @@ bool switchbotLockPollOnce() {
       if (best < 0) break;
       ok = switchbotLockPollCandidate(switchbot_lock_candidates[best].mac,
                                       switchbot_lock_candidates[best].address_type,
-                                      key_id, key);
+                                      key_id, key, action_cmd, action_cmd_len, optimistic_state);
       switchbot_lock_candidates[best].used = false;
     }
   }
   switchbot_lock_polling = false;
-  if (!ok) setSwitchbotLockStatus("poll_failed");
+  if (!ok) setSwitchbotLockStatus(failure_status);
+  if (ok) setSwitchbotLockStatus(success_status);
   if ((restart_scan || config.ibeacon_enabled || config.switchbot_lock_enabled) && startBleScan("switchbot")) {
     ibeacon_scanning = config.ibeacon_enabled;
-    if (!config.ibeacon_enabled && ok) setSwitchbotLockStatus("ok");
   }
   return ok;
 #else
   return false;
 #endif
+}
+
+bool switchbotLockPollOnce() {
+  return switchbotLockRunWithCandidates(nullptr, 0, kSwitchbotLockStateUnknown,
+                                        "polling", "poll_failed", "ok");
+}
+
+bool switchbotLockCommand(bool lock) {
+  if (lock) {
+    return switchbotLockRunWithCandidates(kSwitchbotCmdLock, sizeof(kSwitchbotCmdLock),
+                                          kSwitchbotLockStateLocking, "locking",
+                                          "lock_failed", "lock_sent");
+  }
+  return switchbotLockRunWithCandidates(kSwitchbotCmdUnlock, sizeof(kSwitchbotCmdUnlock),
+                                        kSwitchbotLockStateUnlocking, "unlocking",
+                                        "unlock_failed", "unlock_sent");
 }
 
 void maintainSwitchbotLock() {
@@ -6383,7 +6423,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("if(d.light){p('live-light-power',d.light.power?'on':'off',d.light.power?'pill ok':'pill bad');t('live-light-dimmer',d.light.dimmer+'%');t('live-light-ct',d.light.ct+' mired');t('live-light-color',d.light.color||'000000');t('live-light-on-dimmer',d.light.on_dimmer+'%');t('live-light-fade',d.light.fade?'on':'off');t('live-light-speed',d.light.speed);}");
 #endif
   page += F("if(d.ibeacon){t('live-ibeacon-mqtt-rpm',d.ibeacon.mqtt_reports_per_minute+'/min');}");
-  page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,sc=!sl.enabled?'pill':((sl.status=='ok'||sl.status=='advertisement')?'pill ok':'pill warn');p('live-switchbot-lock-status',sl.enabled?(sl.status||'unknown'):'disabled',sc);t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-updated',sl.last_update_ms_ago==null?'n/a':Math.floor(sl.last_update_ms_ago/1000)+'s ago');t('live-switchbot-lock-mac',sl.mac||'n/a');}");
+  page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,st=sl.status||'',bad=st.indexOf('failed')>=0||st=='unsupported'||st=='missing_key'||st=='bad_key',good=st=='ok'||st=='advertisement'||st=='lock_sent'||st=='unlock_sent',sc=!sl.enabled?'pill':(bad?'pill bad':(good?'pill ok':'pill warn'));p('live-switchbot-lock-status',sl.enabled?(st||'unknown'):'disabled',sc);t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-updated',sl.last_update_ms_ago==null?'n/a':Math.floor(sl.last_update_ms_ago/1000)+'s ago');t('live-switchbot-lock-mac',sl.mac||'n/a');}");
   page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!==null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
@@ -7360,6 +7400,14 @@ void appendSwitchbotLockForm(String &page) {
   page += F("<button type='submit'");
   if (unsupported) page += F(" disabled");
   page += F(">Save Switchbot Lock</button></form>");
+  const bool controls_disabled = unsupported || !config.switchbot_lock_enabled ||
+                                 config.switchbot_lock_key_id[0] == '\0' ||
+                                 config.switchbot_lock_key[0] == '\0';
+  page += F("<div class='bb'><h3>Control</h3><form class='inline' data-inline='1' method='post' action='/switchbot-lock-command'><span class='actions'><button name='action' value='lock'");
+  if (controls_disabled) page += F(" disabled");
+  page += F(">Lock</button><button class='secondary' name='action' value='unlock'");
+  if (controls_disabled) page += F(" disabled");
+  page += F(">Unlock</button></span></form></div>");
   page += F("<div class='bb'><h3>State</h3><div class='kv'><span>Lock</span><div><code id='live-switchbot-lock-state'>");
   page += switchbotLockStateName(switchbot_lock_state);
   page += F("</code></div><span>Battery</span><div><code id='live-switchbot-lock-battery'>");
@@ -8545,6 +8593,36 @@ void handleSwitchbotLockSave() {
     stopBleScanIfIdle();
   }
 
+  sendInlineOkOrHome();
+}
+
+void handleSwitchbotLockCommand() {
+  if (!config.switchbot_lock_enabled) {
+    sendPlain(400, F("disabled"));
+    return;
+  }
+  if (!switchbotLockSupported()) {
+    sendPlain(400, F("unsupported"));
+    return;
+  }
+  String action = server.hasArg("action") ? server.arg("action") : String();
+  action.toLowerCase();
+  const bool want_lock = action == F("lock");
+  if (!want_lock && action != F("unlock")) {
+    sendPlain(400, F("invalid action"));
+    return;
+  }
+  if (config.switchbot_lock_key_id[0] == '\0' || config.switchbot_lock_key[0] == '\0') {
+    sendPlain(400, F("missing key"));
+    return;
+  }
+
+  const bool ok = switchbotLockCommand(want_lock);
+  if (!ok) {
+    sendPlain(500, want_lock ? F("lock failed") : F("unlock failed"));
+    return;
+  }
+  switchbot_lock_next_poll_ms = millis() + 3000UL;
   sendInlineOkOrHome();
 }
 
@@ -10567,6 +10645,7 @@ void setupRoutes() {
   server.on("/energy", HTTP_POST, handleEnergySave);
   server.on("/ibeacon", HTTP_POST, handleIBeaconSave);
   server.on("/switchbot-lock", HTTP_POST, handleSwitchbotLockSave);
+  server.on("/switchbot-lock-command", HTTP_POST, handleSwitchbotLockCommand);
   server.on("/system", HTTP_POST, handleSystemSave);
   server.on("/settings/export", HTTP_GET, handleSettingsExport);
   server.on("/settings/import", HTTP_POST, handleSettingsImport);
