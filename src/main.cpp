@@ -8598,11 +8598,11 @@ void appendTemplateStatus(String &page) {
     page += String(runtime_template.flag);
     page += F("</code></div><span>GPIO roles</span><div><code>");
     page += String(runtime_template.relay_count);
-    page += F("</code> relays <code>");
+    page += F("</code> relays<br><code>");
     page += String(runtime_template.button_count);
-    page += F("</code> inputs <code>");
+    page += F("</code> inputs<br><code>");
     page += String(runtime_template.led_count);
-    page += F("</code> LEDs</div>");
+    page += F("</code> leds</div>");
 #if MYMOTA32_LIGHT_SUPPORTED
     if (light.present) {
       page += F("<span>Light</span><div><code>SM2335</code> DAT <code>");
@@ -8625,19 +8625,19 @@ void appendTemplateStatus(String &page) {
       page += F("<span>Energy</span><div><code>");
       page += energyDriverName();
       if (energy.driver == kEnergyDriverBl0939) {
-        page += F("</code> RX <code>");
+        page += F("</code><br>RX <code>");
         page += pinName(energy.rx_pin);
-        page += F("</code>, TX <code>");
+        page += F("</code><br>TX <code>");
         page += pinName(energy.tx_pin);
       } else if (energy.driver == kEnergyDriverHlw8012) {
-        page += F("</code> CF <code>");
+        page += F("</code><br>CF <code>");
         page += pinName(energy.cf_pin);
-        page += F("</code>, CF1 <code>");
+        page += F("</code><br>CF1 <code>");
         page += pinName(energy.cf1_pin);
-        page += F("</code>, SEL <code>");
+        page += F("</code><br>SEL <code>");
         page += pinName(energy.sel_pin);
       }
-      page += F("</code>, channels <code>");
+      page += F("</code><br>channels <code>");
       page += String(energy.channel_count);
       page += F("</code></div>");
     }
