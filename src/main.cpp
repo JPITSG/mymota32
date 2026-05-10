@@ -8191,15 +8191,20 @@ const esp_partition_t *tasmotaSafebootPartition() {
                                                               nullptr);
   if (!partition) return nullptr;
 
+  const bool label_safeboot = containsIgnoreCase(partition->label, "safeboot");
+
   esp_app_desc_t desc{};
-  if (esp_ota_get_partition_description(partition, &desc) != ESP_OK) return nullptr;
+  if (esp_ota_get_partition_description(partition, &desc) != ESP_OK) {
+    return label_safeboot ? partition : nullptr;
+  }
 
   const bool tasmota = containsIgnoreCase(desc.project_name, "tasmota") ||
                        containsIgnoreCase(desc.version, "tasmota");
-  const bool safeboot = containsIgnoreCase(partition->label, "safeboot") ||
+  const bool safeboot = label_safeboot ||
                         containsIgnoreCase(desc.project_name, "safeboot") ||
                         containsIgnoreCase(desc.version, "safeboot");
-  return tasmota && safeboot ? partition : nullptr;
+  if (tasmota && safeboot) return partition;
+  return label_safeboot ? partition : nullptr;
 }
 
 uint16_t readLe16(const uint8_t *data, size_t offset) {
