@@ -104,6 +104,7 @@ constexpr size_t kTasmotaSettingsBlobSize = 4096;
 constexpr size_t kTasmotaSettingsTextPoolOffset = 0x17;
 constexpr size_t kTasmotaSettingsTextPoolSize = 699;
 constexpr size_t kTasmotaSettingsCfgSizeOffset = 0x02;
+constexpr size_t kTasmotaSettingsCrc16Offset = 0x0e;
 constexpr size_t kTasmotaSettingsCrc32Offset = 0xffc;
 constexpr uint8_t kTasmotaTextIndexSsid1 = 4;
 constexpr uint8_t kTasmotaTextIndexPassword1 = 6;
@@ -8219,6 +8220,28 @@ uint32_t readLe32(const uint8_t *data, size_t offset) {
          (static_cast<uint32_t>(data[offset + 3]) << 24);
 }
 
+void writeLe16(uint8_t *data, size_t offset, uint16_t value) {
+  data[offset] = value & 0xff;
+  data[offset + 1] = value >> 8;
+}
+
+void writeLe32(uint8_t *data, size_t offset, uint32_t value) {
+  data[offset] = value & 0xff;
+  data[offset + 1] = (value >> 8) & 0xff;
+  data[offset + 2] = (value >> 16) & 0xff;
+  data[offset + 3] = (value >> 24) & 0xff;
+}
+
+uint16_t tasmotaCfgCrc16(const uint8_t *data, size_t len) {
+  uint16_t crc = 0;
+  for (size_t i = 0; i < len; i++) {
+    if (i < kTasmotaSettingsCrc16Offset || i > kTasmotaSettingsCrc16Offset + 1) {
+      crc += static_cast<uint16_t>(data[i] * (i + 1));
+    }
+  }
+  return crc;
+}
+
 uint32_t tasmotaCfgCrc32(const uint8_t *data, size_t len) {
   uint32_t crc = 0;
   while (len--) {
@@ -8258,6 +8281,67 @@ bool tasmotaSettingsTextAt(const uint8_t *blob, uint8_t index, char *out, size_t
   return true;
 }
 
+size_t tasmotaSettingsTextUsedLen(const uint8_t *blob, size_t min_len) {
+  const uint8_t *pool = blob + kTasmotaSettingsTextPoolOffset;
+  size_t used = 1;
+  for (size_t i = 0; i < kTasmotaSettingsTextPoolSize; i++) {
+    if (pool[i] != 0) used = (i + 2 <= kTasmotaSettingsTextPoolSize) ? i + 2 : kTasmotaSettingsTextPoolSize;
+  }
+  if (used < min_len) used = min_len;
+  return used > kTasmotaSettingsTextPoolSize ? kTasmotaSettingsTextPoolSize : used;
+}
+
+bool tasmotaSettingsUpdateText(uint8_t *blob, uint8_t index, const char *value, String &error) {
+  if (!blob || !value) {
+    error = F("Missing settings data");
+    return false;
+  }
+  const size_t replace_len = strlen(value);
+  uint8_t *pool = blob + kTasmotaSettingsTextPoolOffset;
+  size_t start = 0;
+  for (uint8_t i = 0; i < index; i++) {
+    while (start < kTasmotaSettingsTextPoolSize && pool[start] != 0) start++;
+    if (start >= kTasmotaSettingsTextPoolSize) {
+      error = F("Tasmota text pool is malformed");
+      return false;
+    }
+    start++;
+  }
+  if (start >= kTasmotaSettingsTextPoolSize) {
+    error = F("Tasmota text index is outside the text pool");
+    return false;
+  }
+
+  size_t end = start;
+  while (end < kTasmotaSettingsTextPoolSize && pool[end] != 0) end++;
+  if (end >= kTasmotaSettingsTextPoolSize) {
+    error = F("Tasmota text value is unterminated");
+    return false;
+  }
+
+  const size_t current_len = end - start;
+  const size_t used_len = tasmotaSettingsTextUsedLen(blob, end + 1);
+  if (replace_len > current_len && used_len + (replace_len - current_len) > kTasmotaSettingsTextPoolSize) {
+    error = F("Tasmota settings text pool is full");
+    return false;
+  }
+
+  if (replace_len != current_len) {
+    memmove(pool + start + replace_len, pool + end, used_len - end);
+  }
+  if (replace_len) memmove(pool + start, value, replace_len);
+  const size_t new_used_len = used_len + replace_len - current_len;
+  if (new_used_len < kTasmotaSettingsTextPoolSize) {
+    memset(pool + new_used_len, 0, kTasmotaSettingsTextPoolSize - new_used_len);
+  }
+  return true;
+}
+
+void refreshTasmotaSettingsCrcs(uint8_t *blob) {
+  writeLe16(blob, kTasmotaSettingsCrc16Offset, tasmotaCfgCrc16(blob, kTasmotaSettingsBlobSize));
+  writeLe32(blob, kTasmotaSettingsCrc32Offset, tasmotaCfgCrc32(blob, kTasmotaSettingsBlobSize - sizeof(uint32_t)));
+}
+
 TasmotaSafebootSettings readTasmotaSafebootSettings() {
   TasmotaSafebootSettings info{};
   if (!tasmotaSafebootPartition()) return info;
@@ -8286,6 +8370,54 @@ TasmotaSafebootSettings readTasmotaSafebootSettings() {
   }
   free(blob);
   return info;
+}
+
+bool writeTasmotaSafebootSettings(const String &ssid, const String &password, String &error) {
+  if (!tasmotaSafebootPartition()) {
+    error = F("Tasmota safeboot partition is not present");
+    return false;
+  }
+  if (ssid.length() == 0 || ssid.length() > kSsidMaxLen || password.length() > kPasswordMaxLen) {
+    error = F("Invalid Tasmota safeboot Wi-Fi settings");
+    return false;
+  }
+
+  Preferences tasmota_prefs;
+  if (!tasmota_prefs.begin("main", false)) {
+    error = F("Could not open Tasmota settings namespace");
+    return false;
+  }
+  const size_t settings_len = tasmota_prefs.getBytesLength("Settings");
+  if (settings_len != kTasmotaSettingsBlobSize) {
+    tasmota_prefs.end();
+    error = F("Tasmota Settings blob is missing");
+    return false;
+  }
+
+  uint8_t *blob = static_cast<uint8_t *>(malloc(kTasmotaSettingsBlobSize));
+  if (!blob) {
+    tasmota_prefs.end();
+    error = F("Out of memory reading Tasmota settings");
+    return false;
+  }
+  const size_t read_len = tasmota_prefs.getBytes("Settings", blob, kTasmotaSettingsBlobSize);
+  if (read_len != kTasmotaSettingsBlobSize || !tasmotaSettingsBlobValid(blob, read_len)) {
+    free(blob);
+    tasmota_prefs.end();
+    error = F("Tasmota Settings blob failed validation");
+    return false;
+  }
+
+  bool ok = tasmotaSettingsUpdateText(blob, kTasmotaTextIndexSsid1, ssid.c_str(), error) &&
+            tasmotaSettingsUpdateText(blob, kTasmotaTextIndexPassword1, password.c_str(), error);
+  if (ok) {
+    refreshTasmotaSettingsCrcs(blob);
+    ok = tasmota_prefs.putBytes("Settings", blob, kTasmotaSettingsBlobSize) == kTasmotaSettingsBlobSize;
+    if (!ok) error = F("Could not write Tasmota Settings blob");
+  }
+  free(blob);
+  tasmota_prefs.end();
+  return ok;
 }
 
 uint8_t otaAppPartitionCount();
@@ -9091,12 +9223,22 @@ void appendTasmotaSafebootForm(String &page) {
   TasmotaSafebootSettings settings = readTasmotaSafebootSettings();
   if (!settings.present) return;
 
-  page += F("<section class='panel'><h2>Tasmota Safeboot</h2>");
-  page += F("<div class='row'><label>SSID<br><input readonly value='");
+  page += F("<section class='panel'><h2>Tasmota Safeboot</h2><form method='post' action='/tasmota-safeboot'>");
+  page += F("<div class='row'><label>SSID<br><input name='ssid' maxlength='32' required");
+  if (!settings.settings_valid) page += F(" disabled");
+  page += F(" value='");
   if (settings.settings_valid) page += htmlEscape(settings.ssid);
-  page += F("'></label></div><div class='row'><label>Password<br><input readonly value='");
+  page += F("'></label></div><div class='row'><label>Password<br><input type='password' name='password' maxlength='64' autocomplete='off'");
+  if (!settings.settings_valid) page += F(" disabled");
+  page += F(" value='");
   if (settings.settings_valid) page += htmlEscape(settings.password);
-  page += F("'></label></div></section>");
+  page += F("' onfocus=\"this.type='text'\" onclick=\"this.type='text'\"></label></div>");
+  if (settings.settings_valid) {
+    page += F("<button type='submit'>Save Tasmota Safeboot</button>");
+  } else {
+    page += F("<p class='hint'>Tasmota settings are present but failed validation, so saving is disabled.</p>");
+  }
+  page += F("</form></section>");
 }
 
 void appendSettingsForm(String &page) {
@@ -9632,6 +9774,25 @@ void handleWifiSave() {
   appendFooter(page, false, true);
   sendHtml(page);
   scheduleRestart(1200, true);
+}
+
+void handleTasmotaSafebootSave() {
+  const String ssid = server.arg("ssid");
+  const String password = server.arg("password");
+  String error;
+  if (!writeTasmotaSafebootSettings(ssid, password, error)) {
+    sendPlain(400, error.length() ? error : String(F("Could not save Tasmota safeboot settings")));
+    return;
+  }
+
+  String page;
+  page.reserve(900);
+  appendHeader(page, F("myMota32 Tasmota Safeboot"));
+  page += F("<p class='ok'>Tasmota safeboot Wi-Fi settings saved.</p>");
+  page += F("<p>The change applies the next time the device boots into Tasmota safeboot.</p>");
+  page += F("<p><a class='btn secondary' href='/'>Back</a></p>");
+  appendFooter(page);
+  sendHtml(page);
 }
 
 void handleTemplateSave() {
@@ -13157,6 +13318,7 @@ void setupRoutes() {
   server.on("/", HTTP_GET, handleRoot);
   server.on("/scan", HTTP_GET, handleScan);
   server.on("/wifi", HTTP_POST, handleWifiSave);
+  server.on("/tasmota-safeboot", HTTP_POST, handleTasmotaSafebootSave);
   server.on("/template", HTTP_POST, handleTemplateSave);
   server.on("/power", HTTP_POST, handlePowerSave);
 #if MYMOTA32_LIGHT_SUPPORTED
