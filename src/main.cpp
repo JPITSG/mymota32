@@ -100,6 +100,13 @@ constexpr uint8_t kPhyModeFailsafe = kPhyModeG;
 constexpr size_t kSsidMaxLen = 32;
 constexpr size_t kPasswordMaxLen = 64;
 constexpr size_t kHostnameMaxLen = 32;
+constexpr size_t kTasmotaSettingsBlobSize = 4096;
+constexpr size_t kTasmotaSettingsTextPoolOffset = 0x17;
+constexpr size_t kTasmotaSettingsTextPoolSize = 699;
+constexpr size_t kTasmotaSettingsCfgSizeOffset = 0x02;
+constexpr size_t kTasmotaSettingsCrc32Offset = 0xffc;
+constexpr uint8_t kTasmotaTextIndexSsid1 = 4;
+constexpr uint8_t kTasmotaTextIndexPassword1 = 6;
 
 constexpr size_t kTemplateGpioCount = 36;
 constexpr size_t kTemplateNameMaxLen = 32;
@@ -625,6 +632,13 @@ struct StoredConfig {
 
   uint16_t power_saving_mode;
   uint8_t wifi_dynamic_power;
+};
+
+struct TasmotaSafebootSettings {
+  bool present;
+  bool settings_valid;
+  char ssid[kSsidMaxLen + 1];
+  char password[kPasswordMaxLen + 1];
 };
 
 struct IBeaconObservation {
@@ -8165,6 +8179,110 @@ uint32_t flashFreeBytes() {
   return total > used ? total - used : 0;
 }
 
+bool containsIgnoreCase(const char *text, const char *needle) {
+  String value(text ? text : "");
+  value.toLowerCase();
+  return value.indexOf(needle) >= 0;
+}
+
+const esp_partition_t *tasmotaSafebootPartition() {
+  const esp_partition_t *partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+                                                              ESP_PARTITION_SUBTYPE_APP_FACTORY,
+                                                              nullptr);
+  if (!partition) return nullptr;
+
+  esp_app_desc_t desc{};
+  if (esp_ota_get_partition_description(partition, &desc) != ESP_OK) return nullptr;
+
+  const bool tasmota = containsIgnoreCase(desc.project_name, "tasmota") ||
+                       containsIgnoreCase(desc.version, "tasmota");
+  const bool safeboot = containsIgnoreCase(partition->label, "safeboot") ||
+                        containsIgnoreCase(desc.project_name, "safeboot") ||
+                        containsIgnoreCase(desc.version, "safeboot");
+  return tasmota && safeboot ? partition : nullptr;
+}
+
+uint16_t readLe16(const uint8_t *data, size_t offset) {
+  return static_cast<uint16_t>(data[offset]) |
+         (static_cast<uint16_t>(data[offset + 1]) << 8);
+}
+
+uint32_t readLe32(const uint8_t *data, size_t offset) {
+  return static_cast<uint32_t>(data[offset]) |
+         (static_cast<uint32_t>(data[offset + 1]) << 8) |
+         (static_cast<uint32_t>(data[offset + 2]) << 16) |
+         (static_cast<uint32_t>(data[offset + 3]) << 24);
+}
+
+uint32_t tasmotaCfgCrc32(const uint8_t *data, size_t len) {
+  uint32_t crc = 0;
+  while (len--) {
+    crc ^= *data++;
+    for (uint8_t bit = 0; bit < 8; bit++) {
+      crc = (crc >> 1) ^ (-static_cast<int32_t>(crc & 1U) & 0xEDB88320UL);
+    }
+  }
+  return ~crc;
+}
+
+bool tasmotaSettingsBlobValid(const uint8_t *blob, size_t len) {
+  if (len != kTasmotaSettingsBlobSize) return false;
+  if (readLe16(blob, kTasmotaSettingsCfgSizeOffset) != kTasmotaSettingsBlobSize) return false;
+  const uint32_t stored_crc = readLe32(blob, kTasmotaSettingsCrc32Offset);
+  if (stored_crc == 0 || stored_crc == 0xffffffffUL) return false;
+  return stored_crc == tasmotaCfgCrc32(blob, kTasmotaSettingsBlobSize - sizeof(uint32_t));
+}
+
+bool tasmotaSettingsTextAt(const uint8_t *blob, uint8_t index, char *out, size_t out_len) {
+  if (!out || out_len == 0) return false;
+  out[0] = '\0';
+  const char *pool = reinterpret_cast<const char *>(blob + kTasmotaSettingsTextPoolOffset);
+  size_t pos = 0;
+  for (uint8_t i = 0; i < index; i++) {
+    while (pos < kTasmotaSettingsTextPoolSize && pool[pos] != '\0') pos++;
+    if (pos >= kTasmotaSettingsTextPoolSize) return false;
+    pos++;
+  }
+  if (pos >= kTasmotaSettingsTextPoolSize) return false;
+
+  size_t len = 0;
+  while (pos + len < kTasmotaSettingsTextPoolSize && pool[pos + len] != '\0') len++;
+  const size_t copy_len = len < (out_len - 1) ? len : (out_len - 1);
+  memcpy(out, pool + pos, copy_len);
+  out[copy_len] = '\0';
+  return true;
+}
+
+TasmotaSafebootSettings readTasmotaSafebootSettings() {
+  TasmotaSafebootSettings info{};
+  if (!tasmotaSafebootPartition()) return info;
+  info.present = true;
+
+  Preferences tasmota_prefs;
+  if (!tasmota_prefs.begin("main", true)) return info;
+  const size_t settings_len = tasmota_prefs.getBytesLength("Settings");
+  if (settings_len != kTasmotaSettingsBlobSize) {
+    tasmota_prefs.end();
+    return info;
+  }
+
+  uint8_t *blob = static_cast<uint8_t *>(malloc(kTasmotaSettingsBlobSize));
+  if (!blob) {
+    tasmota_prefs.end();
+    return info;
+  }
+  const size_t read_len = tasmota_prefs.getBytes("Settings", blob, kTasmotaSettingsBlobSize);
+  tasmota_prefs.end();
+
+  if (read_len == kTasmotaSettingsBlobSize && tasmotaSettingsBlobValid(blob, read_len)) {
+    tasmotaSettingsTextAt(blob, kTasmotaTextIndexSsid1, info.ssid, sizeof(info.ssid));
+    tasmotaSettingsTextAt(blob, kTasmotaTextIndexPassword1, info.password, sizeof(info.password));
+    info.settings_valid = true;
+  }
+  free(blob);
+  return info;
+}
+
 uint8_t otaAppPartitionCount();
 
 void appendStatusBlock(String &page) {
@@ -8964,6 +9082,18 @@ void appendMqttForm(String &page) {
   page += F("'></label></div><button type='submit'>Save MQTT</button></form></section>");
 }
 
+void appendTasmotaSafebootForm(String &page) {
+  TasmotaSafebootSettings settings = readTasmotaSafebootSettings();
+  if (!settings.present) return;
+
+  page += F("<section class='panel'><h2>Tasmota Safeboot</h2>");
+  page += F("<div class='row'><label>SSID<br><input readonly value='");
+  if (settings.settings_valid) page += htmlEscape(settings.ssid);
+  page += F("'></label></div><div class='row'><label>Password<br><input readonly value='");
+  if (settings.settings_valid) page += htmlEscape(settings.password);
+  page += F("'></label></div></section>");
+}
+
 void appendSettingsForm(String &page) {
   page += F("<section class='panel wide'><h2>Settings</h2>");
   page += F("<p><a class='btn secondary' href='/settings/export'>Export settings</a></p>");
@@ -9383,6 +9513,9 @@ void handleRoot() {
   flushStreamChunk(page);
 
   appendMqttForm(page);
+  flushStreamChunk(page);
+
+  appendTasmotaSafebootForm(page);
   flushStreamChunk(page);
 
   page += F("<section class='panel'><h2>System</h2><h3>Firmware</h3><form class='fu' method='post' action='/update?verify=1' enctype='multipart/form-data' data-target='");
