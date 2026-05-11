@@ -1007,6 +1007,10 @@ uint8_t sanitizePowerSavingMode(uint16_t mode) {
   return mode <= kPowerSavingOffLocked ? static_cast<uint8_t>(mode) : kPowerSavingOff;
 }
 
+bool powerSavingModePersists(uint16_t mode) {
+  return sanitizePowerSavingMode(mode) == kPowerSavingOffLocked;
+}
+
 bool parsePowerSavingMode(String value, uint8_t &mode) {
   value.trim();
   value.toLowerCase();
@@ -2322,7 +2326,7 @@ bool loadConfig() {
     if (duplicate) config.shelly_blu_button_macs[i][0] = '\0';
     else strlcpy(config.shelly_blu_button_macs[i], normalized, sizeof(config.shelly_blu_button_macs[i]));
   }
-  config.power_saving_mode = sanitizePowerSavingMode(power_saving_mode);
+  config.power_saving_mode = powerSavingModePersists(power_saving_mode) ? kPowerSavingOffLocked : kPowerSavingOff;
   config.wifi_dynamic_power = wifi_dynamic_power ? 1 : 0;
 
   config_ok = config.ssid[0] != '\0';
@@ -2450,10 +2454,13 @@ bool saveShellyBluButtonConfig(const char macs[kShellyBluButtonMax][kShellyBluBu
 }
 
 bool savePowerSavingConfig(uint8_t mode) {
+  mode = sanitizePowerSavingMode(mode);
   if (!prefs.begin("mymota32", false)) return false;
-  prefs.putUShort("pwr_save", sanitizePowerSavingMode(mode));
+  if (powerSavingModePersists(mode)) prefs.putUShort("pwr_save", mode);
+  else prefs.remove("pwr_save");
   prefs.end();
-  return loadConfig();
+  config.power_saving_mode = mode;
+  return true;
 }
 
 bool powerSavingApiLocked() {
@@ -11515,7 +11522,9 @@ bool commitStoredConfig(const StoredConfig &source) {
   prefs.putUShort("sb_bat_s", sanitizeSwitchbotLockCallbackSeconds(source.switchbot_lock_battery_notify_sec,
                                                                    kSwitchbotLockBatteryNotifyDefaultSec));
   prefs.putBytes("blu_macs", source.shelly_blu_button_macs, sizeof(source.shelly_blu_button_macs));
-  prefs.putUShort("pwr_save", sanitizePowerSavingMode(source.power_saving_mode));
+  const uint8_t power_saving_mode = sanitizePowerSavingMode(source.power_saving_mode);
+  if (powerSavingModePersists(power_saving_mode)) prefs.putUShort("pwr_save", power_saving_mode);
+  else prefs.remove("pwr_save");
   prefs.end();
   return loadConfig();
 }
@@ -11554,7 +11563,7 @@ void appendSettingsExportJson(String &out) {
   out += F("\",\"chip\":\"");
   out += chipIdHex();
   out += F("\"},\"system\":{\"power_saving\":\"");
-  out += powerSavingModeName(config.power_saving_mode);
+  out += powerSavingModeName(powerSavingModePersists(config.power_saving_mode) ? kPowerSavingOffLocked : kPowerSavingOff);
   out += F("\"},\"wifi\":{\"dynamic_power\":");
   out += config.wifi_dynamic_power ? F("true") : F("false");
   out += F("},\"template\":{\"enabled\":");
@@ -11700,7 +11709,7 @@ void importSettingsSystem(const cJSON *root, StoredConfig &target, SettingsImpor
   if (!power_value) return;
   uint8_t mode = kPowerSavingOff;
   if (settingsReadPowerSavingMode(power_value, mode)) {
-    target.power_saving_mode = mode;
+    target.power_saving_mode = powerSavingModePersists(mode) ? kPowerSavingOffLocked : kPowerSavingOff;
     recordSettingsApplied(stats);
   } else {
     recordSettingsSkipped(stats, F("system.power_saving"));
