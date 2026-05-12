@@ -4746,7 +4746,7 @@ uint32_t mqttProtocolKeepaliveMs() {
   return static_cast<uint32_t>(mqttProtocolKeepaliveSec()) * 1000UL;
 }
 
-uint32_t mqttBrokerSilenceTimeoutMs() {
+uint32_t mqttPingResponseTimeoutMs() {
   return mqttProtocolKeepaliveMs() * 2UL;
 }
 
@@ -7942,14 +7942,13 @@ void maintainMqtt() {
   if (!mqttProcessInbound()) return;
 
   uint32_t now = millis();
-  const uint32_t broker_silence_timeout_ms = mqttBrokerSilenceTimeoutMs();
-  if ((last_mqtt_rx && now - last_mqtt_rx >= broker_silence_timeout_ms) ||
-      (mqtt_ping_pending && last_mqtt_ping && now - last_mqtt_ping >= broker_silence_timeout_ms)) {
+  const uint32_t ping_response_timeout_ms = mqttPingResponseTimeoutMs();
+  if (mqtt_ping_pending && last_mqtt_ping && now - last_mqtt_ping >= ping_response_timeout_ms) {
     mqttStop();
     return;
   }
 
-  if (now - last_mqtt_io >= mqttProtocolKeepaliveMs()) {
+  if (!mqtt_ping_pending && now - last_mqtt_io >= mqttProtocolKeepaliveMs()) {
     if (mqttWriteByte(kMqttPacketPingreq) && mqttWriteByte(0x00)) {
       last_mqtt_io = now;
       last_mqtt_ping = now;
