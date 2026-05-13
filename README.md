@@ -69,17 +69,18 @@ image metadata, purges stale gzip artifacts, keeps only the latest three
 firmware versions in `dist/`, and refreshes `dist/MD5SUMS` and
 `dist/SHA256SUMS`.
 
-Debug logging is controlled at build time in `[common] build_flags`:
+Debug logging is controlled at build time in `[common] build_flags`. The default
+release configuration is quiet:
 
+- `MYMOTA32_DEBUG_LOG=0` and `CORE_DEBUG_LEVEL=0` produce production-style quiet
+  builds. The myMota32 debug logging paths compile out when the flag is
+  disabled.
 - `MYMOTA32_DEBUG_LOG=1` enables detailed serial diagnostics at 115200 baud,
   routes myMota32 messages through the Arduino/ESP logging backend, and reports
   `debug_log:true` from `/health`.
-- `CORE_DEBUG_LEVEL=5` is paired with the debug build so ESP32 core diagnostics
-  are visible when chasing startup, Wi-Fi, MQTT, OTA, BLE, input, relay, light,
-  and energy issues.
-- For production-style quiet builds, set `MYMOTA32_DEBUG_LOG=0` and
-  `CORE_DEBUG_LEVEL=0`. The myMota32 debug logging paths compile out when the
-  flag is disabled.
+- `CORE_DEBUG_LEVEL=5` should be paired with the debug build so ESP32 core
+  diagnostics are visible when chasing startup, Wi-Fi, MQTT, OTA, BLE, input,
+  relay, light, and energy issues.
 
 Debug logs intentionally avoid printing Wi-Fi passwords, BLE keys, and other
 secret values. Lengths, configured/not-configured flags, target names, timings,
