@@ -8079,13 +8079,14 @@ void appendHeader(String &page, const __FlashStringHelper *title, bool show_spin
 :root{--bg:#f4f5f7;--bg-2:#fff;--panel:#fff;--panel-2:#fafbfc;--line:#e1e5ec;--line-2:#cdd3dd;--text:#1a1f2b;--text-2:#525a6b;--muted:#8b93a3;--accent:#1f8a5f;--accent-2:#2aa074;--accent-soft:rgba(31,138,95,.10);--warn:#b7791f;--bad:#c0392b;--bad-soft:rgba(192,57,43,.10);--bad-border:rgba(192,57,43,.35);--ok:#1f8a5f;--ok-soft:rgba(31,138,95,.10);--radius:8px;--radius-sm:6px;--shadow:0 1px 2px rgba(20,30,50,.06),0 1px 1px rgba(20,30,50,.04);--header-bg:rgba(255,255,255,.86);--btn-text:#fff;--tint-soft:rgba(20,30,50,.025);--tint-low:rgba(20,30,50,.04);--tint-mid:rgba(20,30,50,.06);--tint-foot:rgba(20,30,50,.025);--shadow-pop:0 12px 40px rgba(20,30,50,.18);--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono','Courier New',monospace;--sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}
 [data-theme=dark]{--bg:#0e1116;--bg-2:#141821;--panel:#171c26;--panel-2:#1c2230;--line:#262d3d;--line-2:#323a4d;--text:#e6eaf2;--text-2:#a4adc2;--muted:#6b748a;--accent:#7dd3aa;--accent-2:#5eead4;--accent-soft:rgba(125,211,170,.12);--warn:#f0b95a;--bad:#f06b6b;--bad-soft:rgba(240,107,107,.12);--bad-border:rgba(240,107,107,.35);--ok:#7dd3aa;--ok-soft:rgba(125,211,170,.12);--shadow:0 1px 0 rgba(255,255,255,.03) inset,0 1px 2px rgba(0,0,0,.2);--header-bg:rgba(14,17,22,.86);--btn-text:#0e1116;--tint-soft:rgba(255,255,255,.015);--tint-low:rgba(255,255,255,.03);--tint-mid:rgba(255,255,255,.05);--tint-foot:rgba(0,0,0,.15);--shadow-pop:0 12px 40px rgba(0,0,0,.5)}
 *{box-sizing:border-box}html,body{margin:0;padding:0}body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh;background-image:radial-gradient(1200px 600px at 50% -200px,var(--accent-soft),transparent 60%),linear-gradient(180deg,var(--bg) 0%,var(--bg-2) 100%)}
-.top{border-bottom:1px solid var(--line);background:var(--header-bg);backdrop-filter:blur(10px);position:sticky;top:0;z-index:50}.topin{max-width:1200px;margin:0 auto;padding:18px 28px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:24px}.brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:18px;color:var(--text);text-decoration:none}.brand b{color:var(--accent)}.logo{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;color:var(--btn-text);box-shadow:0 0 0 1px var(--accent-soft),0 4px 12px var(--accent-soft)}.host{text-align:center;font-family:var(--mono);font-size:13px;color:var(--text-2)}.host .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:8px;vertical-align:1px;box-shadow:0 0 8px var(--accent)}.meta{display:flex;align-items:center;justify-content:flex-end;gap:14px;font-family:var(--mono);font-size:12px;color:var(--muted)}.ver{padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--text-2)}.theme-btn{width:30px;height:30px;margin:0;padding:0;display:inline-flex;align-items:center;justify-content:center;background:var(--tint-low);color:var(--text-2);border:1px solid var(--line);border-radius:50%;cursor:pointer;text-transform:none}.theme-btn:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-soft);filter:none}.spin{width:10px;height:10px;border:2px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;opacity:.5}.spin.active{opacity:1;animation:rot .9s linear infinite}@keyframes rot{to{transform:rotate(360deg)}}
+.top{border-bottom:1px solid var(--line);background:var(--header-bg);backdrop-filter:blur(10px);position:sticky;top:0;z-index:50}.topin{max-width:1200px;margin:0 auto;padding:18px 28px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:24px}.brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:18px;color:var(--text);text-decoration:none}.brand b{color:var(--accent)}.logo{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;color:var(--btn-text);box-shadow:0 0 0 1px var(--accent-soft),0 4px 12px var(--accent-soft)}.host{text-align:center;font-family:var(--mono);font-size:13px;color:var(--text-2)}.host .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:8px;vertical-align:1px;box-shadow:0 0 8px var(--accent)}.meta{display:flex;align-items:center;justify-content:flex-end;gap:14px;font-family:var(--mono);font-size:12px;color:var(--muted)}.ver{padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--text-2)}.theme-btn{width:30px;height:30px;margin:0;padding:0;display:inline-flex;align-items:center;justify-content:center;background:var(--tint-low);color:var(--text-2);border:1px solid var(--line);border-radius:50%;cursor:pointer;text-transform:none}.theme-btn:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-soft);filter:none}.theme-btn .ic-moon{display:none}.theme-btn .ic-sun{display:block}[data-theme=dark] .theme-btn .ic-sun{display:none}[data-theme=dark] .theme-btn .ic-moon{display:block}.spin{width:10px;height:10px;border:2px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;opacity:.5}.spin.active{opacity:1;animation:rot .9s linear infinite}@keyframes rot{to{transform:rotate(360deg)}}
 main{max-width:1200px;margin:0 auto;padding:32px 28px 56px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.wide,.section-head{grid-column:1/-1}.section-head{display:flex;align-items:center;justify-content:space-between;margin:20px 0 0}.section-head h1{font-size:11px;font-weight:600;letter-spacing:0;text-transform:uppercase;color:var(--muted);margin:0}.section-head .rule{flex:1;height:1px;background:var(--line);margin-left:16px}
-.panel{background:linear-gradient(180deg,var(--panel) 0%,var(--panel-2) 100%);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;overflow:hidden}.panel>h2,.panel-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:-16px -18px 16px;padding:14px 18px;border-bottom:1px solid var(--line);background:var(--tint-soft)}.panel h2{font-size:13px;font-weight:600;letter-spacing:0;text-transform:uppercase;color:var(--text)}.panel-title h2{margin:0}.panel h3{font-size:13px;margin:0 0 10px;color:var(--text)}.panel p{margin:10px 0}.kv{display:grid;grid-template-columns:140px 1fr;gap:0 16px}.kv>span,.kv>div{padding:9px 0;border-bottom:1px dashed var(--line);min-width:0}.kv>span{font-size:11px;font-weight:600;letter-spacing:0;text-transform:uppercase;color:var(--muted)}.kv>div{font-family:var(--mono);font-size:13px;color:var(--text);word-break:break-word}.hint,.muted{color:var(--muted);font-size:12px}.ok{color:var(--ok)}.bad{color:var(--bad)}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.stat{background:linear-gradient(180deg,var(--panel) 0%,var(--panel-2) 100%);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;min-height:96px;box-shadow:var(--shadow);position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between}.stat .accent-bar{position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);opacity:.7}.stat .stat-label{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}.stat .stat-value{font-family:var(--mono);font-size:22px;font-weight:500;color:var(--text);margin-top:6px;letter-spacing:-.01em}.stat .stat-sub{font-family:var(--mono);font-size:11px;color:var(--text-2);margin-top:4px;word-break:break-word}@media(max-width:980px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){.stats{grid-template-columns:1fr}}
+.panel{background:linear-gradient(180deg,var(--panel) 0%,var(--panel-2) 100%);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}.panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);background:var(--tint-soft)}.panel-head h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text)}.panel-head .h-meta{font-family:var(--mono);font-size:11px;color:var(--muted)}.panel-body{padding:18px}.panel-foot{padding:12px 18px;border-top:1px solid var(--line);background:var(--tint-foot);display:flex;justify-content:flex-end;gap:8px}.panel h3{font-size:13px;margin:0 0 10px;color:var(--text)}.panel p{margin:10px 0}.kv{display:grid;grid-template-columns:140px 1fr;gap:0 16px}.kv>span,.kv>div{padding:9px 0;border-bottom:1px dashed var(--line);min-width:0}.kv>span{font-size:11px;font-weight:600;letter-spacing:0;text-transform:uppercase;color:var(--muted)}.kv>div{font-family:var(--mono);font-size:13px;color:var(--text);word-break:break-word}.hint,.muted{color:var(--muted);font-size:12px}.ok{color:var(--ok)}.bad{color:var(--bad)}
 code{font-family:var(--mono);font-size:12.5px;background:var(--tint-low);border:1px solid var(--line);border-radius:var(--radius-sm);padding:2px 7px;color:var(--text);word-break:break-word}.pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;font-weight:500;padding:3px 9px;border-radius:999px;background:var(--tint-mid);color:var(--text-2);border:1px solid var(--line)}.pill:before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}.pill.ok{background:var(--ok-soft);color:var(--ok);border-color:var(--accent-soft)}.pill.warn{background:rgba(240,185,90,.1);color:var(--warn);border-color:rgba(240,185,90,.3)}.pill.bad{background:var(--bad-soft);color:var(--bad);border-color:var(--bad-border)}
-form{margin:0}.row{margin:0 0 14px}.row:last-child{margin-bottom:0}label{display:block;font-size:11px;font-weight:600;letter-spacing:0;text-transform:uppercase;color:var(--text-2);margin-bottom:6px}input:not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]):not([type=reset]),select,textarea{width:100%;margin-top:6px;padding:10px 12px;background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:13px}input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);background:var(--bg-2);box-shadow:0 0 0 3px var(--accent-soft)}textarea{min-height:88px;resize:vertical;line-height:1.5}input[type=checkbox],input[type=radio]{width:16px;height:16px;margin:0 8px 0 0;vertical-align:-3px;accent-color:var(--accent)}input[type=file]{font-size:12px}
+form{margin:0}.row{margin:0 0 14px}.row:last-child{margin-bottom:0}label{display:block;font-size:11px;font-weight:600;letter-spacing:0;text-transform:uppercase;color:var(--text-2);margin-bottom:6px}input:not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]):not([type=reset]),select,textarea{width:100%;margin-top:6px;padding:10px 12px;background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:13px}input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);background:var(--bg-2);box-shadow:0 0 0 3px var(--accent-soft)}input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus,input:-webkit-autofill:active,textarea:-webkit-autofill,select:-webkit-autofill{-webkit-text-fill-color:var(--text)!important;-webkit-box-shadow:0 0 0 1000px var(--bg-2) inset!important;box-shadow:0 0 0 1000px var(--bg-2) inset!important;caret-color:var(--text)!important;border:1px solid var(--line)!important;transition:background-color 9999s ease-in-out 0s}input:-webkit-autofill:focus,textarea:-webkit-autofill:focus,select:-webkit-autofill:focus{-webkit-box-shadow:0 0 0 1000px var(--bg-2) inset,0 0 0 3px var(--accent-soft)!important;box-shadow:0 0 0 1000px var(--bg-2) inset,0 0 0 3px var(--accent-soft)!important;border-color:var(--accent)!important}textarea{min-height:88px;resize:vertical;line-height:1.5}input[type=checkbox],input[type=radio]{width:16px;height:16px;margin:0 8px 0 0;vertical-align:-3px;accent-color:var(--accent)}input[type=file]{font-size:12px}
 button,.btn{font-family:var(--sans);display:inline-flex;align-items:center;justify-content:center;gap:6px;margin:4px 4px 0 0;padding:8px 14px;background:var(--accent);color:var(--btn-text);border:1px solid var(--accent);border-radius:var(--radius-sm);font-size:12px;font-weight:600;letter-spacing:0;cursor:pointer;text-decoration:none;text-transform:uppercase}button:hover,.btn:hover{filter:brightness(1.08)}button:disabled,.btn:disabled{opacity:.55;cursor:not-allowed}.secondary{background:transparent;color:var(--text);border-color:var(--line-2)}.secondary:hover{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);filter:none}.danger{background:transparent;color:var(--bad);border-color:var(--bad-border)}.danger:hover{background:var(--bad-soft);filter:none}.inline{display:inline}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.inline button{margin:0}
-.bb{border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;background:var(--tint-foot);margin-top:12px}.bb>strong{display:inline-block;margin-bottom:8px;color:var(--text)}.ae,.me{display:none;padding-top:12px;margin-top:12px;border-top:1px dashed var(--line)}.ae.show,.me.show{display:block}.hidden{display:none}.tokens{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.tokens div{display:flex;flex-direction:column;gap:3px}.help{position:relative;margin-left:auto}.help-q{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--tint-mid);color:var(--text-2);font-weight:700;font-size:11px;border:1px solid var(--line);cursor:help}.help-box{display:none;position:absolute;right:0;top:28px;z-index:30;width:420px;max-width:calc(100vw - 60px);background:var(--panel-2);border:1px solid var(--line-2);border-radius:var(--radius);padding:14px 16px;font-size:12.5px;line-height:1.55;box-shadow:var(--shadow-pop);color:var(--text)}.help:hover .help-box,.help:focus-within .help-box{display:block}.list{margin:0;padding-left:18px}.foot{grid-column:1/-1;text-align:center;padding:24px 0 0;font-family:var(--mono);font-size:11px;color:var(--muted)}
+.subblock{border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;background:var(--tint-foot)}.subblock+.subblock{margin-top:12px}.subblock-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.subblock-head .title{font-weight:600;font-size:13px;color:var(--text)}.subblock-head .meta{font-family:var(--mono);font-size:11px;color:var(--muted)}.ae,.me{display:none;padding-top:12px;margin-top:12px;border-top:1px dashed var(--line)}.ae.show,.me.show{display:block}.hidden{display:none}.tokens{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.tokens div{display:flex;flex-direction:column;gap:3px}.help{position:relative;margin-left:auto}.help-q{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--tint-mid);color:var(--text-2);font-weight:700;font-size:11px;border:1px solid var(--line);cursor:help}.help-box{display:none;position:absolute;right:0;top:28px;z-index:30;width:420px;max-width:calc(100vw - 60px);background:var(--panel-2);border:1px solid var(--line-2);border-radius:var(--radius);padding:14px 16px;font-size:12.5px;line-height:1.55;box-shadow:var(--shadow-pop);color:var(--text)}.help:hover .help-box,.help:focus-within .help-box{display:block}.list{margin:0;padding-left:18px}.foot{grid-column:1/-1;text-align:center;padding:24px 0 0;font-family:var(--mono);font-size:11px;color:var(--muted)}
 @media(max-width:820px){.topin{grid-template-columns:1fr;gap:10px}.host{text-align:left}.meta{justify-content:flex-start}main{padding:22px 14px 42px}.grid{grid-template-columns:1fr}.kv{grid-template-columns:1fr}.kv>span{padding-bottom:0;border-bottom:0}.kv>div{padding-top:3px}.section-head{margin-top:16px}}
 </style></head><body>)CSS");
   const String host = config.hostname[0] ? htmlEscape(config.hostname) : htmlEscape(defaultHostname());
@@ -8098,7 +8099,8 @@ button,.btn{font-family:var(--sans);display:inline-flex;align-items:center;justi
   page += F(" / ");
   page += F(MYMOTA32_TARGET);
   page += F("</span><button id='theme-toggle' class='theme-btn' type='button' title='Toggle theme' aria-label='Toggle theme'>");
-  page += F("<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='4'/><path d='M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41'/></svg>");
+  page += F("<svg class='ic-sun' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='4'/><path d='M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41'/></svg>");
+  page += F("<svg class='ic-moon' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z'/></svg>");
   page += F("</button>");
   if (show_spinner) page += F("<span id='poll-spin' class='spin active'></span>");
   page += F("</div></div></header><main>");
@@ -8117,14 +8119,14 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("function nv(v){return v==null||v===''?'n/a':v;}function yn(v){return v?'yes':'no';}function ag(v){return v==null?'n/a':Math.floor(v/1000)+'s ago';}function ms(v){return v==null?'n/a':v+' ms ago';}");
   page += F("function sd(e,d){if(!e)return;var q=e.querySelectorAll('input,select,textarea,button');for(var i=0;i<q.length;i++)q[i].disabled=d;}var fbz={};function sdb(k,d){var a=document.querySelectorAll('form[data-busy=\"'+k+'\"]');for(var i=0;i<a.length;i++)sd(a[i],d);}");
   page += F("function live(){if(lp)return;lp=1;fh().then(function(d){");
-  page += F("t('live-version',nv(d.version));t('live-target',nv(d.target));t('live-chip',(d.chip_model?d.chip_model:'Chip')+(d.chip_id?' ('+d.chip_id+')':''));t('live-hostname',nv(d.hostname));t('live-heap',d.heap+' bytes');if(d.flash){t('live-flash-used',d.flash.used+' bytes');t('live-flash-total',d.flash.total+' bytes');t('live-flash-free',d.flash.free+' bytes');t('live-flash-chip',d.flash.chip_size+' bytes');}");
+  page += F("t('live-version',nv(d.version));t('live-target',nv(d.target));t('live-chip',(d.chip_model?d.chip_model:'Chip')+(d.chip_id?' ('+d.chip_id+')':''));t('live-hostname',nv(d.hostname));t('live-heap',d.heap+' bytes');t('live-heap-2',d.heap+' bytes');if(d.flash){t('live-flash-used',d.flash.used+' bytes');t('live-flash-total',d.flash.total+' bytes');t('live-flash-free',d.flash.free+' bytes');t('live-flash-chip',d.flash.chip_size+' bytes');}");
   page += F("if(d.partitions){var r=d.partitions.running||{},u=d.partitions.next_update||{},f=d.partitions.factory||{};t('live-part-running-label',nv(r.label));t('live-part-running-size',r.size==null?'n/a':r.size+' bytes');t('live-part-update-label',nv(u.label));t('live-part-update-size',u.size==null?'n/a':u.size+' bytes');t('live-part-factory-label',nv(f.label));t('live-part-factory-size',f.size==null?'n/a':f.size+' bytes');t('live-part-ota-slots',nv(d.partitions.ota_slots));}");
-  page += F("t('live-uptime',d.uptime+'s');t('live-configured-phy',nv(d.configured_phy));t('live-active-phy',nv(d.active_phy));");
+  page += F("t('live-uptime',d.uptime+'s');t('live-uptime-2',d.uptime+'s');t('live-configured-phy',nv(d.configured_phy));t('live-active-phy',nv(d.active_phy));");
   page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',Number(d.perf.loop_max_us/1000).toFixed(1)+' ms');}");
   page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);");
-  page += F("var wu=d.wifi_usable!=null?d.wifi_usable:d.wifi,ws=!!d.wifi_sdk_connected,wl=ws?'connected':(wu?'usable':'disconnected'),wc=ws?'pill ok':(wu?'pill warn':'pill bad');p('live-wifi',wl,wc);t('live-ssid',d.wifi_ssid||'n/a');t('live-wifi-sdk',(d.wifi_status_name||'unknown')+' ('+(d.wifi_status==null?'?':d.wifi_status)+')');t('live-ip',d.ip||'n/a');t('live-gateway',d.gateway_ip||'n/a');t('live-dns',d.dns_ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');t('live-ap',d.ap?(d.ap_ssid||'active'):'off');t('live-ap-ip',d.ap_ip||'n/a');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
+  page += F("var wu=d.wifi_usable!=null?d.wifi_usable:d.wifi,ws=!!d.wifi_sdk_connected,wl=ws?'connected':(wu?'usable':'disconnected'),wc=ws?'pill ok':(wu?'pill warn':'pill bad');p('live-wifi',wl,wc);t('live-ssid',d.wifi_ssid||'n/a');t('live-ssid-2',d.wifi_ssid||'n/a');t('live-wifi-sdk',(d.wifi_status_name||'unknown')+' ('+(d.wifi_status==null?'?':d.wifi_status)+')');t('live-ip',d.ip||'n/a');t('live-ip-2',d.ip||'n/a');t('live-gateway',d.gateway_ip||'n/a');t('live-dns',d.dns_ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');t('live-rssi-2',d.rssi==null?'n/a':d.rssi+' dBm');t('live-ap',d.ap?(d.ap_ssid||'active'):'off');t('live-ap-ip',d.ap_ip||'n/a');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
-  page += F("if(d.mqtt){t('live-mqtt-broker',d.mqtt.enabled?(d.mqtt.host+':'+d.mqtt.port):'not configured');t('live-mqtt-topic',nv(d.mqtt.topic));t('live-mqtt-protocol-keepalive',d.mqtt.protocol_keepalive+'s');t('live-mqtt-state-keepalive',d.mqtt.state_keepalive?d.mqtt.state_keepalive+'s':'disabled');t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',ms(d.mqtt.last_attempt_ms_ago));}");
+  page += F("if(d.mqtt){var mb=d.mqtt.enabled?(d.mqtt.host+':'+d.mqtt.port):'not configured';t('live-mqtt-broker',mb);t('live-mqtt-broker-2',mb);t('live-mqtt-broker-3',mb);t('live-mqtt-topic',nv(d.mqtt.topic));t('live-mqtt-protocol-keepalive',d.mqtt.protocol_keepalive+'s');t('live-mqtt-state-keepalive',d.mqtt.state_keepalive?d.mqtt.state_keepalive+'s':'disabled');t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-pending-2',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',ms(d.mqtt.last_attempt_ms_ago));}");
 #if MYMOTA32_LIGHT_SUPPORTED
   page += F("if(d.light){p('live-light-power',d.light.power?'on':'off',d.light.power?'pill ok':'pill bad');t('live-light-dimmer',d.light.dimmer+'%');t('live-light-ct',d.light.ct+' mired');t('live-light-color',d.light.color||'000000');t('live-light-on-dimmer',d.light.on_dimmer+'%');t('live-light-fade',d.light.fade?'on':'off');t('live-light-speed',d.light.speed);t('live-light-fading',d.light.fading?'yes':'no');t('live-light-driver',nv(d.light.driver));}");
 #endif
@@ -8508,7 +8510,9 @@ bool writeTasmotaSafebootSettings(const String &ssid, const String &password, St
 }
 
 void appendStatusBlock(String &page) {
-  page += F("<section class='panel wide'><h2>System Status</h2><div class='kv'>");
+  page += F("<section class='panel wide'><div class='panel-head'><h2>System Status</h2><span class='h-meta'>");
+  page += F(MYMOTA32_TARGET);
+  page += F("</span></div><div class='panel-body'><div class='kv'>");
   page += F("<span>Version</span><div><code id='live-version'>");
   page += F(MYMOTA32_VERSION);
   page += F("</code> <code id='live-target'>");
@@ -8662,11 +8666,17 @@ void appendStatusBlock(String &page) {
     page += F(" ms ago");
   }
   page += F("</code></div>");
-  page += F("</div></section>");
+  page += F("</div></div></section>");
 }
 
 void appendTemplateStatus(String &page) {
-  page += F("<section class='panel'><h2>Template</h2>");
+  page += F("<section class='panel'><div class='panel-head'><h2>Template</h2>");
+  if (runtime_template.enabled) {
+    page += F("<span class='h-meta'>");
+    page += htmlEscape(runtime_template.name);
+    page += F("</span>");
+  }
+  page += F("</div><div class='panel-body'>");
   if (!runtime_template.enabled) {
     page += F("<p class='muted'>No template configured.</p>");
   } else {
@@ -8739,7 +8749,7 @@ void appendTemplateStatus(String &page) {
       page += F("</p>");
     }
   }
-  page += F("</section>");
+  page += F("</div></section>");
 }
 
 void appendDeviceControls(String &page) {
@@ -8748,7 +8758,7 @@ void appendDeviceControls(String &page) {
   has_device = has_device || light.present;
 #endif
   if (!runtime_template.enabled || !has_device) return;
-  page += F("<section class='panel'><h2>Device</h2>");
+  page += F("<section class='panel'><div class='panel-head'><h2>Device</h2></div><div class='panel-body'>");
 #if MYMOTA32_LIGHT_SUPPORTED
   if (light.present) {
     page += F("<div class='row'><strong>Light</strong> <span id='live-light-power' class='pill ");
@@ -8809,9 +8819,9 @@ void appendDeviceControls(String &page) {
     page += F("'><span class='actions'><button name='state' value='toggle'>Toggle</button><button name='state' value='on'>On</button><button class='secondary' name='state' value='off'>Off</button></span></form></div>");
   }
   if (energy.present) {
-    page += F("<div class='bb'><strong>Energy</strong> <code id='live-energy-driver'>");
+    page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Energy</div><code id='live-energy-driver'>");
     page += energyDriverName();
-    page += F("</code><div class='kv'><span>Power</span><div><code id='live-energy-power'>");
+    page += F("</code></div><div class='kv'><span>Power</span><div><code id='live-energy-power'>");
     appendFloatDecimal(page, energy.power, 1);
     page += F(" W</code></div><span>Voltage</span><div><code id='live-energy-voltage'>");
     appendFloatDecimal(page, energy.voltage, 1);
@@ -8895,7 +8905,7 @@ void appendDeviceControls(String &page) {
     page += String(config.energy_mqtt_change_watts);
     page += F("'></label></div><button type='submit'>Save energy</button></form></div>");
   }
-  page += F("</section>");
+  page += F("</div></section>");
 }
 
 void appendLedAttachmentOption(String &page, uint8_t value, const String &label, uint8_t selected) {
@@ -8910,7 +8920,7 @@ void appendLedAttachmentOption(String &page, uint8_t value, const String &label,
 
 void appendLedSettings(String &page) {
   if (!runtime_template.enabled || !hasConfigurableLedOutputs()) return;
-  page += F("<section class='panel'><h2>LEDs</h2><form data-inline='1' method='post' action='/leds'>");
+  page += F("<section class='panel'><div class='panel-head'><h2>LEDs</h2></div><form id='form-leds' data-inline='1' method='post' action='/leds'><div class='panel-body'>");
   for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
     const PinAssignment *assignment = ledOutputAssignment(i);
     if (!assignment || !hasLedOutput(i)) continue;
@@ -8937,7 +8947,7 @@ void appendLedSettings(String &page) {
     }
     page += F("</select></label></div>");
   }
-  page += F("<button type='submit'>Save LEDs</button></form></section>");
+  page += F("</div></form><div class='panel-foot'><button type='submit' form='form-leds'>Save LEDs</button></div></section>");
 }
 
 bool deviceStateEnforcementAvailable() {
@@ -8952,14 +8962,14 @@ bool deviceStateEnforcementAvailable() {
 void appendDeviceStateEnforcementSettings(String &page) {
   if (!deviceStateEnforcementAvailable()) return;
 
-  page += F("<section class='panel'><h2>Device State Enforcement</h2><form data-inline='1' method='post' action='/relay-enforcement'>");
+  page += F("<section class='panel'><div class='panel-head'><h2>Device State Enforcement</h2></div><form id='form-relay-enforcement' data-inline='1' method='post' action='/relay-enforcement'><div class='panel-body'>");
   for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
     if (!relayAvailable(i)) continue;
-    page += F("<div class='bb'><strong>Relay ");
+    page += F("<div class='subblock'><div class='subblock-head'><div><div class='title'>Relay ");
     page += String(i + 1);
-    page += F("</strong> <span class='hint'>");
+    page += F("</div><div class='meta'>");
     page += pinName(runtime_template.relays[i].pin);
-    page += F("</span><div class='row'><label><input class='rbc' id='relay_on_boot");
+    page += F("</div></div></div><div class='row'><label><input class='rbc' id='relay_on_boot");
     page += String(i);
     page += F("' data-relay='");
     page += String(i);
@@ -8993,25 +9003,25 @@ void appendDeviceStateEnforcementSettings(String &page) {
   }
 #if MYMOTA32_LIGHT_SUPPORTED
   if (light.present) {
-    page += F("<div class='bb'><strong>Light</strong><div class='row'><label><input type='checkbox' name='light_restore_boot' value='1'");
+    page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Light</div></div><div class='row'><label><input type='checkbox' name='light_restore_boot' value='1'");
     if (config.light_restore_boot) page += F(" checked");
     page += F(">Restore last state at boot</label><span class='hint'>Power, dimmer, color temperature, and color</span></div></div>");
   }
 #endif
-  page += F("<button type='submit'>Save device state enforcement</button></form></section>");
+  page += F("</div></form><div class='panel-foot'><button type='submit' form='form-relay-enforcement'>Save device state enforcement</button></div></section>");
 }
 
 void appendRelayPulseSettings(String &page) {
   if (!runtime_template.enabled || !hasConfigurableRelays()) return;
 
-  page += F("<section class='panel'><h2>Relay Pulsing</h2><form data-inline='1' method='post' action='/relay-pulsing'>");
+  page += F("<section class='panel'><div class='panel-head'><h2>Relay Pulsing</h2></div><form id='form-relay-pulsing' data-inline='1' method='post' action='/relay-pulsing'><div class='panel-body'>");
   for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
     if (!relayAvailable(i)) continue;
-    page += F("<div class='bb'><strong>Relay ");
+    page += F("<div class='subblock'><div class='subblock-head'><div><div class='title'>Relay ");
     page += String(i + 1);
-    page += F("</strong> <span class='hint'>");
+    page += F("</div><div class='meta'>");
     page += pinName(runtime_template.relays[i].pin);
-    page += F("</span><div class='row'><label><input type='checkbox' name='relay_pulse_enabled");
+    page += F("</div></div></div><div class='row'><label><input type='checkbox' name='relay_pulse_enabled");
     page += String(i);
     page += F("' value='1'");
     if (config.relay_pulse_enabled[i]) page += F(" checked");
@@ -9025,7 +9035,7 @@ void appendRelayPulseSettings(String &page) {
     }
     page += F("'></div></div>");
   }
-  page += F("<button type='submit'>Save relay pulsing</button></form></section>");
+  page += F("</div></form><div class='panel-foot'><button type='submit' form='form-relay-pulsing'>Save relay pulsing</button></div></section>");
 }
 
 void appendInputModeOption(String &page, uint8_t value, const String &label, uint8_t selected) {
@@ -9142,12 +9152,12 @@ String inputStateName(uint8_t input, bool active) {
 void appendButtonSettings(String &page) {
   if (!runtime_template.enabled || !hasConfigurableButtons()) return;
 
-  page += F("<section class='panel'><div class='panel-title'><h2>Inputs</h2><div class='help' tabindex='0'><span class='help-q'>?</span><div class='help-box'><p><strong>Action placeholders</strong></p><div class='tokens'>");
+  page += F("<section class='panel'><div class='panel-head'><h2>Inputs</h2><div class='help' tabindex='0'><span class='help-q'>?</span><div class='help-box'><p><strong>Action placeholders</strong></p><div class='tokens'>");
   page += F("<div><code>{BUTTONID}</code><span class='hint'>input number, starting at 1</span></div>");
   page += F("<div><code>{TYPE}</code><span class='hint'>TOGGLE on press, HOLD on hold</span></div>");
   page += F("<div><code>{TOPIC}</code><span class='hint'>current MQTT topic</span></div>");
   page += F("<div><code>{RELAYX_STATE}</code><span class='hint'>relay state, for example {RELAY1_STATE}</span></div>");
-  page += F("</div><p class='hint'>MQTT broadcast sends a topic and payload through the configured broker.</p></div></div></div><form data-inline='1' method='post' action='/buttons'>");
+  page += F("</div><p class='hint'>MQTT broadcast sends a topic and payload through the configured broker.</p></div></div></div><form id='form-buttons' data-inline='1' method='post' action='/buttons'><div class='panel-body'>");
   page += F("<div class='row'><label>Hold time ms<br><input name='hold_ms' type='number' min='");
   page += String(kButtonHoldMinMs);
   page += F("' max='");
@@ -9168,18 +9178,18 @@ void appendButtonSettings(String &page) {
     const uint8_t on_level = effectiveInputOnLevel(i);
     uint8_t target_relay = 0;
     inputRelayTarget(i, target_relay);
-    page += F("<div class='bb'><strong>");
+    page += F("<div class='subblock'><div class='subblock-head'><div><div class='title'>");
     page += htmlEscape(inputDisplayName(i));
-    page += F("</strong> <span class='hint'>");
+    page += F("</div><div class='meta'>");
     page += pinName(runtime_template.buttons[i].pin);
-    page += F(" ");
+    page += F(" &middot; ");
     page += htmlEscape(inputKindName(i));
-    page += F("</span> <span id='live-button-");
+    page += F("</div></div><span id='live-button-");
     page += String(i);
     page += F("' class='pill ");
     page += button_state[i].stable_pressed ? F("ok'>") : F("bad'>");
     page += htmlEscape(inputStateName(i, button_state[i].stable_pressed));
-    page += F("</span>");
+    page += F("</span></div>");
 
     page += F("<div class='row'><label>Kind<br><select class='im' data-input='");
     page += String(i);
@@ -9230,11 +9240,11 @@ void appendButtonSettings(String &page) {
     appendButtonActionExtra(page, i, "hold", true);
     page += F("</div></div></div>");
   }
-  page += F("<button type='submit'>Save inputs</button></form></section>");
+  page += F("</div></form><div class='panel-foot'><button type='submit' form='form-buttons'>Save inputs</button></div></section>");
 }
 
 void appendTemplateForm(String &page) {
-  page += F("<section class='panel wide'><h2>Template Selection</h2><form method='post' action='/template'>");
+  page += F("<section class='panel wide'><div class='panel-head'><h2>Template Selection</h2><span class='h-meta'>Tasmota ESP32 JSON</span></div><form id='form-template' method='post' action='/template'><div class='panel-body'>");
   page += F("<div class='row'><label>Known template<br><select id='known-template' onchange='tp(this)'><option value=''>Select a template</option>");
 #if CONFIG_IDF_TARGET_ESP32C3
   page += F("<option data-json='");
@@ -9271,11 +9281,18 @@ void appendTemplateForm(String &page) {
   page += F("'>");
   page += htmlEscape(currentTemplateJson());
   page += F("</textarea></label></div>");
-  page += F("<button type='submit'>Save template</button> <button class='danger' type='submit' name='clear' value='1'>Clear template</button></form></section>");
+  page += F("</div></form><div class='panel-foot'><button class='danger' type='submit' name='clear' value='1' form='form-template'>Clear template</button><button type='submit' form='form-template'>Save template</button></div></section>");
 }
 
 void appendMqttForm(String &page) {
-  page += F("<section class='panel'><h2>MQTT Settings</h2><form data-inline='1' method='post' action='/mqtt'>");
+  page += F("<section class='panel'><div class='panel-head'><h2>MQTT Settings</h2><span class='h-meta' id='live-mqtt-broker-3'>");
+  if (config.mqtt_host[0] == '\0') page += F("not configured");
+  else {
+    page += htmlEscape(config.mqtt_host);
+    page += F(":");
+    page += String(config.mqtt_port);
+  }
+  page += F("</span></div><form id='form-mqtt' data-inline='1' method='post' action='/mqtt'><div class='panel-body'>");
   page += F("<div class='row'><label>Host<br><input name='host' maxlength='");
   page += String(kMqttHostMaxLen);
   page += F("' value='");
@@ -9296,14 +9313,14 @@ void appendMqttForm(String &page) {
   page += String(kMqttKeepaliveMax);
   page += F("' value='");
   page += String(config.mqtt_keepalive);
-  page += F("'></label></div><button type='submit'>Save MQTT</button></form></section>");
+  page += F("'></label></div></div></form><div class='panel-foot'><button type='submit' form='form-mqtt'>Save MQTT</button></div></section>");
 }
 
 void appendTasmotaSafebootForm(String &page) {
   TasmotaSafebootSettings settings = readTasmotaSafebootSettings();
   if (!settings.present) return;
 
-  page += F("<section class='panel'><h2>Tasmota Safeboot</h2><form method='post' action='/tasmota-safeboot'>");
+  page += F("<section class='panel'><div class='panel-head'><h2>Tasmota Safeboot</h2><span class='h-meta'>Wi-Fi credentials</span></div><form id='form-tasmota-safeboot' method='post' action='/tasmota-safeboot'><div class='panel-body'>");
   page += F("<div class='row'><label>SSID<br><input name='ssid' maxlength='32' required");
   if (!settings.settings_valid) page += F(" disabled");
   page += F(" value='");
@@ -9313,24 +9330,23 @@ void appendTasmotaSafebootForm(String &page) {
   page += F(" value='");
   if (settings.settings_valid) page += htmlEscape(settings.password);
   page += F("' onfocus=\"this.type='text'\" onclick=\"this.type='text'\"></label></div>");
-  if (settings.settings_valid) {
-    page += F("<button type='submit'>Save Tasmota Safeboot</button>");
-  } else {
+  if (!settings.settings_valid) {
     page += F("<p class='hint'>Tasmota settings are present but failed validation, so saving is disabled.</p>");
   }
-  page += F("</form></section>");
+  page += F("</div></form><div class='panel-foot'><button type='submit' form='form-tasmota-safeboot'");
+  if (!settings.settings_valid) page += F(" disabled");
+  page += F(">Save Tasmota Safeboot</button></div></section>");
 }
 
 void appendSettingsForm(String &page) {
-  page += F("<section class='panel wide'><h2>Settings</h2>");
-  page += F("<p><a class='btn secondary' href='/settings/export'>Export settings</a></p>");
-  page += F("<form method='post' action='/settings/import'>");
+  page += F("<section class='panel wide'><div class='panel-head'><h2>Settings</h2><span class='h-meta'>Export / import</span></div>");
+  page += F("<form id='form-settings-import' method='post' action='/settings/import'><div class='panel-body'>");
   page += F("<div class='row'><label>Import settings JSON<br><input type='file' accept='application/json,.json' onchange='sf(this)'></label></div>");
   page += F("<div class='row'><label>Settings JSON<br><textarea id='settings-json' name='settings_json' rows='8' maxlength='");
   page += String(kSettingsImportJsonMaxLen);
   page += F("'></textarea></label></div>");
   page += F("<p class='hint'>Wi-Fi SSID, password, hostname, and PHY mode are not exported or imported.</p>");
-  page += F("<button type='submit'>Import settings</button></form></section>");
+  page += F("</div></form><div class='panel-foot'><a class='btn secondary' href='/settings/export'>Export settings</a><button type='submit' form='form-settings-import'>Import settings</button></div></section>");
 }
 
 void appendIBeaconIntervalSelect(String &page, const char *name, uint16_t selected, bool disabled) {
@@ -9354,7 +9370,7 @@ void appendIBeaconIntervalSelect(String &page, const char *name, uint16_t select
 
 void appendIBeaconForm(String &page) {
   const bool unsupported = !iBeaconCaptureSupported();
-  page += F("<section class='panel'><div class='panel-title'><h2>iBeacon</h2>");
+  page += F("<section class='panel'><div class='panel-head'><h2>iBeacon</h2>");
   if (unsupported) {
     page += F("<span class='pill bad'>unsupported</span>");
   } else if (config.ibeacon_enabled && ibeacon_scanning) {
@@ -9366,7 +9382,7 @@ void appendIBeaconForm(String &page) {
   } else {
     page += F("<span id='live-ibeacon' class='pill'>disabled</span>");
   }
-  page += F("</div><form data-inline='1' method='post' action='/ibeacon'>");
+  page += F("</div><form id='form-ibeacon' data-inline='1' method='post' action='/ibeacon'><div class='panel-body'>");
   page += F("<div class='row'><label><input type='checkbox' name='enabled' value='1'");
   if (config.ibeacon_enabled) page += F(" checked");
   if (unsupported) page += F(" disabled");
@@ -9388,14 +9404,14 @@ void appendIBeaconForm(String &page) {
   if (unsupported) page += F(" disabled");
   page += F("></label><label>Max<br>");
   appendIBeaconIntervalSelect(page, "i2", config.ibeacon_filter2_interval_sec, unsupported);
-  page += F("</label></div><button type='submit'");
+  page += F("</label></div></div></form><div class='panel-foot'><button type='submit' form='form-ibeacon'");
   if (unsupported) page += F(" disabled");
-  page += F(">Save iBeacon</button></form></section>");
+  page += F(">Save iBeacon</button></div></section>");
 }
 
 void appendSwitchbotLockForm(String &page) {
   const bool unsupported = !switchbotLockSupported();
-  page += F("<section class='panel'><div class='panel-title'><h2>Switchbot Lock Ultra</h2>");
+  page += F("<section class='panel'><div class='panel-head'><h2>Switchbot Lock Ultra</h2>");
   if (unsupported) {
     page += F("<span class='pill bad'>unsupported</span>");
   } else if (config.switchbot_lock_enabled) {
@@ -9411,7 +9427,7 @@ void appendSwitchbotLockForm(String &page) {
   } else {
     page += F("<span id='live-switchbot-lock-status' class='pill'>disabled</span>");
   }
-  page += F("</div><form id='switchbot-lock-form' data-inline='1' method='post' action='/switchbot-lock'></form>");
+  page += F("</div><form id='switchbot-lock-form' data-inline='1' method='post' action='/switchbot-lock'></form><div class='panel-body'>");
   page += F("<div class='row'><label><input form='switchbot-lock-form' type='checkbox' name='enabled' value='1'");
   if (config.switchbot_lock_enabled) page += F(" checked");
   if (unsupported) page += F(" disabled");
@@ -9434,7 +9450,7 @@ void appendSwitchbotLockForm(String &page) {
   const bool controls_disabled = unsupported || !config.switchbot_lock_enabled ||
                                  config.switchbot_lock_key_id[0] == '\0' ||
                                  config.switchbot_lock_key[0] == '\0';
-  page += F("<div class='bb'><h3>State</h3><div class='kv'><span>BLE</span><div><code id='live-switchbot-lock-ble'>");
+  page += F("<div class='subblock'><div class='subblock-head'><div class='title'>State</div></div><div class='kv'><span>BLE</span><div><code id='live-switchbot-lock-ble'>");
   page += switchbotLockClientConnected() ? F("connected") : F("disconnected");
   page += F("</code></div><span>Connected for</span><div><code id='live-switchbot-lock-connected-age'>");
   if (switchbot_lock_connected_since_ms == 0 || !switchbotLockClientConnected()) {
@@ -9509,7 +9525,7 @@ void appendSwitchbotLockForm(String &page) {
     page += F("n/a");
   }
   page += F("</code></div></div></div>");
-  page += F("<div class='bb'><h3>Callback</h3>");
+  page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Callback</div></div>");
   page += F("<div class='kv'><span>Configured</span><div><code id='live-switchbot-lock-cb-enabled'>");
   page += config.switchbot_lock_status_callback[0] ? F("yes") : F("no");
   page += F(" / ");
@@ -9559,20 +9575,20 @@ void appendSwitchbotLockForm(String &page) {
   page += F("'");
   if (unsupported) page += F(" disabled");
   page += F("></label></div></div>");
-  page += F("<div class='bb'><h3>Control</h3><form class='inline' data-inline='1' method='post' action='/switchbot-lock-command'><span class='actions'><button name='action' value='lock'");
+  page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Control</div></div><form class='inline' data-inline='1' method='post' action='/switchbot-lock-command'><span class='actions'><button name='action' value='lock'");
   if (controls_disabled) page += F(" disabled");
   page += F(">Lock</button><button class='secondary' name='action' value='unlock'");
   if (controls_disabled) page += F(" disabled");
   page += F(">Unlock</button></span></form></div>");
-  page += F("<button form='switchbot-lock-form' type='submit'");
+  page += F("</div><div class='panel-foot'><button form='switchbot-lock-form' type='submit'");
   if (unsupported) page += F(" disabled");
-  page += F(">Save Switchbot Lock</button></section>");
+  page += F(">Save Switchbot Lock</button></div></section>");
 }
 
 void appendShellyBluButtonForm(String &page) {
   const bool unsupported = !shellyBluButtonSupported();
   const uint8_t paired_count = shellyBluButtonPairedCount();
-  page += F("<section class='panel'><div class='panel-title'><h2>Shelly BLU Button</h2>");
+  page += F("<section class='panel'><div class='panel-head'><h2>Shelly BLU Button</h2>");
   if (unsupported) {
     page += F("<span id='live-shelly-blu-status' class='pill bad'>unsupported</span>");
   } else if (shelly_blu_pair.active) {
@@ -9587,7 +9603,7 @@ void appendShellyBluButtonForm(String &page) {
   } else {
     page += F("<span id='live-shelly-blu-status' class='pill'>idle</span>");
   }
-  page += F("</div><div class='kv'><span>Paired</span><div><code id='live-shelly-blu-count'>");
+  page += F("</div><div class='panel-body'><div class='kv'><span>Paired</span><div><code id='live-shelly-blu-count'>");
   page += String(paired_count);
   page += F("/");
   page += String(kShellyBluButtonMax);
@@ -9602,7 +9618,7 @@ void appendShellyBluButtonForm(String &page) {
   else page += String(shelly_blu_button_last_duration_ms) + F(" ms");
   page += F("</code></div></div>");
 
-  page += F("<div class='bb'><h3>Pair</h3><form data-inline='1' method='post' action='/shelly-blu-button'>");
+  page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Pair</div></div><form data-inline='1' method='post' action='/shelly-blu-button'>");
   page += F("<div class='row'><label>Button MAC<br><input name='mac' maxlength='17' placeholder='AA:BB:CC:DD:EE:FF'");
   if (unsupported) page += F(" disabled");
   page += F("></label></div>");
@@ -9612,7 +9628,7 @@ void appendShellyBluButtonForm(String &page) {
   if (unsupported) page += F(" disabled");
   page += F(">Pair</button></form></div>");
 
-  page += F("<div class='bb'><h3>Devices</h3><div class='kv'>");
+  page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Devices</div></div><div class='kv'>");
   for (uint8_t i = 0; i < kShellyBluButtonMax; i++) {
     const char *mac = config.shelly_blu_button_macs[i];
     page += F("<span>Button ");
@@ -9654,7 +9670,7 @@ void appendShellyBluButtonForm(String &page) {
     if (unsupported || !mac[0]) page += F(" disabled");
     page += F(">Reset</button></form></div></div></div>");
   }
-  page += F("</div></div></section>");
+  page += F("</div></div></div></section>");
 }
 
 void appendPowerSavingOption(String &page, uint8_t mode, const __FlashStringHelper *label) {
@@ -9702,12 +9718,52 @@ void appendSectionHead(String &page, const __FlashStringHelper *title) {
   page += F("</h1><div class='rule'></div></div>");
 }
 
+void appendOverviewStats(String &page) {
+  const wl_status_t wifi_status = WiFi.status();
+  const IPAddress station_ip = WiFi.localIP();
+  const bool wifi_usable = wifi_status == WL_CONNECTED || ipAddressSet(station_ip);
+  page += F("<div class='stats wide'><div class='stat'><span class='accent-bar'></span><div class='stat-label'>Wi-Fi</div><div class='stat-value'><span id='live-rssi-2'>");
+  if (wifi_usable && wifi_last_rssi_valid) {
+    page += String(wifi_last_rssi);
+    page += F(" dBm");
+  } else {
+    page += F("n/a");
+  }
+  page += F("</span></div><div class='stat-sub'><span id='live-ssid-2'>");
+  page += wifi_usable ? htmlEscape(config.ssid) : String(F("n/a"));
+  page += F("</span> &middot; <span id='live-ip-2'>");
+  page += ipAddressSet(station_ip) ? ipToString(station_ip) : String(F("n/a"));
+  page += F("</span></div></div><div class='stat'><span class='accent-bar'></span><div class='stat-label'>MQTT Broker</div><div class='stat-value'><span id='live-mqtt-pending-2'>");
+  page += String(static_cast<unsigned>(mqtt_pending_relay_mask)
+#if MYMOTA32_LIGHT_SUPPORTED
+                 + static_cast<unsigned>(mqtt_pending_light_mask)
+#endif
+  );
+  page += F("</span> queued</div><div class='stat-sub'><span id='live-mqtt-broker-2'>");
+  if (config.mqtt_host[0] == '\0') page += F("not configured");
+  else {
+    page += htmlEscape(config.mqtt_host);
+    page += F(":");
+    page += String(config.mqtt_port);
+  }
+  page += F("</span></div></div><div class='stat'><span class='accent-bar'></span><div class='stat-label'>Heap</div><div class='stat-value'><span id='live-heap-2'>");
+  page += String(ESP.getFreeHeap());
+  page += F(" bytes</span></div><div class='stat-sub'>free memory</div></div><div class='stat'><span class='accent-bar'></span><div class='stat-label'>Uptime</div><div class='stat-value'><span id='live-uptime-2'>");
+  page += String(millis() / 1000);
+  page += F("s</span></div><div class='stat-sub'>since boot</div></div></div>");
+}
+
 void handleRoot() {
   String page;
   page.reserve(10800);
   beginStreamedResponse("text/html");
   appendHeader(page, F("myMota32"), true);
   page += F("<div class='grid'>");
+  flushStreamChunk(page);
+
+  appendSectionHead(page, F("Overview"));
+  flushStreamChunk(page);
+  appendOverviewStats(page);
   flushStreamChunk(page);
 
   appendSectionHead(page, F("System"));
@@ -9758,7 +9814,9 @@ void handleRoot() {
 
   appendSectionHead(page, F("Network"));
   flushStreamChunk(page);
-  page += F("<section class='panel'><h2>Wi-Fi</h2><form method='post' action='/wifi'>");
+  page += F("<section class='panel'><div class='panel-head'><h2>Wi-Fi</h2><span class='h-meta'>");
+  page += phyModeName(config.phy_mode);
+  page += F("</span></div><form id='form-wifi' method='post' action='/wifi'><div class='panel-body'>");
   page += F("<div class='row'><label>SSID<br><input name='ssid' maxlength='32' required value='");
   page += htmlEscape(config.ssid);
   page += F("'></label></div><div class='row'><label>Password<br><input id='wifi-password' type='password' name='password' maxlength='64' autocomplete='current-password' value='");
@@ -9769,8 +9827,7 @@ void handleRoot() {
   page += F("'></label></div>");
   appendPhyModeSelect(page);
   appendWifiDynamicPowerCheckbox(page);
-  page += F("<button type='submit'>Save Wi-Fi</button></form>");
-  page += F("<p><a class='btn secondary' href='/scan'>Scan networks</a></p></section>");
+  page += F("</div></form><div class='panel-foot'><a class='btn secondary' href='/scan'>Scan networks</a><button type='submit' form='form-wifi'>Save Wi-Fi</button></div></section>");
   flushStreamChunk(page);
 
   appendMqttForm(page);
@@ -9781,17 +9838,18 @@ void handleRoot() {
 
   appendSectionHead(page, F("Maintenance"));
   flushStreamChunk(page);
-  page += F("<section class='panel'><h2>System</h2><h3>Firmware</h3><form class='fu' method='post' action='/update?verify=1' enctype='multipart/form-data' data-target='");
+  page += F("<section class='panel'><div class='panel-head'><h2>System</h2><span class='h-meta'>Firmware / reboot</span></div><div class='panel-body'><div class='subblock'><div class='subblock-head'><div class='title'>Firmware</div></div><form id='form-firmware' class='fu' method='post' action='/update?verify=1' enctype='multipart/form-data' data-target='");
   page += F(MYMOTA32_TARGET);
   page += F("'>");
   page += F("<input type='file' name='firmware' accept='.bin' required>");
   page += F("<div class='row'><label><input class='fv' type='checkbox' checked>Verify target</label></div>");
-  page += F("<button type='submit'>Upload</button></form>");
-  page += F("<div class='bb'><h3>Power Saving</h3><form method='post' action='/system'>");
+  page += F("</form></div>");
+  page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Power Saving</div></div><form id='form-system' method='post' action='/system'>");
   appendPowerSavingSelect(page);
-  page += F("<button type='submit'>Save</button></form></div>");
-  page += F("<div class='bb'><h3>Reboot</h3><div class='actions'><a class='btn secondary' href='/reboot'>Reboot</a></div>");
-  page += F("<div class='actions'><form class='inline' method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset?')\"><button class='danger' type='submit'>Factory Reset</button></form></div></div></section>");
+  page += F("</form></div>");
+  page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Reboot</div></div><div class='actions'><a class='btn secondary' href='/reboot'>Reboot</a></div>");
+  page += F("<div class='actions'><form class='inline' method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset?')\"><button class='danger' type='submit'>Factory Reset</button></form></div></div></div>");
+  page += F("<div class='panel-foot'><button type='submit' form='form-firmware'>Upload firmware</button><button type='submit' form='form-system'>Save power saving</button></div></section>");
   flushStreamChunk(page);
 
   appendSettingsForm(page);
@@ -9813,7 +9871,7 @@ void handleScan() {
   String page;
   page.reserve(2600);
   appendHeader(page, F("myMota32 Scan"));
-  page += F("<section class='panel'><h2>Networks</h2>");
+  page += F("<section class='panel wide'><div class='panel-head'><h2>Networks</h2></div><div class='panel-body'>");
 
   int count = WiFi.scanComplete();
   if (count == WIFI_SCAN_FAILED) {
@@ -9825,7 +9883,7 @@ void handleScan() {
     page += F("<p>Scanning for Wi-Fi networks...</p>");
     page += F("<p class='muted'>This page will refresh when results are ready.</p>");
     page += F("<script>setTimeout(function(){location.reload()},1000)</script>");
-    page += F("<p><a class='btn secondary' href='/'>Back</a></p></section>");
+    page += F("</div><div class='panel-foot'><a class='btn secondary' href='/'>Back</a></div></section>");
     appendFooter(page, false);
     sendHtml(page);
     return;
@@ -9833,7 +9891,7 @@ void handleScan() {
   if (count <= 0) {
     page += F("<p>No networks found.</p>");
   } else {
-    page += F("<form method='post' action='/wifi'><div class='row'><label>Password<br><input type='password' name='password' maxlength='64'></label></div>");
+    page += F("<form id='form-scan-wifi' method='post' action='/wifi'><div class='row'><label>Password<br><input type='password' name='password' maxlength='64'></label></div>");
     page += F("<div class='row'><label>Hostname<br><input name='hostname' maxlength='32' value='");
     page += htmlEscape(config.hostname);
     page += F("'></label></div>");
@@ -9851,10 +9909,12 @@ void handleScan() {
       page += String(WiFi.channel(i));
       page += F("</span></label></li>");
     }
-    page += F("</ul><button type='submit'>Save Wi-Fi</button></form>");
+    page += F("</ul></form>");
   }
   WiFi.scanDelete();
-  page += F("<p><a class='btn secondary' href='/'>Back</a></p></section>");
+  page += F("</div><div class='panel-foot'><a class='btn secondary' href='/'>Back</a>");
+  if (count > 0) page += F("<button type='submit' form='form-scan-wifi'>Save Wi-Fi</button>");
+  page += F("</div></section>");
   appendFooter(page);
   sendHtml(page);
 }
