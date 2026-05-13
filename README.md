@@ -65,7 +65,8 @@ PlatformIO is used for builds:
 ```
 
 The script validates `platformio.ini`, builds all configured targets, verifies
-image metadata, purges stale gzip artifacts, and refreshes `dist/MD5SUMS` and
+image metadata, purges stale gzip artifacts, keeps only the latest three
+firmware versions in `dist/`, and refreshes `dist/MD5SUMS` and
 `dist/SHA256SUMS`.
 
 For OTA or web uploads, use the raw target image:

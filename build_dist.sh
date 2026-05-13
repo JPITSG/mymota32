@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 DIST_DIR="$ROOT_DIR/dist"
 BOOT_APP0="$HOME/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin"
 TMP_DIR="$(mktemp -d)"
+KEEP_DIST_VERSIONS=3
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 need_cmd() {
@@ -298,6 +299,41 @@ purge_gzip_artifacts() {
   find "$DIST_DIR" -maxdepth 1 -type f -name '*.gz' -delete
 }
 
+prune_old_dist_versions() {
+  DIST_DIR="$DIST_DIR" KEEP_DIST_VERSIONS="$KEEP_DIST_VERSIONS" python3 - <<'PY'
+from pathlib import Path
+import os
+import re
+
+dist = Path(os.environ["DIST_DIR"])
+keep_count = int(os.environ["KEEP_DIST_VERSIONS"])
+pattern = re.compile(r"^mymota32-(\d+)\.(\d+)\.(\d+)-.+\.bin$")
+
+versions = set()
+for path in dist.glob("mymota32-*.bin"):
+    match = pattern.match(path.name)
+    if match:
+        versions.add(tuple(int(part) for part in match.groups()))
+
+keep = set(sorted(versions, reverse=True)[:keep_count])
+removed = 0
+for path in dist.glob("mymota32-*.bin"):
+    match = pattern.match(path.name)
+    if not match:
+        continue
+    version = tuple(int(part) for part in match.groups())
+    if version not in keep:
+        path.unlink()
+        removed += 1
+
+kept = ", ".join(".".join(str(part) for part in version) for version in sorted(keep, reverse=True))
+if kept:
+    print(f"==> Keeping dist versions: {kept}")
+if removed:
+    print(f"==> Removed {removed} old dist binary artifact(s)")
+PY
+}
+
 refresh_checksums() {
   find dist -maxdepth 1 -type f -name '*.bin' -print | sort | xargs md5sum >dist/MD5SUMS
   find dist -maxdepth 1 -type f -name '*.bin' -print | sort | xargs sha256sum >dist/SHA256SUMS
@@ -328,6 +364,7 @@ build_target "mymota32-esp32-u4wdh-d-4m" "esp32-u4wdh-d-4m" "esp32" "ESP32" "40m
 build_target "mymota32-esp32-u4wdh-s-4m" "esp32-u4wdh-s-4m" "esp32" "ESP32" "40m" "0x1000" "ESP32-U4WDH-S"
 build_target "mymota32-esp32-c3-4m" "esp32-c3-4m" "esp32c3" "ESP32-C3" "80m" "0x0000" "ESP32-C3 4M"
 
+prune_old_dist_versions
 refresh_checksums
 
 echo "==> Refreshed dist/MD5SUMS and dist/SHA256SUMS"
