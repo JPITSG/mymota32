@@ -71,8 +71,9 @@ firmware versions in `dist/`, and refreshes `dist/MD5SUMS` and
 
 Debug logging is controlled at build time in `[common] build_flags`:
 
-- `MYMOTA32_DEBUG_LOG=1` enables detailed serial diagnostics at 115200 baud and
-  reports `debug_log:true` from `/health`.
+- `MYMOTA32_DEBUG_LOG=1` enables detailed serial diagnostics at 115200 baud,
+  routes myMota32 messages through the Arduino/ESP logging backend, and reports
+  `debug_log:true` from `/health`.
 - `CORE_DEBUG_LEVEL=5` is paired with the debug build so ESP32 core diagnostics
   are visible when chasing startup, Wi-Fi, MQTT, OTA, BLE, input, relay, light,
   and energy issues.

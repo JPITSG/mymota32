@@ -81,7 +81,8 @@ void debugLog(const char *tag, const char *fmt, ...) {
   va_start(args, fmt);
   vsnprintf(msg, sizeof(msg), fmt, args);
   va_end(args);
-  Serial.printf("[%10lu][%-10s] %s\r\n", millis(), tag ? tag : "debug", msg);
+  log_printf("[%6lu][I][myMota32:%s] %s\r\n",
+             static_cast<unsigned long>(millis()), tag ? tag : "debug", msg);
 }
 
 #define DBG_LOG(tag, fmt, ...) debugLog((tag), (fmt), ##__VA_ARGS__)
