@@ -97,6 +97,19 @@ def expect_define(sec_name, name, value=None):
     die(f"[{sec_name}] missing build flag {name}={value}")
 
 
+def define_value(sec_name, name):
+    prefix = f"-D{name}="
+    matches = []
+    for flag in flags(section(sec_name)):
+        if flag.startswith(prefix):
+            matches.append(flag.split("=", 1)[1])
+    if not matches:
+        die(f"[{sec_name}] missing build flag {name}")
+    if len(matches) > 1:
+        die(f"[{sec_name}] has duplicate build flag {name}")
+    return matches[0]
+
+
 def reject_define(sec_name, name):
     needle = f"-D{name}"
     for flag in flags(section(sec_name)):
@@ -105,6 +118,16 @@ def reject_define(sec_name, name):
 
 
 expect("common", "board_build.partitions", "partitions.csv")
+
+debug_log = define_value("common", "MYMOTA32_DEBUG_LOG")
+core_debug = define_value("common", "CORE_DEBUG_LEVEL")
+if debug_log not in ("0", "1"):
+    die(f"[common] MYMOTA32_DEBUG_LOG is {debug_log!r}, expected 0 or 1")
+if debug_log == "1" and core_debug == "0":
+    die("[common] MYMOTA32_DEBUG_LOG=1 requires CORE_DEBUG_LEVEL above 0")
+if debug_log == "0" and core_debug != "0":
+    die("[common] MYMOTA32_DEBUG_LOG=0 should use CORE_DEBUG_LEVEL=0")
+print(f"debug build: MYMOTA32_DEBUG_LOG={debug_log} CORE_DEBUG_LEVEL={core_debug}", file=sys.stderr)
 
 expect("env:mymota32-esp32-d0wd-v3-4m", "board", "esp32dev")
 expect("env:mymota32-esp32-d0wd-v3-4m", "board_build.f_flash", "40000000L")
@@ -135,15 +158,7 @@ expect("env:mymota32-esp32-c3-4m", "board_build.f_flash", "80000000L")
 expect("env:mymota32-esp32-c3-4m", "board_build.flash_mode", "dio")
 expect_define("env:mymota32-esp32-c3-4m", "MYMOTA32_TARGET", "esp32-c3-4m")
 
-version = None
-for flag in flags(section("common")):
-    if flag.startswith("-DMYMOTA32_VERSION="):
-        version = flag.split("=", 1)[1].replace('\\"', '"').strip('"')
-        break
-
-if not version:
-    die("missing MYMOTA32_VERSION in [common] build_flags")
-
+version = define_value("common", "MYMOTA32_VERSION").replace('\\"', '"').strip('"')
 print(version)
 PY
 }

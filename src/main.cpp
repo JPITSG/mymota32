@@ -14,6 +14,7 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <mbedtls/aes.h>
+#include <stdarg.h>
 #include <string.h>
 #include <math.h>
 
@@ -27,6 +28,14 @@
 
 #ifndef MYMOTA32_ESP32_U4WDH
 #define MYMOTA32_ESP32_U4WDH 0
+#endif
+
+#ifndef MYMOTA32_DEBUG_LOG
+#define MYMOTA32_DEBUG_LOG 0
+#endif
+
+#ifndef CORE_DEBUG_LEVEL
+#define CORE_DEBUG_LEVEL 0
 #endif
 
 #if CONFIG_BT_ENABLED && CONFIG_BT_NIMBLE_ROLE_OBSERVER
@@ -60,6 +69,38 @@
 #endif
 
 namespace {
+
+#if MYMOTA32_DEBUG_LOG
+constexpr uint32_t kDebugSlowLoopUs = 100000;
+constexpr uint32_t kDebugRuntimeSummaryMs = 5000;
+constexpr uint32_t kDebugBleSummaryMs = 10000;
+
+void debugLog(const char *tag, const char *fmt, ...) {
+  char msg[192];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(msg, sizeof(msg), fmt, args);
+  va_end(args);
+  Serial.printf("[%10lu][%-10s] %s\r\n", millis(), tag ? tag : "debug", msg);
+}
+
+#define DBG_LOG(tag, fmt, ...) debugLog((tag), (fmt), ##__VA_ARGS__)
+#define DBG_LOOP_STEP(slot, code) do { \
+  const uint32_t _dbg_step_started_us = micros(); \
+  do { code } while (false); \
+  (slot) = micros() - _dbg_step_started_us; \
+} while (false)
+#define DBG_SETUP_STEP(name, code) do { \
+  const uint32_t _dbg_stage_started_ms = millis(); \
+  DBG_LOG("boot", "%s begin", (name)); \
+  do { code } while (false); \
+  DBG_LOG("boot", "%s done elapsed=%lu ms", (name), static_cast<unsigned long>(millis() - _dbg_stage_started_ms)); \
+} while (false)
+#else
+#define DBG_LOG(tag, fmt, ...) do { } while (false)
+#define DBG_LOOP_STEP(slot, code) do { code } while (false)
+#define DBG_SETUP_STEP(name, code) do { code } while (false)
+#endif
 
 constexpr uint32_t kConnectTimeoutMs = 20000;
 constexpr uint32_t kWifiReconnectBeginMs = 60000;
@@ -843,6 +884,30 @@ bool perf_window_started = false;
 uint32_t perf_last_loop_hz = 0;
 uint8_t perf_last_loop_load = 0;
 uint32_t perf_last_loop_max_us = 0;
+
+#if MYMOTA32_DEBUG_LOG
+uint32_t debug_loop_http1_us = 0;
+uint32_t debug_loop_wifi_us = 0;
+uint32_t debug_loop_http2_us = 0;
+uint32_t debug_loop_device_us = 0;
+uint32_t debug_loop_http3_us = 0;
+uint32_t debug_loop_mqtt_us = 0;
+uint32_t debug_loop_ble_us = 0;
+uint32_t debug_loop_http4_us = 0;
+uint32_t debug_last_runtime_summary_ms = 0;
+uint32_t debug_last_ble_summary_ms = 0;
+uint32_t debug_ibeacon_seen = 0;
+uint32_t debug_ibeacon_queued = 0;
+uint32_t debug_ibeacon_queue_dropped = 0;
+uint32_t debug_ibeacon_filtered = 0;
+uint32_t debug_ibeacon_suppressed = 0;
+uint32_t debug_ibeacon_published = 0;
+uint32_t debug_ibeacon_publish_failed = 0;
+uint32_t debug_last_update_progress = 0;
+wl_status_t debug_last_wifi_status = WL_IDLE_STATUS;
+bool debug_last_mqtt_connected = false;
+bool debug_last_ble_scanning = false;
+#endif
 
 WebServer server(80);
 Preferences prefs;
@@ -1665,6 +1730,12 @@ void decodeTemplateConfigInto(const StoredConfig &source, RuntimeTemplate &targe
 
 void decodeTemplateConfig() {
   decodeTemplateConfigInto(config, runtime_template);
+  DBG_LOG("template", "decoded enabled=%u name=%s relays=%u buttons=%u leds=%u energy_bl0939_rx=%u energy_cf=%u light=%u unsupported=%u",
+          runtime_template.enabled ? 1 : 0, runtime_template.name,
+          runtime_template.relay_count, runtime_template.button_count, runtime_template.led_count,
+          digitalPinSupported(runtime_template.energy_bl0939_rx_pin) ? runtime_template.energy_bl0939_rx_pin : 255,
+          digitalPinSupported(runtime_template.energy_cf_pin) ? runtime_template.energy_cf_pin : 255,
+          runtime_template.sm2335 ? 1 : 0, runtime_template.unsupported_count);
 }
 
 bool cjsonIsType(const cJSON *value, int type) {
@@ -1798,6 +1869,8 @@ void scheduleRestart(uint32_t delay_ms, bool preserve_relays = false) {
   restart_due_ms = millis() + delay_ms;
   restart_scheduled_ms = millis();
   restart_preserve_relays = preserve_relays;
+  DBG_LOG("reboot", "scheduled delay=%lu preserve_relays=%u",
+          static_cast<unsigned long>(delay_ms), preserve_relays ? 1 : 0);
 }
 
 bool restartDue() {
@@ -1973,6 +2046,7 @@ void maintainSwitchbotLock();
 void maintainShellyBluButton();
 void switchbotLockResolveActiveIfMatched();
 bool switchbotLockClientConnected();
+const char *switchbotLockStateName(uint8_t state);
 bool parseHttpUrl(const String &url, String &host, uint16_t &port, String &path);
 uint16_t sanitizeSwitchbotLockCallbackSeconds(uint16_t value, uint16_t default_value);
 bool normalizeSwitchbotLockCallbackTemplate(const String &input, char *out, size_t out_size);
@@ -2081,6 +2155,7 @@ bool loadConfig() {
   setDefaultConfig();
   if (!prefs.begin("mymota32", true)) {
     config_ok = false;
+    DBG_LOG("config", "load failed: prefs begin");
     return false;
   }
   String ssid = prefs.getString("ssid", "");
@@ -2370,11 +2445,18 @@ bool loadConfig() {
   config.wifi_dynamic_power = wifi_dynamic_power ? 1 : 0;
 
   config_ok = config.ssid[0] != '\0';
+  DBG_LOG("config", "loaded ok=%u hostname=%s ssid_set=%u mqtt_set=%u template=%u ibeacon=%u switchbot=%u shelly=%u",
+          config_ok ? 1 : 0, config.hostname, config.ssid[0] ? 1 : 0, mqtt_host.length() ? 1 : 0,
+          config.template_enabled ? 1 : 0, config.ibeacon_enabled ? 1 : 0,
+          config.switchbot_lock_enabled ? 1 : 0, config.shelly_blu_button_enabled ? 1 : 0);
   return config_ok;
 }
 
 bool saveWifiConfig(const char *ssid, const char *password, const char *hostname, uint8_t phy_mode,
                     bool dynamic_power) {
+  DBG_LOG("config", "save wifi ssid_len=%u host=%s phy=%u dynamic_tx=%u password_len=%u",
+          ssid ? static_cast<unsigned>(strlen(ssid)) : 0, hostname ? hostname : "", sanitizePhyMode(phy_mode),
+          dynamic_power ? 1 : 0, password ? static_cast<unsigned>(strlen(password)) : 0);
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putString("ssid", ssid);
   prefs.putString("password", password);
@@ -2426,6 +2508,8 @@ void resetMqttRuntimeState() {
 
 bool saveMqttConfig(const char *host, uint16_t port, const char *topic, uint16_t protocol_keepalive,
                     uint16_t state_keepalive) {
+  DBG_LOG("config", "save mqtt host=%s port=%u topic=%s protocol_keepalive=%u state_keepalive=%u",
+          host ? host : "", port, topic ? topic : "", protocol_keepalive, state_keepalive);
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putString("mqtt_host", host ? host : "");
   prefs.putUShort("mqtt_port", port);
@@ -2440,6 +2524,8 @@ bool saveMqttConfig(const char *host, uint16_t port, const char *topic, uint16_t
 
 bool saveEnergyConfig(float total_offset_kwh, uint16_t mqtt_interval, uint16_t mqtt_change_percent_x10,
                       uint16_t mqtt_change_watts) {
+  DBG_LOG("config", "save energy offset=%.4f interval=%u change_x10=%u watts=%u",
+          total_offset_kwh, mqtt_interval, mqtt_change_percent_x10, mqtt_change_watts);
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putFloat("en_offset", total_offset_kwh);
   prefs.putUShort("en_int", mqtt_interval);
@@ -2457,6 +2543,9 @@ bool saveEnergyConfig(float total_offset_kwh, uint16_t mqtt_interval, uint16_t m
 
 bool saveIBeaconConfig(bool enabled, uint16_t filter1_interval, const char *filter1_macs,
                        uint16_t filter2_interval, const char *filter2_macs) {
+  DBG_LOG("config", "save ibeacon enabled=%u f1_interval=%u f1_len=%u f2_interval=%u f2_len=%u",
+          enabled ? 1 : 0, filter1_interval, filter1_macs ? static_cast<unsigned>(strlen(filter1_macs)) : 0,
+          filter2_interval, filter2_macs ? static_cast<unsigned>(strlen(filter2_macs)) : 0);
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putUChar("ibeacon", enabled ? 1 : 0);
   prefs.putUShort("ib_f1_int", sanitizeIBeaconFilterInterval(filter1_interval, kIBeaconFilter1DefaultSec));
@@ -2471,6 +2560,10 @@ bool saveSwitchbotLockConfig(bool enabled, const char *mac, const char *key_id, 
                              const char *status_callback, const char *battery_callback,
                              const char *device_callback, uint16_t offline_delay_sec,
                              uint16_t online_heal_sec, uint16_t battery_notify_sec) {
+  DBG_LOG("config", "save switchbot enabled=%u mac=%s key_id_set=%u key_set=%u callbacks=%u/%u/%u timers=%u/%u/%u",
+          enabled ? 1 : 0, mac ? mac : "", key_id && key_id[0] ? 1 : 0, key && key[0] ? 1 : 0,
+          status_callback && status_callback[0] ? 1 : 0, battery_callback && battery_callback[0] ? 1 : 0,
+          device_callback && device_callback[0] ? 1 : 0, offline_delay_sec, online_heal_sec, battery_notify_sec);
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putUChar("sb_lock", enabled ? 1 : 0);
   prefs.putString("sb_mac", mac ? mac : "");
@@ -2488,6 +2581,13 @@ bool saveSwitchbotLockConfig(bool enabled, const char *mac, const char *key_id, 
 
 bool saveShellyBluButtonConfig(bool enabled,
                                const char macs[kShellyBluButtonMax][kShellyBluButtonMacMaxLen + 1]) {
+#if MYMOTA32_DEBUG_LOG
+  uint8_t paired = 0;
+  for (uint8_t i = 0; i < kShellyBluButtonMax; i++) {
+    if (macs[i][0]) paired++;
+  }
+  DBG_LOG("config", "save shelly_blu enabled=%u paired=%u", enabled ? 1 : 0, paired);
+#endif
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putUChar("blu_en", enabled ? 1 : 0);
   prefs.putBytes("blu_macs", macs, sizeof(config.shelly_blu_button_macs));
@@ -2497,6 +2597,7 @@ bool saveShellyBluButtonConfig(bool enabled,
 
 bool savePowerSavingConfig(uint8_t mode) {
   mode = sanitizePowerSavingMode(mode);
+  DBG_LOG("config", "save power_saving mode=%u", mode);
   if (!prefs.begin("mymota32", false)) return false;
   if (powerSavingModePersists(mode)) prefs.putUShort("pwr_save", mode);
   else prefs.remove("pwr_save");
@@ -2512,6 +2613,7 @@ bool powerSavingApiLocked() {
 bool saveDeviceStateEnforcementConfig(const uint8_t *restore_boot, const uint8_t *on_boot,
                                       const uint8_t *time_enabled, const uint16_t *time_seconds,
                                       uint8_t light_restore_boot) {
+  DBG_LOG("config", "save state enforcement light_restore=%u", light_restore_boot ? 1 : 0);
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putBytes("rel_restore", restore_boot, sizeof(config.relay_restore_boot));
   prefs.putBytes("rel_on_boot", on_boot, sizeof(config.relay_on_boot));
@@ -2526,6 +2628,7 @@ bool saveDeviceStateEnforcementConfig(const uint8_t *restore_boot, const uint8_t
 }
 
 bool saveRelayPulseConfig(const uint8_t *pulse_enabled, const uint16_t *pulse_seconds) {
+  DBG_LOG("config", "save relay pulse");
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putBytes("rel_pulse_en", pulse_enabled, sizeof(config.relay_pulse_enabled));
   prefs.putBytes("rel_pulse_s", pulse_seconds, sizeof(config.relay_pulse_seconds));
@@ -2536,6 +2639,8 @@ bool saveRelayPulseConfig(const uint8_t *pulse_enabled, const uint16_t *pulse_se
 }
 
 bool saveLightConfig() {
+  DBG_LOG("config", "save light power=%u dimmer=%u ct=%u mode=%u fade=%u speed=%u",
+          light.power ? 1 : 0, light.dimmer, light.ct, light.mode, config.light_fade, config.light_speed);
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putUChar("lt_power", light.power ? 1 : 0);
   prefs.putUChar("lt_dim", light.dimmer);
@@ -2559,6 +2664,7 @@ bool saveLightConfig() {
 bool saveInputConfig(const StoredConfig &source) {
   if (!inputConfigDiffers(config, source)) return true;
 
+  DBG_LOG("config", "save inputs hold=%u debounce=%u", source.button_hold_ms, source.button_debounce_ms);
   if (!prefs.begin("mymota32", false)) return false;
   if (source.button_hold_ms != config.button_hold_ms) { prefs.putUShort("btn_hold", source.button_hold_ms); delay(0); }
   if (source.button_debounce_ms != config.button_debounce_ms) { prefs.putUShort("btn_db", source.button_debounce_ms); delay(0); }
@@ -2579,6 +2685,7 @@ bool saveInputConfig(const StoredConfig &source) {
 }
 
 bool factoryResetConfig() {
+  DBG_LOG("config", "factory reset requested");
   if (!prefs.begin("mymota32", false)) return false;
   prefs.clear();
   prefs.end();
@@ -2599,14 +2706,18 @@ void loadBootRecoveryState() {
   if (!boot_prefs.begin("mymota32-boot", false)) {
     boot_recovery_count = 0;
     boot_recovery_factory_reset = false;
+    DBG_LOG("boot", "recovery prefs unavailable");
     return;
   }
   boot_recovery_count = boot_prefs.getUInt("count", 0) + 1;
   boot_prefs.putUInt("count", boot_recovery_count);
   boot_prefs.end();
+  DBG_LOG("boot", "recovery count=%lu limit=%u",
+          static_cast<unsigned long>(boot_recovery_count), kBootRecoveryLimit);
 
   if (boot_recovery_count >= kBootRecoveryLimit) {
     boot_recovery_factory_reset = true;
+    DBG_LOG("boot", "recovery limit reached, factory reset");
     factoryResetConfig();
     boot_recovery_count = 0;
   }
@@ -2619,6 +2730,7 @@ void clearBootRecoveryState() {
   boot_prefs.end();
   boot_recovery_count = 0;
   boot_recovery_cleared = true;
+  DBG_LOG("boot", "recovery count cleared after stable boot");
 }
 
 void maintainBootRecovery() {
@@ -2660,12 +2772,19 @@ void appendWifiTxPowerText(String &out) {
 }
 
 void setWifiTxPowerQdbm(int8_t qdbm) {
+  const int8_t previous = wifi_tx_power_qdbm;
   if (esp_wifi_set_max_tx_power(qdbm) == ESP_OK) {
     wifi_tx_power_qdbm = qdbm;
+    if (previous != qdbm) {
+      DBG_LOG("wifi", "tx_power %.1f -> %.1f dBm", previous / 4.0f, qdbm / 4.0f);
+    }
+  } else {
+    DBG_LOG("wifi", "tx_power set failed target=%.1f dBm", qdbm / 4.0f);
   }
 }
 
 void resetWifiDynamicPowerRuntime(bool restore_max) {
+  DBG_LOG("wifi", "dynamic tx reset restore_max=%u", restore_max ? 1 : 0);
   wifi_dynamic_power_connected_since = WiFi.status() == WL_CONNECTED ? millis() : 0;
   wifi_dynamic_power_last_sample = 0;
   wifi_dynamic_power_samples = 0;
@@ -2681,6 +2800,7 @@ int8_t wifiDynamicPowerTargetQdbm(int16_t rssi) {
 }
 
 void prepareWifiTxPowerForConnect() {
+  DBG_LOG("wifi", "prepare tx power for connect");
   setWifiTxPowerQdbm(kWifiTxPowerMaxQdbm);
   wifi_dynamic_power_connected_since = 0;
   wifi_dynamic_power_last_sample = 0;
@@ -2733,6 +2853,9 @@ void maintainWifiDynamicPower() {
   if (wifi_dynamic_power_samples < kWifiDynamicPowerSampleCount) return;
 
   wifi_dynamic_power_last_rssi = wifi_dynamic_power_rssi_sum / static_cast<int16_t>(wifi_dynamic_power_samples);
+  DBG_LOG("wifi", "dynamic tx samples=%u avg_rssi=%d target=%.1f dBm",
+          wifi_dynamic_power_samples, wifi_dynamic_power_last_rssi,
+          wifiDynamicPowerTargetQdbm(wifi_dynamic_power_last_rssi) / 4.0f);
   setWifiTxPowerQdbm(wifiDynamicPowerTargetQdbm(wifi_dynamic_power_last_rssi));
 }
 
@@ -2745,6 +2868,7 @@ void applyPhyMode(uint8_t phy_mode) {
     case kPhyModeN: protocol = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N; break;
     default: break;
   }
+  DBG_LOG("wifi", "apply phy mode=%u", phy_mode);
   esp_wifi_set_protocol(WIFI_IF_STA, protocol);
 }
 
@@ -2753,10 +2877,15 @@ bool waitForWifi(uint32_t timeout_ms) {
   while (WiFi.status() != WL_CONNECTED && millis() - start < timeout_ms) {
     delay(100);
   }
+  DBG_LOG("wifi", "wait result=%u elapsed=%lu ms", WiFi.status() == WL_CONNECTED ? 1 : 0,
+          static_cast<unsigned long>(millis() - start));
   return WiFi.status() == WL_CONNECTED;
 }
 
 bool connectWifiWithPhy(uint8_t phy_mode, uint32_t timeout_ms) {
+  DBG_LOG("wifi", "connect begin phy=%u timeout=%lu ssid_set=%u ssid_len=%u",
+          sanitizePhyMode(phy_mode), static_cast<unsigned long>(timeout_ms),
+          config.ssid[0] ? 1 : 0, static_cast<unsigned>(strlen(config.ssid)));
   WiFi.disconnect(false, true);
   delay(100);
   WiFi.mode(WIFI_STA);
@@ -2766,6 +2895,11 @@ bool connectWifiWithPhy(uint8_t phy_mode, uint32_t timeout_ms) {
   last_wifi_begin_attempt = millis();
   const bool connected = waitForWifi(timeout_ms);
   if (connected) rememberWifiRssi(static_cast<int16_t>(WiFi.RSSI()));
+  DBG_LOG("wifi", "connect %s phy=%u status=%u ip=%s rssi=%d",
+          connected ? "ok" : "failed", sanitizePhyMode(phy_mode),
+          static_cast<unsigned>(WiFi.status()),
+          connected ? WiFi.localIP().toString().c_str() : "0.0.0.0",
+          connected ? static_cast<int>(WiFi.RSSI()) : 0);
   return connected;
 }
 
@@ -2777,6 +2911,8 @@ void startAp() {
   const String ap_name = defaultHostname();
   WiFi.mode(WIFI_AP_STA);
   ap_started = WiFi.softAP(ap_name.c_str());
+  DBG_LOG("wifi", "fallback ap %s ssid=%s ip=%s", ap_started ? "started" : "failed",
+          ap_name.c_str(), ap_started ? WiFi.softAPIP().toString().c_str() : "0.0.0.0");
 }
 
 void stopAp() {
@@ -2784,11 +2920,13 @@ void stopAp() {
   if (WiFi.softAPdisconnect(true)) {
     ap_started = false;
     last_ap_attempt = 0;
+    DBG_LOG("wifi", "fallback ap stopped");
   }
 }
 
 void beginWifiReconnect(uint32_t now) {
   if (!config_ok || WiFi.status() == WL_CONNECTED) return;
+  DBG_LOG("wifi", "reconnect begin status=%u ap=%u", static_cast<unsigned>(WiFi.status()), ap_started ? 1 : 0);
   WiFi.mode(ap_started ? WIFI_AP_STA : WIFI_STA);
   applyPhyMode(config.phy_mode);
   prepareWifiTxPowerForConnect();
@@ -2801,12 +2939,14 @@ void prepareWifi() {
   WiFi.setAutoReconnect(true);
   WiFi.setHostname(config.hostname);
   WiFi.setSleep(false);
+  DBG_LOG("wifi", "prepare hostname=%s dynamic_tx=%u", config.hostname, config.wifi_dynamic_power ? 1 : 0);
   resetWifiDynamicPowerRuntime(false);
 }
 
 void connectWifi() {
   prepareWifi();
   if (!config_ok) {
+    DBG_LOG("wifi", "no saved ssid, starting fallback ap");
     WiFi.mode(WIFI_AP);
     startAp();
     return;
@@ -2819,6 +2959,7 @@ void connectWifi() {
   }
   if (WiFi.status() != WL_CONNECTED) {
     if (config.phy_mode != kPhyModeAuto && config.phy_mode != kPhyModeFailsafe) {
+      DBG_LOG("wifi", "primary phy failed, trying failsafe phy=%u", kPhyModeFailsafe);
       if (connectWifiWithPhy(kPhyModeFailsafe, kConnectTimeoutMs)) {
         sta_connected_once = true;
         return;
@@ -3055,6 +3196,7 @@ bool relayPulseActive(uint8_t relay) {
 
 void cancelRelayEnforcement(uint8_t relay) {
   if (relay >= kMaxRelays) return;
+  if (relay_enforcement_pending[relay]) DBG_LOG("relay", "enforcement canceled relay=%u", relay + 1);
   relay_enforcement_pending[relay] = false;
   relay_enforcement_due[relay] = 0;
 }
@@ -3066,6 +3208,7 @@ void scheduleRelayEnforcement(uint8_t relay) {
   }
   relay_enforcement_due[relay] = millis() + (static_cast<uint32_t>(config.relay_time_seconds[relay]) * 1000UL);
   relay_enforcement_pending[relay] = true;
+  DBG_LOG("relay", "enforcement scheduled relay=%u seconds=%u", relay + 1, config.relay_time_seconds[relay]);
 }
 
 void refreshRelayEnforcementRuntime(bool schedule_off_relays) {
@@ -3080,6 +3223,7 @@ void refreshRelayEnforcementRuntime(bool schedule_off_relays) {
 
 void cancelRelayPulse(uint8_t relay) {
   if (relay >= kMaxRelays) return;
+  if (relay_pulse_pending[relay]) DBG_LOG("relay", "pulse canceled relay=%u", relay + 1);
   relay_pulse_pending[relay] = false;
   relay_pulse_due[relay] = 0;
 }
@@ -3091,6 +3235,7 @@ void scheduleRelayPulse(uint8_t relay) {
   }
   relay_pulse_due[relay] = millis() + (static_cast<uint32_t>(config.relay_pulse_seconds[relay]) * 1000UL);
   relay_pulse_pending[relay] = true;
+  DBG_LOG("relay", "pulse scheduled relay=%u seconds=%u", relay + 1, config.relay_pulse_seconds[relay]);
 }
 
 void refreshRelayPulseRuntime(bool schedule_on_relays) {
@@ -3109,6 +3254,11 @@ void setRelay(uint8_t relay, bool on, bool suppress_off_enforcement = false) {
   const bool was_on = relay_state[relay];
   relay_state[relay] = on;
   writeAssignedPin(runtime_template.relays[relay], on);
+  if (changed) {
+    DBG_LOG("relay", "relay=%u state=%s pin=%u inverted=%u suppress_off_enforcement=%u",
+            relay + 1, on ? "ON" : "OFF", runtime_template.relays[relay].pin,
+            runtime_template.relays[relay].inverted ? 1 : 0, suppress_off_enforcement ? 1 : 0);
+  }
   if (on) {
     cancelRelayEnforcement(relay);
     scheduleRelayPulse(relay);
@@ -3131,10 +3281,13 @@ void setRelay(uint8_t relay, bool on, bool suppress_off_enforcement = false) {
 
 void toggleRelay(uint8_t relay) {
   if (relay >= kMaxRelays) return;
+  DBG_LOG("relay", "toggle relay=%u", relay + 1);
   setRelay(relay, !relay_state[relay]);
 }
 
 void setupDevicePins() {
+  DBG_LOG("gpio", "setup relays=%u buttons=%u leds=%u", runtime_template.relay_count,
+          runtime_template.button_count, runtime_template.led_count);
   memset(relay_enforcement_pending, 0, sizeof(relay_enforcement_pending));
   memset(relay_enforcement_due, 0, sizeof(relay_enforcement_due));
   memset(relay_pulse_pending, 0, sizeof(relay_pulse_pending));
@@ -3146,6 +3299,9 @@ void setupDevicePins() {
     writeAssignedPin(runtime_template.relays[i], relay_state[i]);
     pinMode(runtime_template.relays[i].pin, OUTPUT);
     writeAssignedPin(runtime_template.relays[i], relay_state[i]);
+    DBG_LOG("gpio", "relay=%u pin=%u boot_state=%s inverted=%u", i + 1,
+            runtime_template.relays[i].pin, relay_state[i] ? "ON" : "OFF",
+            runtime_template.relays[i].inverted ? 1 : 0);
     if (relay_state[i]) scheduleRelayPulse(i);
   }
   for (uint8_t i = 0; i < kMaxLedOutputs; i++) {
@@ -3154,12 +3310,19 @@ void setupDevicePins() {
     writeAssignedPin(*assignment, false);
     pinMode(assignment->pin, OUTPUT);
     writeAssignedPin(*assignment, false);
+    DBG_LOG("gpio", "led_output=%u pin=%u inverted=%u", i + 1, assignment->pin,
+            assignment->inverted ? 1 : 0);
   }
   for (uint8_t i = 0; i < kMaxButtons; i++) {
     if (!hasPin(runtime_template.buttons[i])) continue;
     pinMode(runtime_template.buttons[i].pin, runtime_template.buttons[i].no_pullup ? INPUT : INPUT_PULLUP);
     const bool active = readInputActive(i);
     button_state[i] = {active, active, false, millis(), millis()};
+    DBG_LOG("gpio", "input=%u pin=%u kind=%u mode=%u active=%u no_pullup=%u inverted=%u",
+            i + 1, runtime_template.buttons[i].pin, runtime_template.input_kind[i],
+            effectiveInputMode(i), active ? 1 : 0,
+            runtime_template.buttons[i].no_pullup ? 1 : 0,
+            runtime_template.buttons[i].inverted ? 1 : 0);
   }
   graceful_relay_restore_valid = false;
   graceful_relay_restore_mask = 0;
@@ -3316,6 +3479,7 @@ bool pushMqttButtonQueue(const String &topic, const String &payload) {
   if (topic.length() == 0 || topic.length() > kMqttButtonTopicMaxLen) return false;
   if (payload.length() == 0 || payload.length() > kMqttButtonPayloadMaxLen) return false;
   if (mqtt_button_queue_count >= kMqttButtonQueueDepth) {
+    DBG_LOG("mqtt", "button queue full, dropping oldest");
     dropMqttButtonQueueHead();
   }
   MqttButtonPending &slot = mqtt_button_queue[mqttButtonQueueIndex(mqtt_button_queue_count)];
@@ -3323,6 +3487,8 @@ bool pushMqttButtonQueue(const String &topic, const String &payload) {
   strlcpy(slot.topic, topic.c_str(), sizeof(slot.topic));
   strlcpy(slot.payload, payload.c_str(), sizeof(slot.payload));
   mqtt_button_queue_count++;
+  DBG_LOG("mqtt", "queued button action topic=%s payload_len=%u depth=%u",
+          topic.c_str(), static_cast<unsigned>(payload.length()), mqtt_button_queue_count);
   return true;
 }
 
@@ -3333,6 +3499,9 @@ bool mqttQueueButtonAction(uint8_t button, bool hold) {
   String payload = expandButtonActionText(buttonActionPayload(button, hold), button, hold);
   topic.trim();
   if (topic.length() == 0 || payload.length() == 0) return false;
+  DBG_LOG("button", "mqtt action input=%u type=%s topic=%s payload_len=%u",
+          inputFunctionIndex(button) + 1, hold ? "hold" : "press", topic.c_str(),
+          static_cast<unsigned>(payload.length()));
   return pushMqttButtonQueue(topic, payload);
 }
 
@@ -3487,10 +3656,20 @@ bool runWebhookAction(uint8_t button, bool hold) {
   uint16_t port = 80;
   String path;
   if (!parseHttpUrl(url, host, port, path)) return false;
-  if (port == 80 && webhookHostIsLocal(host)) return runLocalCmndWebhookPath(path);
+  DBG_LOG("webhook", "input=%u type=%s host=%s port=%u path_len=%u",
+          inputFunctionIndex(button) + 1, hold ? "hold" : "press", host.c_str(), port,
+          static_cast<unsigned>(path.length()));
+  if (port == 80 && webhookHostIsLocal(host)) {
+    const bool ok = runLocalCmndWebhookPath(path);
+    DBG_LOG("webhook", "local command result=%u", ok ? 1 : 0);
+    return ok;
+  }
   WiFiClient client;
   client.setTimeout(kWebhookConnectTimeoutMs);
-  if (!client.connect(host.c_str(), port)) return false;
+  if (!client.connect(host.c_str(), port)) {
+    DBG_LOG("webhook", "connect failed host=%s port=%u", host.c_str(), port);
+    return false;
+  }
   String request;
   request.reserve(path.length() + host.length() + 90);
   request += F("GET ");
@@ -3502,10 +3681,12 @@ bool runWebhookAction(uint8_t button, bool hold) {
   request += F("\r\n\r\n");
   if (client.print(request) != request.length()) {
     client.stop();
+    DBG_LOG("webhook", "write failed host=%s port=%u", host.c_str(), port);
     return false;
   }
   drainWebhookResponse(client);
   client.stop();
+  DBG_LOG("webhook", "ok host=%s port=%u", host.c_str(), port);
   return true;
 }
 
@@ -3617,17 +3798,26 @@ void switchbotLockQueueBatteryCallback(int8_t battery) {
 }
 
 void switchbotLockRecordObservedState(uint8_t state, bool door_known, bool door_open, uint32_t now) {
+  const uint8_t previous_state = switchbot_lock_state;
+  const bool previous_door_known = switchbot_lock_door_known;
+  const bool previous_door_open = switchbot_lock_door_open;
   switchbot_lock_state = state;
   if (door_known) {
     switchbot_lock_door_open = door_open;
     switchbot_lock_door_known = true;
   }
   switchbot_lock_last_update_ms = now;
+  if (previous_state != state || previous_door_known != switchbot_lock_door_known ||
+      previous_door_open != switchbot_lock_door_open) {
+    DBG_LOG("switchbot", "state=%s door=%s", switchbotLockStateName(state),
+            switchbot_lock_door_known ? (switchbot_lock_door_open ? "open" : "closed") : "unknown");
+  }
   switchbotLockQueueStatusCallback(state);
 }
 
 void switchbotLockRecordBattery(int8_t battery) {
   if (battery < 0) return;
+  if (switchbot_lock_battery != battery) DBG_LOG("switchbot", "battery=%d", battery);
   switchbot_lock_battery = battery;
   switchbotLockQueueBatteryCallback(battery);
 }
@@ -3638,6 +3828,8 @@ void switchbotLockSendPendingStatusCallback(uint32_t now) {
   switchbot_lock_pending_status_callback_code = kSwitchbotLockCallbackCodeUnknown;
   const char *label = switchbotLockStatusCallbackLabel(code);
   if (!label) return;
+  DBG_LOG("switchbot", "status callback state=%s configured=%u", label,
+          config.switchbot_lock_status_callback[0] ? 1 : 0);
   if (config.switchbot_lock_status_callback[0]) runSwitchbotLockCallback(config.switchbot_lock_status_callback, label);
   switchbot_lock_last_status_callback_code = code;
   switchbot_lock_last_status_notify_ms = now;
@@ -3646,6 +3838,8 @@ void switchbotLockSendPendingStatusCallback(uint32_t now) {
 void switchbotLockSendBatteryCallback(uint8_t code, uint32_t now) {
   const char *label = switchbotLockBatteryCallbackLabel(code);
   if (!label) return;
+  DBG_LOG("switchbot", "battery callback state=%s configured=%u", label,
+          config.switchbot_lock_battery_callback[0] ? 1 : 0);
   if (config.switchbot_lock_battery_callback[0]) runSwitchbotLockCallback(config.switchbot_lock_battery_callback, label);
   switchbot_lock_last_battery_callback_code = code;
   switchbot_lock_last_battery_notify_ms = now;
@@ -3661,6 +3855,8 @@ void switchbotLockSendPendingBatteryCallback(uint32_t now) {
 void switchbotLockSendDeviceCallback(uint8_t state, uint32_t now) {
   const char *label = switchbotLockDeviceHealthLabel(state);
   if (!label) return;
+  DBG_LOG("switchbot", "device callback state=%s configured=%u", label,
+          config.switchbot_lock_device_callback[0] ? 1 : 0);
   if (config.switchbot_lock_device_callback[0]) runSwitchbotLockCallback(config.switchbot_lock_device_callback, label);
   switchbot_lock_last_device_notify_ms = now;
 }
@@ -3713,6 +3909,8 @@ void maintainSwitchbotLockCallbackReports(uint32_t now) {
 }
 
 bool runButtonAction(uint8_t button, uint8_t action, bool hold) {
+  DBG_LOG("button", "run action input=%u type=%s action=%u", inputFunctionIndex(button) + 1,
+          hold ? "hold" : "press", action);
   if (action == kButtonActionRelayToggle) {
     uint8_t relay = 0;
     if (buttonRelayTarget(button, hold, relay)) {
@@ -3735,9 +3933,13 @@ void maintainButtons() {
     if (raw != button_state[i].raw_pressed) {
       button_state[i].raw_pressed = raw;
       button_state[i].changed_at = now;
+      DBG_LOG("button", "raw edge input=%u state=%s", inputFunctionIndex(i) + 1,
+              raw ? "pressed" : "released");
     }
     if ((now - button_state[i].changed_at) >= config.button_debounce_ms && raw != button_state[i].stable_pressed) {
       button_state[i].stable_pressed = raw;
+      DBG_LOG("button", "debounced input=%u state=%s mode=%u", inputFunctionIndex(i) + 1,
+              raw ? "pressed" : "released", effectiveInputMode(i));
       if (effectiveInputMode(i) == kInputModeSwitch) {
         uint8_t relay = 0;
         if (inputRelayTarget(i, relay)) setRelay(relay, raw);
@@ -3764,6 +3966,8 @@ void maintainButtons() {
         config.button_hold_action[i] != kButtonActionNone) {
       if ((now - button_state[i].pressed_at) >= config.button_hold_ms) {
         button_state[i].hold_emitted = true;
+        DBG_LOG("button", "hold input=%u elapsed=%lu action=%u", inputFunctionIndex(i) + 1,
+                static_cast<unsigned long>(now - button_state[i].pressed_at), config.button_hold_action[i]);
         runButtonAction(i, config.button_hold_action[i], true);
       }
     }
@@ -3779,6 +3983,7 @@ void maintainRelayEnforcement() {
       continue;
     }
     if (static_cast<int32_t>(now - relay_enforcement_due[i]) >= 0) {
+      DBG_LOG("relay", "enforcement firing relay=%u", i + 1);
       setRelay(i, true);
     }
   }
@@ -3793,6 +3998,7 @@ void maintainRelayPulsing() {
       continue;
     }
     if (static_cast<int32_t>(now - relay_pulse_due[i]) >= 0) {
+      DBG_LOG("relay", "pulse firing relay=%u", i + 1);
       setRelay(i, false, true);
     }
   }
@@ -4028,6 +4234,8 @@ bool decodeBl0939Packet() {
                         (abs(static_cast<int>(tps1) - static_cast<int>(energy.tps1)) > 10);
   if (energy.rx_buffer[0] != kBl09xxPacketHeader ||
       tps_jump) {
+    DBG_LOG("energy", "bl0939 packet rejected header=0x%02x tps=%u previous=%u",
+            energy.rx_buffer[0], tps1, energy.tps1);
     return false;
   }
 
@@ -4054,6 +4262,8 @@ bool decodeBl0939Packet() {
 
   updateEnergyAggregateFromChannels();
   energy.last_success_ms = millis();
+  DBG_LOG("energy", "bl0939 ok voltage=%.1f power=%.1f current=%.3f temp=%.1f",
+          energy.voltage, energy.power, energy.current, energy.temperature);
   return true;
 }
 
@@ -4080,6 +4290,8 @@ void processBl0939Serial() {
       return;
     }
 
+    DBG_LOG("energy", "bl0939 checksum/sync miss checksum=0x%02x expected=0x%02x",
+            checksum, energy.rx_buffer[kBl0939BufferSize - 1]);
     memmove(energy.rx_buffer, energy.rx_buffer + 1, kBl0939BufferSize - 1);
     energy.byte_counter = kBl0939BufferSize - 1;
     while (energy.byte_counter > 0 && energy.rx_buffer[0] != kBl09xxPacketHeader) {
@@ -4091,6 +4303,7 @@ void processBl0939Serial() {
 }
 
 void sendBl0939Init() {
+  DBG_LOG("energy", "bl0939 init");
   for (uint8_t i = 0; i < sizeof(kBl09xxInit) / sizeof(kBl09xxInit[0]); i++) {
     uint8_t checksum = kBl09xxWriteCommand | kBl0939Address;
     bl0939_serial.write(checksum);
@@ -4133,11 +4346,14 @@ void setupEnergyMonitor() {
     energy.last_success_ms = millis();
     bl0939_serial.setRxBufferSize(128);
     bl0939_serial.begin(4800, SERIAL_8N1, energy.rx_pin, energy.tx_pin);
+    DBG_LOG("energy", "setup driver=bl0939 rx=%u tx=%u channels=%u",
+            energy.rx_pin, energy.tx_pin, energy.channel_count);
     sendBl0939Init();
     return;
   }
 
   if (!digitalPinSupported(runtime_template.energy_cf_pin)) {
+    DBG_LOG("energy", "setup none");
     return;
   }
 
@@ -4158,6 +4374,9 @@ void setupEnergyMonitor() {
   energy.last_integrate_ms = millis();
   energy.last_success_ms = millis();
   energy.last_hlw_update_ms = millis();
+  DBG_LOG("energy", "setup driver=%s cf=%u cf1=%u sel=%u hjl=%u",
+          energy.hjl ? "bl0937" : "hlw8012", energy.cf_pin, energy.cf1_pin,
+          energy.sel_pin, energy.hjl ? 1 : 0);
 
   if (digitalPinSupported(energy.sel_pin)) {
     pinMode(energy.sel_pin, OUTPUT);
@@ -4191,6 +4410,14 @@ void maintainEnergy() {
     processBl0939Serial();
     pollBl0939(now);
     if (now - energy.last_success_ms >= kBl0939StaleMs) {
+      bool had_nonzero = false;
+      for (uint8_t i = 0; i < energy.channel_count && i < kEnergyMaxChannels; i++) {
+        if (energy.channel[i].power != 0.0f || energy.channel[i].current != 0.0f) had_nonzero = true;
+      }
+      if (had_nonzero) {
+        DBG_LOG("energy", "bl0939 stale age=%lu ms, zeroing channels",
+                static_cast<unsigned long>(now - energy.last_success_ms));
+      }
       for (uint8_t i = 0; i < energy.channel_count && i < kEnergyMaxChannels; i++) {
         energy.channel[i].power = 0.0f;
         energy.channel[i].current = 0.0f;
@@ -4208,6 +4435,8 @@ void maintainEnergy() {
       if (kwhToUkwh(energy.total_kwh) > kEnergyTotalMaxUkwh) {
         energy.total_kwh = ukwhToKwh(kEnergyTotalMaxUkwh);
       }
+      DBG_LOG("energy", "integrated elapsed=%lu total=%.4f power=%.1f",
+              static_cast<unsigned long>(elapsed), energy.total_kwh, energy.power);
     }
   }
   persistEnergyTotal(false);
@@ -4533,6 +4762,7 @@ void setLightPower(bool on, bool persist = true) {
   light.power = on;
   light.dimmer = target_dimmer;
   updateLightOutputs();
+  if (changed || dimmer_changed) DBG_LOG("light", "power=%u dimmer=%u persist=%u", on ? 1 : 0, light.dimmer, persist ? 1 : 0);
   if (changed || dimmer_changed) scheduleMqttLightPublish(kMqttLightPendingDimmer);
   if (persist && (changed || dimmer_changed)) scheduleLightConfigPersist();
 }
@@ -4552,6 +4782,7 @@ void setLightDimmer(uint16_t dimmer, bool persist = true) {
   light.power = true;
   light.dimmer = sanitized;
   updateLightOutputs();
+  if (changed) DBG_LOG("light", "dimmer=%u persist=%u", light.dimmer, persist ? 1 : 0);
   if (changed) scheduleMqttLightPublish(kMqttLightPendingDimmer);
   if (persist && changed) scheduleLightConfigPersist();
 }
@@ -4563,6 +4794,7 @@ void setLightCt(uint16_t ct, bool persist = true) {
   light.ct = sanitized;
   light.mode = kLightModeWhite;
   updateLightOutputs();
+  if (changed) DBG_LOG("light", "ct=%u persist=%u", light.ct, persist ? 1 : 0);
   if (changed) scheduleMqttLightPublish(kMqttLightPendingCt);
   if (persist && changed) scheduleLightConfigPersist();
 }
@@ -4681,6 +4913,9 @@ void setLightColor(const uint8_t rgb[3], bool persist = true) {
   light.power = any;
   if (!any) light.dimmer = kLightDimmerOff;
   updateLightOutputs();
+  if (changed) DBG_LOG("light", "color=%02X%02X%02X power=%u dimmer=%u persist=%u",
+                       light.rgb[0], light.rgb[1], light.rgb[2], light.power ? 1 : 0,
+                       light.dimmer, persist ? 1 : 0);
   if (changed) scheduleMqttLightPublish(kMqttLightPendingColor | kMqttLightPendingDimmer);
   if (persist && changed) scheduleLightConfigPersist();
 }
@@ -4700,6 +4935,8 @@ void setLightHsb(uint16_t hue, uint8_t sat, uint8_t bri, bool persist = true) {
   light.power = any;
   light.dimmer = dimmer;
   updateLightOutputs();
+  if (changed) DBG_LOG("light", "hsb=%u,%u,%u rgb=%02X%02X%02X persist=%u",
+                       hue, sat, bri, light.rgb[0], light.rgb[1], light.rgb[2], persist ? 1 : 0);
   if (changed) scheduleMqttLightPublish(kMqttLightPendingColor | kMqttLightPendingDimmer);
   if (persist && changed) scheduleLightConfigPersist();
 }
@@ -4710,6 +4947,7 @@ void setLightFadeEnabled(bool enabled, bool persist = true) {
   if (config.light_fade == value) return;
   config.light_fade = value;
   if (!enabled) updateLightOutputs();
+  DBG_LOG("light", "fade=%u persist=%u", enabled ? 1 : 0, persist ? 1 : 0);
   scheduleMqttLightPublish(kMqttLightPendingFade);
   if (persist) {
     light.config_dirty = true;
@@ -4722,6 +4960,7 @@ void setLightSpeed(uint16_t speed, bool persist = true) {
   const uint8_t value = sanitizeLightSpeedValue(speed);
   if (config.light_speed == value) return;
   config.light_speed = value;
+  DBG_LOG("light", "speed=%u persist=%u", value, persist ? 1 : 0);
   scheduleMqttLightPublish(kMqttLightPendingSpeed);
   if (persist) {
     light.config_dirty = true;
@@ -4733,11 +4972,17 @@ void setupLightRuntime() {
   memset(&light, 0, sizeof(light));
   light.present = lightAvailable();
   loadLightStateFromConfig();
-  if (!light.present) return;
+  if (!light.present) {
+    DBG_LOG("light", "setup none");
+    return;
+  }
   pinMode(runtime_template.sm2335_dat_pin, OUTPUT);
   pinMode(runtime_template.sm2335_clk_pin, OUTPUT);
   sm2335Stop();
   updateLightOutputs();
+  DBG_LOG("light", "setup sm2335 dat=%u clk=%u current=0x%02x power=%u dimmer=%u ct=%u",
+          runtime_template.sm2335_dat_pin, runtime_template.sm2335_clk_pin,
+          runtime_template.sm2335_current, light.power ? 1 : 0, light.dimmer, light.ct);
 }
 
 void maintainLight() {
@@ -4857,6 +5102,9 @@ bool parsePowerState(const char *p, size_t len, uint8_t &state) {
 void recordMqttConnectResult(uint8_t result, uint32_t started) {
   last_mqtt_connect_result = result;
   last_mqtt_connect_duration = millis() - started;
+  DBG_LOG("mqtt", "connect result=%s elapsed=%lu ms",
+          String(mqttConnectResultName(result)).c_str(),
+          static_cast<unsigned long>(last_mqtt_connect_duration));
 }
 
 bool mqttReadByteUntil(uint8_t &value, uint32_t deadline_ms) {
@@ -4940,6 +5188,12 @@ String mqttCommandTopicFilter() {
 }
 
 void mqttStop() {
+  const bool was_connected = mqtt_client.connected();
+  if (was_connected || last_mqtt_io || mqtt_ping_pending) {
+    DBG_LOG("mqtt", "stop connected=%u ping_pending=%u last_io_age=%lu",
+            was_connected ? 1 : 0, mqtt_ping_pending ? 1 : 0,
+            last_mqtt_io ? static_cast<unsigned long>(millis() - last_mqtt_io) : 0UL);
+  }
   mqtt_client.stop();
   last_mqtt_io = 0;
   last_mqtt_rx = 0;
@@ -4985,6 +5239,7 @@ bool mqttReadSuback(uint16_t packet_id, uint32_t deadline_ms) {
 bool mqttSubscribeCommandTopic() {
   const String filter = mqttCommandTopicFilter();
   if (filter.length() == 0 || filter.length() > kMqttCommandTopicMaxLen) return false;
+  DBG_LOG("mqtt", "subscribe filter=%s", filter.c_str());
 
   const uint32_t remaining_length = 2U + 2U + filter.length() + 1U;
   const bool ok = mqttWriteByte(kMqttPacketSubscribe) &&
@@ -4995,7 +5250,9 @@ bool mqttSubscribeCommandTopic() {
                   mqttWriteByte(0x00);
   if (!ok) return false;
   last_mqtt_io = millis();
-  return mqttReadSuback(kMqttCommandPacketId, millis() + kMqttConnackTimeoutMs);
+  const bool sub_ok = mqttReadSuback(kMqttCommandPacketId, millis() + kMqttConnackTimeoutMs);
+  DBG_LOG("mqtt", "subscribe result=%u", sub_ok ? 1 : 0);
+  return sub_ok;
 }
 
 bool mqttConnect() {
@@ -5003,6 +5260,8 @@ bool mqttConnect() {
 
   const uint32_t started = millis();
   last_mqtt_connect_attempt = started;
+  DBG_LOG("mqtt", "connect begin host=%s port=%u topic=%s keepalive=%u",
+          config.mqtt_host, config.mqtt_port, config.mqtt_topic, mqttProtocolKeepaliveSec());
   mqttStop();
   mqtt_client.setTimeout(kMqttConnectTimeoutMs);
   if (!mqtt_client.connect(config.mqtt_host, config.mqtt_port)) {
@@ -5041,6 +5300,7 @@ bool mqttConnect() {
     return false;
   }
   if (packet_type != kMqttPacketConnack) {
+    DBG_LOG("mqtt", "unexpected connack packet=0x%02x", packet_type);
     mqttStop();
     recordMqttConnectResult(kMqttConnectConnackRejected, started);
     return false;
@@ -5059,6 +5319,7 @@ bool mqttConnect() {
     return false;
   }
   if (flags != 0x00 || return_code != 0x00) {
+    DBG_LOG("mqtt", "connack rejected flags=0x%02x return=%u", flags, return_code);
     mqttStop();
     recordMqttConnectResult(kMqttConnectConnackRejected, started);
     return false;
@@ -5084,6 +5345,7 @@ bool mqttEnsureConnected() {
     return false;
   }
   next_mqtt_reconnect = now;
+  DBG_LOG("mqtt", "ensure connected triggers connect");
   return mqttConnect();
 }
 
@@ -5093,6 +5355,7 @@ bool mqttPublish(const char *topic, const char *payload) {
   const uint16_t topic_len = topic ? strlen(topic) : 0;
   const uint16_t payload_len = payload ? strlen(payload) : 0;
   if (topic_len == 0) return false;
+  DBG_LOG("mqtt", "publish topic=%s payload_len=%u", topic, payload_len);
 
   const uint32_t remaining_length = 2U + topic_len + payload_len;
   const bool ok = mqttWriteByte(0x30) &&
@@ -5100,6 +5363,7 @@ bool mqttPublish(const char *topic, const char *payload) {
                   mqttWriteString(topic) &&
                   (payload_len == 0 || mqtt_client.write(reinterpret_cast<const uint8_t *>(payload), payload_len) == payload_len);
   if (!ok) {
+    DBG_LOG("mqtt", "publish failed topic=%s payload_len=%u", topic, payload_len);
     mqttStop();
     return false;
   }
@@ -5116,11 +5380,19 @@ bool switchbotLockSupported() {
 }
 
 void setIBeaconStatus(const char *status) {
-  strlcpy(ibeacon_status, status ? status : "unknown", sizeof(ibeacon_status));
+  const char *next = status ? status : "unknown";
+#if MYMOTA32_DEBUG_LOG
+  if (strcmp(ibeacon_status, next) != 0) DBG_LOG("ibeacon", "status %s -> %s", ibeacon_status, next);
+#endif
+  strlcpy(ibeacon_status, next, sizeof(ibeacon_status));
 }
 
 void setSwitchbotLockStatus(const char *status) {
-  strlcpy(switchbot_lock_status, status ? status : "unknown", sizeof(switchbot_lock_status));
+  const char *next = status ? status : "unknown";
+#if MYMOTA32_DEBUG_LOG
+  if (strcmp(switchbot_lock_status, next) != 0) DBG_LOG("switchbot", "status %s -> %s", switchbot_lock_status, next);
+#endif
+  strlcpy(switchbot_lock_status, next, sizeof(switchbot_lock_status));
 }
 
 void setSwitchbotLockStatusCode(const char *prefix, int code) {
@@ -5134,15 +5406,27 @@ bool shellyBluButtonSupported() {
 }
 
 void setShellyBluButtonStatus(const char *status) {
-  strlcpy(shelly_blu_button_status, status ? status : "unknown", sizeof(shelly_blu_button_status));
+  const char *next = status ? status : "unknown";
+#if MYMOTA32_DEBUG_LOG
+  if (strcmp(shelly_blu_button_status, next) != 0) DBG_LOG("shelly", "status %s -> %s", shelly_blu_button_status, next);
+#endif
+  strlcpy(shelly_blu_button_status, next, sizeof(shelly_blu_button_status));
 }
 
 void setShellyBluButtonAction(const char *action) {
-  strlcpy(shelly_blu_button_action, action ? action : "idle", sizeof(shelly_blu_button_action));
+  const char *next = action ? action : "idle";
+#if MYMOTA32_DEBUG_LOG
+  if (strcmp(shelly_blu_button_action, next) != 0) DBG_LOG("shelly", "action %s -> %s", shelly_blu_button_action, next);
+#endif
+  strlcpy(shelly_blu_button_action, next, sizeof(shelly_blu_button_action));
 }
 
 void setShellyBluButtonStage(const char *stage) {
-  strlcpy(shelly_blu_button_stage, stage ? stage : "idle", sizeof(shelly_blu_button_stage));
+  const char *next = stage ? stage : "idle";
+#if MYMOTA32_DEBUG_LOG
+  if (strcmp(shelly_blu_button_stage, next) != 0) DBG_LOG("shelly", "stage %s -> %s", shelly_blu_button_stage, next);
+#endif
+  strlcpy(shelly_blu_button_stage, next, sizeof(shelly_blu_button_stage));
 }
 
 void setShellyBluButtonStatusCode(const char *prefix, int code) {
@@ -5692,10 +5976,16 @@ void pushIBeaconObservation(const IBeaconObservation &obs) {
   if (ibeacon_queue_count >= kIBeaconQueueDepth) {
     ibeacon_queue_head = (ibeacon_queue_head + 1) % kIBeaconQueueDepth;
     ibeacon_queue_count--;
+#if MYMOTA32_DEBUG_LOG
+    debug_ibeacon_queue_dropped++;
+#endif
   }
   const uint8_t index = (ibeacon_queue_head + ibeacon_queue_count) % kIBeaconQueueDepth;
   ibeacon_queue[index] = obs;
   ibeacon_queue_count++;
+#if MYMOTA32_DEBUG_LOG
+  debug_ibeacon_queued++;
+#endif
   portEXIT_CRITICAL(&ibeacon_queue_mux);
 }
 
@@ -5724,11 +6014,19 @@ void IBeaconScanCallbacks::onResult(const NimBLEAdvertisedDevice *device) {
   processSwitchbotLockAdvertisement(device);
   processShellyBluButtonAdvertisement(device);
   if (config.ibeacon_enabled) {
+#if MYMOTA32_DEBUG_LOG
+    debug_ibeacon_seen++;
+#endif
     IBeaconObservation obs{};
     std::string mac = device->getAddress().toString();
     strlcpy(obs.mac, mac.c_str(), sizeof(obs.mac));
     normalizeIBeaconMac(obs.mac);
-    if (!iBeaconMacAllowedByFilters(obs.mac)) return;
+    if (!iBeaconMacAllowedByFilters(obs.mac)) {
+#if MYMOTA32_DEBUG_LOG
+      debug_ibeacon_filtered++;
+#endif
+      return;
+    }
     obs.rssi = device->getRSSI();
     const std::vector<uint8_t> &payload = device->getPayload();
     obs.payload_len = static_cast<uint8_t>(min(payload.size(), static_cast<size_t>(kIBeaconMaxPacketBytes)));
@@ -5758,10 +6056,12 @@ bool ensureBleScanner(const char *status_owner) {
   if (next_ibeacon_start_attempt && now - next_ibeacon_start_attempt < 30000UL) return false;
   if (!ibeacon_stack_started) {
     next_ibeacon_start_attempt = now;
+    DBG_LOG("ble", "init owner=%s", status_owner ? status_owner : "unknown");
     if (status_owner && strcmp(status_owner, "ibeacon") == 0) setIBeaconStatus("starting");
     if (status_owner && strcmp(status_owner, "switchbot") == 0) setSwitchbotLockStatus("starting");
     if (status_owner && strcmp(status_owner, "shelly") == 0) setShellyBluButtonStatus("starting");
     if (!NimBLEDevice::init("mymota32")) {
+      DBG_LOG("ble", "init failed owner=%s", status_owner ? status_owner : "unknown");
       if (status_owner && strcmp(status_owner, "ibeacon") == 0) setIBeaconStatus("init_failed");
       if (status_owner && strcmp(status_owner, "switchbot") == 0) setSwitchbotLockStatus("init_failed");
       if (status_owner && strcmp(status_owner, "shelly") == 0) setShellyBluButtonStatus("init_failed");
@@ -5772,6 +6072,7 @@ bool ensureBleScanner(const char *status_owner) {
     NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
     NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
     ibeacon_stack_started = true;
+    DBG_LOG("ble", "stack started");
     ibeacon_scan = NimBLEDevice::getScan();
     if (!ibeacon_scan) {
       if (status_owner && strcmp(status_owner, "ibeacon") == 0) setIBeaconStatus("scan_missing");
@@ -5796,17 +6097,22 @@ bool startBleScan(const char *status_owner) {
 #if MYMOTA32_BLE_SCAN_SUPPORTED
   if (!ensureBleScanner(status_owner)) return false;
   if (!ibeacon_scan) return false;
+  bool started_now = false;
   if (!ibeacon_scan->isScanning()) {
+    DBG_LOG("ble", "scan start owner=%s", status_owner ? status_owner : "unknown");
     if (!ibeacon_scan->start(0, true, false)) {
       ble_scanning = false;
+      DBG_LOG("ble", "scan start failed owner=%s", status_owner ? status_owner : "unknown");
       if (status_owner && strcmp(status_owner, "ibeacon") == 0) setIBeaconStatus("scan_failed");
       if (status_owner && strcmp(status_owner, "switchbot") == 0) setSwitchbotLockStatus("scan_failed");
       if (status_owner && strcmp(status_owner, "shelly") == 0) setShellyBluButtonStatus("scan_failed");
       return false;
     }
+    started_now = true;
   }
   next_ibeacon_start_attempt = 0;
   ble_scanning = true;
+  if (started_now) DBG_LOG("ble", "scan active owner=%s", status_owner ? status_owner : "unknown");
   return true;
 #else
   (void)status_owner;
@@ -5821,6 +6127,7 @@ void stopBleScanIfIdle() {
     return;
   }
   if (ibeacon_scan && ibeacon_scan->isScanning()) {
+    DBG_LOG("ble", "scan stop idle");
     ibeacon_scan->stop();
   }
   ble_scanning = false;
@@ -5857,11 +6164,25 @@ void processIBeaconObservation(const IBeaconObservation &obs) {
   const IBeaconBthomeReading bthome = parseIBeaconBthome(obs.payload, obs.payload_len);
   const uint32_t now = millis();
   if (!shouldPublishIBeacon(obs, climate, bthome, now)) {
+#if MYMOTA32_DEBUG_LOG
+    debug_ibeacon_suppressed++;
+#endif
     return;
   }
   if (mqttPublishIBeacon(obs)) {
+#if MYMOTA32_DEBUG_LOG
+    debug_ibeacon_published++;
+#endif
+    DBG_LOG("ibeacon", "published mac=%s rssi=%d len=%u climate=%u packet_id=%u",
+            obs.mac, obs.rssi, obs.payload_len, climate.valid ? 1 : 0,
+            bthome.has_packet_id ? bthome.packet_id : 255);
     recordIBeaconMqttReport(now);
     rememberPublishedIBeacon(obs, climate, bthome, now);
+  } else {
+#if MYMOTA32_DEBUG_LOG
+    debug_ibeacon_publish_failed++;
+#endif
+    DBG_LOG("ibeacon", "publish failed mac=%s rssi=%d", obs.mac, obs.rssi);
   }
 }
 
@@ -6021,6 +6342,9 @@ SwitchbotLockCommand *createSwitchbotLockCommand(uint8_t desired_state) {
   slot->created_ms = now;
   slot->updated_ms = now;
   switchbot_lock_last_command_id = slot->id;
+  char id_text[9]{};
+  switchbotLockCommandIdToString(slot->id, id_text);
+  DBG_LOG("switchbot", "command create id=%s desired=%s", id_text, switchbotLockStateName(desired_state));
 
   if (desired_state == kSwitchbotLockStateUnlocked &&
       switchbot_lock_state == kSwitchbotLockStateUnlocked &&
@@ -6281,6 +6605,7 @@ void switchbotLockClearClientState() {
 void SwitchbotLockClientCallbacks::onDisconnect(NimBLEClient *, int reason) {
   switchbot_lock_disconnect_reason = reason;
   switchbot_lock_last_error_code = reason;
+  DBG_LOG("switchbot", "disconnect reason=%d", reason);
   switchbotLockClearClientState();
   if (config.switchbot_lock_enabled) {
     switchbot_lock_next_poll_ms = millis() + kSwitchbotLockReconnectMs;
@@ -6290,6 +6615,7 @@ void SwitchbotLockClientCallbacks::onDisconnect(NimBLEClient *, int reason) {
 
 void switchbotLockCloseClient() {
   if (switchbot_lock_client) {
+    DBG_LOG("switchbot", "close client connected=%u", switchbot_lock_client->isConnected() ? 1 : 0);
     if (switchbot_lock_client->isConnected()) switchbot_lock_client->disconnect();
     NimBLEDevice::deleteClient(switchbot_lock_client);
     switchbot_lock_client = nullptr;
@@ -6325,15 +6651,22 @@ void switchbotLockNotifyCallback(NimBLERemoteCharacteristic *, uint8_t *data, si
 bool switchbotLockRawSend(NimBLERemoteCharacteristic *tx, const uint8_t *data, size_t len,
                           uint8_t *response, size_t &response_len) {
   if (!tx || !data || !response) return false;
+  DBG_LOG("switchbot", "raw send len=%u", static_cast<unsigned>(len));
   switchbot_lock_response_ready = false;
   switchbot_lock_response_len = 0;
-  if (!tx->writeValue(data, len, true)) return false;
+  if (!tx->writeValue(data, len, true)) {
+    DBG_LOG("switchbot", "raw write failed len=%u", static_cast<unsigned>(len));
+    return false;
+  }
   const uint32_t start = millis();
   while (!switchbot_lock_response_ready && millis() - start < kSwitchbotLockResponseTimeoutMs) {
     server.handleClient();
     delay(10);
   }
-  if (!switchbot_lock_response_ready || switchbot_lock_response_len == 0) return false;
+  if (!switchbot_lock_response_ready || switchbot_lock_response_len == 0) {
+    DBG_LOG("switchbot", "raw response timeout len=%u", static_cast<unsigned>(len));
+    return false;
+  }
   response_len = switchbot_lock_response_len;
   memcpy(response, switchbot_lock_response, response_len);
   switchbot_lock_response_ready = false;
@@ -6358,7 +6691,11 @@ bool switchbotLockClientMatches(const char *mac) {
 
 bool switchbotLockConnectCandidate(const char *mac, uint8_t address_type, uint8_t key_id, const uint8_t (&key)[16]) {
   if (!mac || !mac[0]) return false;
-  if (switchbotLockClientMatches(mac)) return true;
+  if (switchbotLockClientMatches(mac)) {
+    DBG_LOG("switchbot", "reuse connection mac=%s", mac);
+    return true;
+  }
+  DBG_LOG("switchbot", "connect candidate mac=%s type=%u", mac, address_type);
   switchbotLockCloseClient();
   NimBLEClient *client = NimBLEDevice::createClient();
   if (!client) return false;
@@ -6370,6 +6707,7 @@ bool switchbotLockConnectCandidate(const char *mac, uint8_t address_type, uint8_
   NimBLEAddress address(std::string(mac), address_type);
   if (!client->connect(address, true, false, true)) {
     switchbot_lock_last_error_code = client->getLastError();
+    DBG_LOG("switchbot", "connect failed mac=%s type=%u err=%d", mac, address_type, switchbot_lock_last_error_code);
     setSwitchbotLockStatusCode("connect_e", switchbot_lock_last_error_code);
     goto done;
   }
@@ -6377,6 +6715,7 @@ bool switchbotLockConnectCandidate(const char *mac, uint8_t address_type, uint8_
     NimBLERemoteService *service = client->getService(kSwitchbotServiceUuid);
     if (!service) {
       switchbot_lock_last_error_code = client->getLastError();
+      DBG_LOG("switchbot", "service missing err=%d", switchbot_lock_last_error_code);
       setSwitchbotLockStatus("svc_missing");
       goto done;
     }
@@ -6384,11 +6723,13 @@ bool switchbotLockConnectCandidate(const char *mac, uint8_t address_type, uint8_
     NimBLERemoteCharacteristic *rx = service->getCharacteristic(kSwitchbotRxUuid);
     if (!tx || !rx) {
       switchbot_lock_last_error_code = client->getLastError();
+      DBG_LOG("switchbot", "characteristic missing err=%d", switchbot_lock_last_error_code);
       setSwitchbotLockStatus("char_missing");
       goto done;
     }
     if (!rx->subscribe(true, switchbotLockNotifyCallback, true)) {
       switchbot_lock_last_error_code = client->getLastError();
+      DBG_LOG("switchbot", "subscribe failed err=%d", switchbot_lock_last_error_code);
       setSwitchbotLockStatusCode("sub_e", switchbot_lock_last_error_code);
       goto done;
     }
@@ -6442,6 +6783,8 @@ bool switchbotLockConnectCandidate(const char *mac, uint8_t address_type, uint8_
     switchbot_lock_disconnect_reason = 0;
     switchbot_lock_connected_since_ms = millis();
     setSwitchbotLockStatus("connected");
+    DBG_LOG("switchbot", "connected mac=%s type=%u cipher=%u iv_len=%u",
+            mac, address_type, switchbot_lock_cipher_mode, switchbot_lock_iv_len);
     return true;
   }
 done:
@@ -6452,6 +6795,8 @@ done:
 bool switchbotLockRunOnConnection(const uint8_t *action_cmd = nullptr, size_t action_cmd_len = 0,
                                   uint8_t optimistic_state = kSwitchbotLockStateUnknown) {
   if (!switchbotLockClientConnected()) return false;
+  DBG_LOG("switchbot", "run on connection action_len=%u optimistic=%u",
+          static_cast<unsigned>(action_cmd_len), optimistic_state);
   uint8_t key_id = 0;
   uint8_t key[16]{};
   if (!switchbotLockCredentialsReady(key_id, key)) return false;
@@ -6464,6 +6809,8 @@ bool switchbotLockRunOnConnection(const uint8_t *action_cmd = nullptr, size_t ac
     if (!switchbotLockEncryptedSend(switchbot_lock_tx, action_cmd, action_cmd_len, key_id, key, plain, plain_len) ||
         plain_len == 0 || (plain[0] != 1 && plain[0] != 6)) {
       switchbot_lock_last_error_code = plain_len > 0 ? plain[0] : switchbot_lock_client->getLastError();
+      DBG_LOG("switchbot", "command failed code=%d plain_len=%u",
+              switchbot_lock_last_error_code, static_cast<unsigned>(plain_len));
       setSwitchbotLockStatusCode("cmd_e", switchbot_lock_last_error_code);
       return false;
     }
@@ -6489,6 +6836,7 @@ bool switchbotLockRunOnConnection(const uint8_t *action_cmd = nullptr, size_t ac
     switchbot_lock_last_error_code = 0;
     switchbot_lock_last_update_ms = millis();
     setSwitchbotLockStatus("ok");
+    DBG_LOG("switchbot", "run ok command=%u", command_ok ? 1 : 0);
   }
   return ok || command_ok;
 }
@@ -6503,15 +6851,18 @@ void switchbotLockCloseClient() {}
 #if MYMOTA32_SHELLY_BLU_BUTTON_SUPPORTED
 void ShellyBluButtonClientCallbacks::onDisconnect(NimBLEClient *, int reason) {
   shelly_blu_button_last_error = reason;
+  DBG_LOG("shelly", "disconnect reason=%d", reason);
   if (shelly_blu_pair.active) setShellyBluButtonStatusCode("disconnected_", reason);
 }
 
 void ShellyBluButtonClientCallbacks::onPassKeyEntry(NimBLEConnInfo &connInfo) {
   if (!shelly_blu_pair.passkey_set) {
     shelly_blu_button_last_error = -2;
+    DBG_LOG("shelly", "passkey required but not configured");
     setShellyBluButtonStatus("passkey_required");
     return;
   }
+  DBG_LOG("shelly", "inject passkey");
   NimBLEDevice::injectPassKey(connInfo, shelly_blu_pair.passkey);
 }
 
@@ -6541,12 +6892,16 @@ void shellyBluButtonBeginAction(const ShellyBluButtonJob &job) {
   shelly_blu_button_action_started_ms = millis();
   shelly_blu_button_last_duration_ms = 0;
   shelly_blu_button_last_error = 0;
+  DBG_LOG("shelly", "job begin type=%s mac=%s", shellyBluButtonJobName(job.type), job.mac);
 }
 
 void shellyBluButtonEndAction() {
   if (shelly_blu_button_action_started_ms != 0) {
     shelly_blu_button_last_duration_ms = millis() - shelly_blu_button_action_started_ms;
   }
+  DBG_LOG("shelly", "job end action=%s status=%s error=%d duration=%lu",
+          shelly_blu_button_action, shelly_blu_button_status, shelly_blu_button_last_error,
+          static_cast<unsigned long>(shelly_blu_button_last_duration_ms));
   shelly_blu_button_action_started_ms = 0;
   setShellyBluButtonAction("idle");
   setShellyBluButtonStage("idle");
@@ -6554,6 +6909,7 @@ void shellyBluButtonEndAction() {
 
 void shellyBluButtonCloseClient() {
   if (shelly_blu_button_client) {
+    DBG_LOG("shelly", "close client connected=%u", shelly_blu_button_client->isConnected() ? 1 : 0);
     if (shelly_blu_button_client->isConnected()) shelly_blu_button_client->disconnect();
     NimBLEDevice::deleteClient(shelly_blu_button_client);
     shelly_blu_button_client = nullptr;
@@ -6576,11 +6932,14 @@ bool shellyBluButtonConnectClient(NimBLEClient *client, const char *mac, uint8_t
     if (attempt > 0) shellyBluButtonBackgroundDelay(250);
     setShellyBluButtonStage(attempt == 0 ? "connect" : "connect_retry");
     NimBLEAddress address(std::string(mac), address_types[attempt]);
+    DBG_LOG("shelly", "connect attempt=%u mac=%s type=%u", attempt + 1, mac, address_types[attempt]);
     if (client->connect(address, true, false, false)) {
       connected_type = address_types[attempt];
+      DBG_LOG("shelly", "connect ok mac=%s type=%u", mac, connected_type);
       return true;
     }
     shelly_blu_button_last_error = client->getLastError();
+    DBG_LOG("shelly", "connect failed mac=%s type=%u err=%d", mac, address_types[attempt], shelly_blu_button_last_error);
     if (shelly_blu_button_last_error == BLE_HS_HCI_ERR(BLE_ERR_REM_USER_CONN_TERM)) {
       break;
     }
@@ -6590,6 +6949,7 @@ bool shellyBluButtonConnectClient(NimBLEClient *client, const char *mac, uint8_t
 
 bool shellyBluButtonRunPair(const char *mac, uint8_t address_type) {
   if (!mac || !mac[0]) return false;
+  DBG_LOG("shelly", "pair run mac=%s type=%u passkey_set=%u", mac, address_type, shelly_blu_pair.passkey_set ? 1 : 0);
   setShellyBluButtonStage("setup");
   shellyBluButtonCloseClient();
   NimBLEDevice::setSecurityAuth(true, false, true);
@@ -6656,12 +7016,14 @@ bool shellyBluButtonRunPair(const char *mac, uint8_t address_type) {
 
   shelly_blu_button_last_error = 0;
   setShellyBluButtonStatus("paired");
+  DBG_LOG("shelly", "pair ok mac=%s bonded=%u", mac, bonded ? 1 : 0);
   shellyBluButtonCloseClient();
   return true;
 }
 
 bool shellyBluButtonBeepAttempt(const char *mac) {
   bool ok = false;
+  DBG_LOG("shelly", "beep attempt mac=%s", mac ? mac : "");
   setShellyBluButtonStage("setup");
   shellyBluButtonCloseClient();
   NimBLEDevice::setSecurityAuth(true, false, true);
@@ -6724,6 +7086,7 @@ bool shellyBluButtonBeepAttempt(const char *mac) {
 
   shelly_blu_button_last_error = 0;
   setShellyBluButtonStatus("beep_ok");
+  DBG_LOG("shelly", "beep attempt ok mac=%s", mac ? mac : "");
   ok = true;
 
 done:
@@ -6737,6 +7100,7 @@ bool shellyBluButtonBeepBusy() {
 
 bool shellyBluButtonResetAttempt(const char *mac) {
   bool ok = false;
+  DBG_LOG("shelly", "reset attempt mac=%s", mac ? mac : "");
   setShellyBluButtonStage("setup");
   shellyBluButtonCloseClient();
   NimBLEDevice::setSecurityAuth(true, false, true);
@@ -6794,6 +7158,7 @@ bool shellyBluButtonResetAttempt(const char *mac) {
 
   shelly_blu_button_last_error = 0;
   setShellyBluButtonStatus("reset_ok");
+  DBG_LOG("shelly", "reset attempt ok mac=%s", mac ? mac : "");
   ok = true;
 
 done:
@@ -7012,6 +7377,7 @@ bool enqueueShellyBluButtonJob(const ShellyBluButtonJob &job) {
     setShellyBluButtonStatus("pair_queued");
   }
   if (xQueueSend(shelly_blu_button_job_queue, &job, 0) == pdTRUE) {
+    DBG_LOG("shelly", "job queued type=%s mac=%s", shellyBluButtonJobName(job.type), job.mac);
     return true;
   }
   shelly_blu_button_job_pending = false;
@@ -7054,6 +7420,7 @@ bool startShellyBluButtonPair(const char *mac, bool passkey_set, uint32_t passke
   }
   if (!ensureBleScanner("shelly")) return false;
   memset(&shelly_blu_pair, 0, sizeof(shelly_blu_pair));
+  DBG_LOG("shelly", "pair start mac=%s passkey_set=%u", mac, passkey_set ? 1 : 0);
   shelly_blu_pair.active = true;
   strlcpy(shelly_blu_pair.mac, mac, sizeof(shelly_blu_pair.mac));
   shelly_blu_pair.started_ms = millis();
@@ -7118,6 +7485,7 @@ void maintainShellyBluButton() {
 }
 
 void resetSwitchbotLockRuntimeState() {
+  DBG_LOG("switchbot", "runtime reset enabled=%u", config.switchbot_lock_enabled ? 1 : 0);
   switchbotLockCloseClient();
   memset(switchbot_lock_candidates, 0, sizeof(switchbot_lock_candidates));
   memset(switchbot_lock_commands, 0, sizeof(switchbot_lock_commands));
@@ -7150,6 +7518,8 @@ void resetSwitchbotLockRuntimeState() {
 bool switchbotLockRunWithCandidates(const uint8_t *action_cmd, size_t action_cmd_len,
                                     uint8_t optimistic_state, const char *busy_status,
                                     const char *failure_status, const char *success_status) {
+  DBG_LOG("switchbot", "run candidates action_len=%u optimistic=%u status=%s",
+          static_cast<unsigned>(action_cmd_len), optimistic_state, busy_status ? busy_status : "");
   if (!switchbotLockSupported()) {
     setSwitchbotLockStatus("unsupported");
     return false;
@@ -7178,6 +7548,7 @@ bool switchbotLockRunWithCandidates(const uint8_t *action_cmd, size_t action_cmd
     bool restart_scan = false;
     if (ibeacon_scan && ibeacon_scan->isScanning()) {
       restart_scan = true;
+      DBG_LOG("switchbot", "pause scan for connect mac=%s type=%u", mac, type);
       ibeacon_scan->stop();
       ble_scanning = false;
       ibeacon_scanning = false;
@@ -7213,6 +7584,7 @@ bool switchbotLockRunWithCandidates(const uint8_t *action_cmd, size_t action_cmd
   switchbot_lock_polling = false;
   if (!ok && strcmp(switchbot_lock_status, busy_status) == 0) setSwitchbotLockStatus(failure_status);
   if (ok) setSwitchbotLockStatus(success_status);
+  DBG_LOG("switchbot", "run candidates result=%u status=%s", ok ? 1 : 0, switchbot_lock_status);
   if ((config.ibeacon_enabled || config.switchbot_lock_enabled) && startBleScan("switchbot")) {
     ibeacon_scanning = config.ibeacon_enabled;
   }
@@ -7688,6 +8060,12 @@ bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size
     error = F("Invalid cmnd");
     return false;
   }
+#if MYMOTA32_DEBUG_LOG
+  char debug_cmd[24]{};
+  const size_t debug_cmd_len = cmd_len < sizeof(debug_cmd) - 1 ? cmd_len : sizeof(debug_cmd) - 1;
+  memcpy(debug_cmd, raw, debug_cmd_len);
+  DBG_LOG("cmnd", "execute cmd=%s arg_len=%u", debug_cmd, static_cast<unsigned>(arg_len));
+#endif
 
   while (arg_len > 0) {
     const char c = arg[0];
@@ -7950,10 +8328,13 @@ bool mqttProcessPublish(uint8_t packet_type, uint32_t remaining, uint32_t deadli
   const char *command = nullptr;
   size_t command_len = 0;
   if (!mqttCommandFromTopic(topic, topic_len, command, command_len)) return true;
+  DBG_LOG("mqtt", "inbound command topic=%s command_len=%u payload_len=%lu qos=%u",
+          topic, static_cast<unsigned>(command_len), static_cast<unsigned long>(remaining), qos);
 
   String response;
   String error;
   if (!executeDeviceCommand(command, command_len, payload, remaining, response, error)) {
+    DBG_LOG("mqtt", "command failed error=%s", error.c_str());
     return true;
   }
   return mqttPublishCommandResult(response);
@@ -7971,6 +8352,7 @@ bool mqttProcessInboundPacket() {
     if (remaining != 0) return false;
     last_mqtt_ping = 0;
     mqtt_ping_pending = false;
+    DBG_LOG("mqtt", "ping response");
     return true;
   }
 
@@ -8010,6 +8392,9 @@ void maintainMqtt() {
   uint32_t now = millis();
   const uint32_t ping_response_timeout_ms = mqttPingResponseTimeoutMs();
   if (mqtt_ping_pending && last_mqtt_ping && now - last_mqtt_ping >= ping_response_timeout_ms) {
+    DBG_LOG("mqtt", "ping timeout elapsed=%lu limit=%lu",
+            static_cast<unsigned long>(now - last_mqtt_ping),
+            static_cast<unsigned long>(ping_response_timeout_ms));
     mqttStop();
     return;
   }
@@ -8019,7 +8404,9 @@ void maintainMqtt() {
       last_mqtt_io = now;
       last_mqtt_ping = now;
       mqtt_ping_pending = true;
+      DBG_LOG("mqtt", "ping request");
     } else {
+      DBG_LOG("mqtt", "ping write failed");
       mqttStop();
       return;
     }
@@ -9814,6 +10201,7 @@ void appendOverviewStats(String &page) {
 }
 
 void handleRoot() {
+  DBG_LOG("http", "GET /");
   String page;
   page.reserve(10800);
   beginStreamedResponse("text/html");
@@ -9929,6 +10317,7 @@ void handleRoot() {
 }
 
 void handleScan() {
+  DBG_LOG("http", "GET /scan");
   String page;
   page.reserve(2600);
   appendHeader(page, F("myMota32 Scan"));
@@ -9982,6 +10371,7 @@ void handleScan() {
 }
 
 void handleWifiSave() {
+  DBG_LOG("http", "POST /wifi");
   const String ssid = server.arg("ssid");
   const String password = server.arg("password");
   const String hostname = server.arg("hostname");
@@ -10017,6 +10407,7 @@ void handleWifiSave() {
 }
 
 void handleTasmotaSafebootSave() {
+  DBG_LOG("http", "POST /tasmota-safeboot");
   const String ssid = server.arg("ssid");
   const String password = server.arg("password");
   String error;
@@ -10036,6 +10427,7 @@ void handleTasmotaSafebootSave() {
 }
 
 void handleTemplateSave() {
+  DBG_LOG("http", "POST /template clear=%u", server.hasArg("clear") ? 1 : 0);
   if (server.hasArg("clear")) {
     StoredConfig candidate = config;
     clearTemplateConfig(candidate);
@@ -10090,6 +10482,7 @@ void handleTemplateSave() {
 }
 
 void handlePowerSave() {
+  DBG_LOG("http", "POST /power relay=%s state=%s", server.arg("relay").c_str(), server.arg("state").c_str());
   if (!server.hasArg("relay") || !server.hasArg("state")) {
     sendPlain(400, F("Missing relay or state"));
     return;
@@ -10110,6 +10503,7 @@ void handlePowerSave() {
 
 #if MYMOTA32_LIGHT_SUPPORTED
 void handleLightSave() {
+  DBG_LOG("http", "POST /light");
   if (!light.present) {
     sendPlain(400, F("No light output is configured"));
     return;
@@ -10184,6 +10578,7 @@ void handleLightSave() {
 #endif
 
 void handleLedSave() {
+  DBG_LOG("http", "POST /leds");
   if (!hasConfigurableLedOutputs()) {
     sendPlain(400, F("No configurable LEDs are available"));
     return;
@@ -10219,6 +10614,7 @@ void handleLedSave() {
 }
 
 void handleDeviceStateEnforcementSave() {
+  DBG_LOG("http", "POST /relay-enforcement");
   if (!deviceStateEnforcementAvailable()) {
     sendPlain(400, F("No configurable device state settings are available"));
     return;
@@ -10286,6 +10682,7 @@ void handleDeviceStateEnforcementSave() {
 }
 
 void handleRelayPulseSave() {
+  DBG_LOG("http", "POST /relay-pulsing");
   if (!hasConfigurableRelays()) {
     sendPlain(400, F("No configurable relays are available"));
     return;
@@ -10411,6 +10808,7 @@ bool readButtonEventText(uint8_t button, const char *prefix, bool hold, uint8_t 
 }
 
 void handleButtonSave() {
+  DBG_LOG("http", "POST /buttons");
   if (!hasConfigurableButtons()) {
     sendPlain(400, F("No configurable inputs are available"));
     return;
@@ -10808,6 +11206,7 @@ void finishApiSettingsUpdate(const StoredConfig &candidate, const ApiSettingsSta
 }
 
 void handleApiSettingsGet() {
+  DBG_LOG("http", "GET /api/settings args=%u", server.args());
   if (server.hasArg("power_saving")) {
     uint8_t mode = kPowerSavingOff;
     if (!parsePowerSavingMode(server.arg("power_saving"), mode)) {
@@ -10845,6 +11244,7 @@ void handleApiSettingsGet() {
 }
 
 void handleMqttSave() {
+  DBG_LOG("http", "POST /mqtt");
   String host = server.arg("host");
   String port_arg = server.arg("port");
   String topic = server.arg("topic");
@@ -10890,6 +11290,7 @@ void handleMqttSave() {
 }
 
 void handleEnergySave() {
+  DBG_LOG("http", "POST /energy");
   if (!energy.present) {
     sendPlain(400, F("No energy monitor is configured"));
     return;
@@ -10938,6 +11339,7 @@ void handleEnergySave() {
 }
 
 void handleIBeaconSave() {
+  DBG_LOG("http", "POST /ibeacon");
   const bool enabled = server.hasArg("enabled") && server.arg("enabled") == "1";
   if (enabled && !iBeaconCaptureSupported()) {
     sendPlain(400, F("unsupported"));
@@ -10979,6 +11381,7 @@ void handleIBeaconSave() {
 }
 
 void handleSwitchbotLockSave() {
+  DBG_LOG("http", "POST /switchbot-lock");
   const bool enabled = server.hasArg("enabled") && server.arg("enabled") == "1";
   if (enabled && !switchbotLockSupported()) {
     sendPlain(400, F("unsupported"));
@@ -11036,6 +11439,9 @@ void handleSwitchbotLockSave() {
 }
 
 void handleSwitchbotLockCommand() {
+  DBG_LOG("http", "%s /switchbot-lock-command action=%s",
+          server.method() == HTTP_POST ? "POST" : "GET",
+          server.hasArg("action") ? server.arg("action").c_str() : "");
   if (!config.switchbot_lock_enabled) {
     sendPlain(400, F("disabled"));
     return;
@@ -11070,6 +11476,8 @@ void handleSwitchbotLockCommand() {
 }
 
 void handleSwitchbotLockCommandStatus() {
+  DBG_LOG("http", "GET /switchbot-lock-command-status id=%s",
+          server.hasArg("id") ? server.arg("id").c_str() : "");
   uint32_t id = 0;
   SwitchbotLockCommand *cmd = nullptr;
   if (server.hasArg("id")) {
@@ -11093,6 +11501,8 @@ void handleSwitchbotLockCommandStatus() {
 }
 
 void handleShellyBluButton() {
+  DBG_LOG("http", "POST /shelly-blu-button action=%s",
+          server.hasArg("action") ? server.arg("action").c_str() : "pair");
   if (!shellyBluButtonSupported()) {
     sendPlain(400, F("unsupported"));
     return;
@@ -11220,6 +11630,8 @@ void handleShellyBluButton() {
 }
 
 void handleShellyBluButtonBeepApi() {
+  DBG_LOG("http", "GET /shelly-blu-button/beep mac=%s",
+          server.hasArg("mac") ? server.arg("mac").c_str() : "");
   if (!shellyBluButtonSupported()) {
     server.send(400, F("application/json"), F("{\"ok\":false,\"error\":\"unsupported\"}"));
     return;
@@ -11298,6 +11710,7 @@ bool switchbotLockCompatPreflight() {
 }
 
 void handleSwitchbotLockCompatCommand(bool want_lock) {
+  DBG_LOG("http", "GET /switchbotlockultra/%s", want_lock ? "lock" : "unlock");
   if (!switchbotLockCompatPreflight()) return;
   SwitchbotLockCommand *cmd = createSwitchbotLockCommand(want_lock ? kSwitchbotLockStateLocked : kSwitchbotLockStateUnlocked);
   if (!cmd) {
@@ -11338,6 +11751,7 @@ void handleSwitchbotLockCompatUnlock() {
 }
 
 void handleSwitchbotLockCompatStatus() {
+  DBG_LOG("http", "GET /switchbotlockultra/status");
   String out;
   out.reserve(150);
   out += F("{\"status\": \"ok\", \"state\": \"");
@@ -11358,6 +11772,7 @@ void handleSwitchbotLockCompatStatus() {
 }
 
 void handleSwitchbotLockCompatCommandStatus(const String &id_text) {
+  DBG_LOG("http", "GET /switchbotlockultra/status/%s", id_text.c_str());
   uint32_t id = 0;
   if (!parseSwitchbotLockCommandId(id_text, id)) {
     server.send(400, F("application/json"), F("{\"status\": \"error\", \"message\": \"Invalid command ID\"}"));
@@ -11376,6 +11791,7 @@ void handleSwitchbotLockCompatCommandStatus(const String &id_text) {
 }
 
 void handleSystemSave() {
+  DBG_LOG("http", "POST /system");
   uint8_t mode = kPowerSavingOff;
   if (!parsePowerSavingMode(server.arg("power_saving"), mode)) {
     sendPlain(400, F("Invalid power saving"));
@@ -12794,6 +13210,7 @@ void appendSettingsImportSummary(String &page, const SettingsImportStats &stats)
 }
 
 void handleSettingsExport() {
+  DBG_LOG("http", "GET /settings/export");
   String out;
   out.reserve(6500);
   appendSettingsExportJson(out);
@@ -12806,6 +13223,7 @@ void handleSettingsExport() {
 }
 
 void handleSettingsImport() {
+  DBG_LOG("http", "POST /settings/import");
   String settings_json = server.arg("settings_json");
   if (settings_json.length() == 0 && server.hasArg("plain")) settings_json = server.arg("plain");
   settings_json.trim();
@@ -12960,6 +13378,7 @@ void handleSettingsImport() {
 }
 
 void handleReboot() {
+  DBG_LOG("http", "GET /reboot");
   String page;
   page.reserve(700);
   appendHeader(page, F("myMota32 Reboot"));
@@ -12971,6 +13390,7 @@ void handleReboot() {
 }
 
 void handleFactoryReset() {
+  DBG_LOG("http", "POST /factory-reset");
   if (!factoryResetConfig()) {
     sendPlain(500, F("Could not factory reset settings"));
     return;
@@ -13035,6 +13455,8 @@ void handleHealth() {
   out += jsonEscape(config.hostname);
   out += F("\",\"boot_id\":");
   out += boot_id;
+  out += F(",\"debug_log\":");
+  out += MYMOTA32_DEBUG_LOG ? F("true") : F("false");
   out += F(",\"heap\":");
   out += ESP.getFreeHeap();
   out += F(",\"flash\":{\"used\":");
@@ -13453,6 +13875,7 @@ void handleHealth() {
 }
 
 void handleCmnd() {
+  DBG_LOG("http", "GET /cm cmnd=%s", server.hasArg("cmnd") ? server.arg("cmnd").c_str() : "");
   if (!server.hasArg("cmnd")) {
     sendPlain(400, F("Missing cmnd"));
     return;
@@ -13483,6 +13906,7 @@ bool updateEraseUntil(size_t end_offset) {
   while (update_erased_until < end_offset) {
     if (esp_partition_erase_range(update_partition, update_erased_until, kUpdateSectorSize) != ESP_OK) {
       update_error = UPDATE_ERROR_ERASE;
+      DBG_LOG("update", "erase failed offset=%u", static_cast<unsigned>(update_erased_until));
       return false;
     }
     update_erased_until += kUpdateSectorSize;
@@ -13494,12 +13918,16 @@ bool updateBeginUpload() {
   update_partition = esp_ota_get_next_update_partition(nullptr);
   if (!update_partition) {
     update_error = UPDATE_ERROR_NO_PARTITION;
+    DBG_LOG("update", "begin failed: no partition");
     return false;
   }
   update_written = 0;
   update_erased_until = 0;
   update_header_len = 0;
   update_started = true;
+  DBG_LOG("update", "begin partition=%s size=%u offset=0x%08x",
+          update_partition->label, static_cast<unsigned>(update_partition->size),
+          static_cast<unsigned>(update_partition->address));
   return true;
 }
 
@@ -13511,6 +13939,9 @@ bool updateWritePayload(const uint8_t *data, size_t len) {
   if (len == 0) return true;
   if (update_written + len > update_partition->size) {
     update_error = UPDATE_ERROR_SPACE;
+    DBG_LOG("update", "write over partition written=%u len=%u size=%u",
+            static_cast<unsigned>(update_written), static_cast<unsigned>(len),
+            static_cast<unsigned>(update_partition->size));
     return false;
   }
 
@@ -13531,9 +13962,18 @@ bool updateWritePayload(const uint8_t *data, size_t len) {
     if (!updateEraseUntil(erase_end)) return false;
     if (esp_partition_write(update_partition, write_offset, data + pos, write_len) != ESP_OK) {
       update_error = UPDATE_ERROR_WRITE;
+      DBG_LOG("update", "write failed offset=%u len=%u", static_cast<unsigned>(write_offset),
+              static_cast<unsigned>(write_len));
       return false;
     }
     update_written += write_len;
+#if MYMOTA32_DEBUG_LOG
+    if (update_written - debug_last_update_progress >= 65536UL || update_written == update_partition->size) {
+      debug_last_update_progress = update_written;
+      DBG_LOG("update", "progress written=%u erased=%u", static_cast<unsigned>(update_written),
+              static_cast<unsigned>(update_erased_until));
+    }
+#endif
   }
   return true;
 }
@@ -13541,6 +13981,7 @@ bool updateWritePayload(const uint8_t *data, size_t len) {
 bool updateFinishUpload() {
   if (!update_started || !update_partition || update_header_len < kUpdateHeaderHoldBytes) {
     update_error = UPDATE_ERROR_SIZE;
+    DBG_LOG("update", "finish failed size/header");
     clearUpdateRuntime();
     return false;
   }
@@ -13550,6 +13991,7 @@ bool updateFinishUpload() {
   }
   if (esp_partition_write(update_partition, 0, update_header, sizeof(update_header)) != ESP_OK) {
     update_error = UPDATE_ERROR_WRITE;
+    DBG_LOG("update", "header write failed");
     clearUpdateRuntime();
     return false;
   }
@@ -13557,27 +13999,32 @@ bool updateFinishUpload() {
   uint8_t check = 0;
   if (esp_partition_read(update_partition, 0, &check, sizeof(check)) != ESP_OK || check != kEspImageMagic) {
     update_error = UPDATE_ERROR_READ;
+    DBG_LOG("update", "magic verify failed byte=0x%02x", check);
     clearUpdateRuntime();
     return false;
   }
   if (esp_ota_set_boot_partition(update_partition) != ESP_OK) {
     update_error = UPDATE_ERROR_ACTIVATE;
+    DBG_LOG("update", "set boot partition failed");
     clearUpdateRuntime();
     return false;
   }
 
   clearUpdateRuntime();
   update_ok = true;
+  DBG_LOG("update", "finish ok");
   return true;
 }
 
 void updateAbortUpload(uint8_t err) {
+  DBG_LOG("update", "abort err=%u", err);
   clearUpdateRuntime();
   update_ok = false;
   update_error = err;
 }
 
 void handleUpdateDone() {
+  DBG_LOG("http", "POST /update done ok=%u err=%u", update_ok ? 1 : 0, update_error);
   if (update_ok && update_error == UPDATE_ERROR_OK) {
     String page;
     page.reserve(700);
@@ -13605,12 +14052,19 @@ void handleUpdateUpload() {
     clearUpdateRuntime();
     update_ok = false;
     update_error = UPDATE_ERROR_OK;
+#if MYMOTA32_DEBUG_LOG
+    debug_last_update_progress = 0;
+#endif
+    DBG_LOG("update", "upload start filename=%s verify=%u", upload.filename.c_str(),
+            truthyUpdateVerifyArg() ? 1 : 0);
     if (upload.filename.length() == 0) {
       update_error = UPDATE_ERROR_SIZE;
+      DBG_LOG("update", "reject empty filename");
       return;
     }
     if (truthyUpdateVerifyArg() && !firmwareFilenameMatchesTarget(upload.filename)) {
       update_error = kUpdateErrorTargetMismatch;
+      DBG_LOG("update", "reject target mismatch filename=%s target=%s", upload.filename.c_str(), MYMOTA32_TARGET);
       return;
     }
     persistEnergyTotal(true);
@@ -13628,6 +14082,7 @@ void handleUpdateUpload() {
     return;
   }
   if (upload.status == UPLOAD_FILE_END) {
+    DBG_LOG("update", "upload end total=%u err=%u", static_cast<unsigned>(upload.totalSize), update_error);
     if (update_error != UPDATE_ERROR_OK) {
       clearUpdateRuntime();
     } else if (!update_started) {
@@ -13638,12 +14093,14 @@ void handleUpdateUpload() {
     return;
   }
   if (upload.status == UPLOAD_FILE_ABORTED) {
+    DBG_LOG("update", "upload aborted");
     updateAbortUpload(UPDATE_ERROR_STREAM);
   }
 }
 
 void handleNotFound() {
   String uri = server.uri();
+  DBG_LOG("http", "not found uri=%s", uri.c_str());
   constexpr size_t switchbot_prefix_len = sizeof("/switchbotlockultra/status/") - 1;
   if (uri.startsWith(F("/switchbotlockultra/status/")) && uri.length() > switchbot_prefix_len) {
     handleSwitchbotLockCompatCommandStatus(uri.substring(switchbot_prefix_len));
@@ -13691,6 +14148,108 @@ void setupRoutes() {
   server.onNotFound(handleNotFound);
 }
 
+#if MYMOTA32_DEBUG_LOG
+void debugSerialBegin() {
+  Serial.begin(115200);
+  delay(30);
+  Serial.println();
+  DBG_LOG("boot", "debug logging enabled serial=115200 version=%s target=%s core_debug=%d",
+          MYMOTA32_VERSION, MYMOTA32_TARGET, CORE_DEBUG_LEVEL);
+  debug_last_wifi_status = WiFi.status();
+  debug_last_mqtt_connected = mqtt_client.connected();
+  debug_last_ble_scanning = ble_scanning;
+}
+
+void debugLogBootSummary() {
+  esp_chip_info_t info{};
+  esp_chip_info(&info);
+  DBG_LOG("boot", "boot_id=%lu chip=%s id=%s cores=%u rev=%u heap=%u flash=%u",
+          static_cast<unsigned long>(boot_id), chipModelName().c_str(), chipIdHex().c_str(),
+          info.cores, info.revision, ESP.getFreeHeap(), ESP.getFlashChipSize());
+  DBG_LOG("boot", "features ble_scan=%u ibeacon=%u switchbot=%u shelly=%u light=%u",
+          MYMOTA32_BLE_SCAN_SUPPORTED, MYMOTA32_IBEACON_SUPPORTED,
+          MYMOTA32_SWITCHBOT_LOCK_SUPPORTED, MYMOTA32_SHELLY_BLU_BUTTON_SUPPORTED,
+          MYMOTA32_LIGHT_SUPPORTED);
+  DBG_LOG("boot", "flash used=%lu total=%lu free=%lu ota_slots=%u",
+          static_cast<unsigned long>(cached_flash_used),
+          static_cast<unsigned long>(cached_flash_total),
+          static_cast<unsigned long>(cached_flash_free), cached_ota_slots);
+}
+
+void debugMaybeLogRuntimeSummary() {
+  const uint32_t now = millis();
+  const wl_status_t wifi_status = WiFi.status();
+  if (wifi_status != debug_last_wifi_status) {
+    DBG_LOG("state", "wifi %s -> %s ip=%s rssi=%d",
+            String(wifiStatusName(debug_last_wifi_status)).c_str(),
+            String(wifiStatusName(wifi_status)).c_str(),
+            WiFi.localIP().toString().c_str(),
+            wifi_status == WL_CONNECTED ? static_cast<int>(WiFi.RSSI()) : 0);
+    debug_last_wifi_status = wifi_status;
+  }
+  const bool mqtt_connected = mqtt_client.connected();
+  if (mqtt_connected != debug_last_mqtt_connected) {
+    DBG_LOG("state", "mqtt connected=%u result=%s age=%lu",
+            mqtt_connected ? 1 : 0, String(mqttConnectResultName(last_mqtt_connect_result)).c_str(),
+            last_mqtt_connect_attempt ? static_cast<unsigned long>(now - last_mqtt_connect_attempt) : 0UL);
+    debug_last_mqtt_connected = mqtt_connected;
+  }
+  if (ble_scanning != debug_last_ble_scanning) {
+    DBG_LOG("state", "ble_scanning=%u ibeacon=%u switchbot=%u shelly_busy=%u",
+            ble_scanning ? 1 : 0, config.ibeacon_enabled ? 1 : 0,
+            config.switchbot_lock_enabled ? 1 : 0, shellyBluButtonJobBusy() ? 1 : 0);
+    debug_last_ble_scanning = ble_scanning;
+  }
+  if (debug_last_runtime_summary_ms == 0 || now - debug_last_runtime_summary_ms >= kDebugRuntimeSummaryMs) {
+    debug_last_runtime_summary_ms = now;
+    DBG_LOG("perf", "loop hz=%lu load=%u max=%lu us heap=%u wifi=%s rssi=%d mqtt=%u pending=%u/%u power=%u/%u/%u/%u",
+            static_cast<unsigned long>(perf_last_loop_hz), perf_last_loop_load,
+            static_cast<unsigned long>(perf_last_loop_max_us), ESP.getFreeHeap(),
+            String(wifiStatusName(wifi_status)).c_str(),
+            wifi_last_rssi_valid ? wifi_last_rssi : 0,
+            mqtt_connected ? 1 : 0, mqtt_pending_relay_mask, mqtt_pending_light_mask,
+            relay_state[0] ? 1 : 0, relay_state[1] ? 1 : 0, relay_state[2] ? 1 : 0, relay_state[3] ? 1 : 0);
+  }
+  if (debug_last_ble_summary_ms == 0 || now - debug_last_ble_summary_ms >= kDebugBleSummaryMs) {
+    debug_last_ble_summary_ms = now;
+    DBG_LOG("ble", "summary seen=%lu queued=%lu dropped=%lu filtered=%lu suppressed=%lu published=%lu failed=%lu queue_depth=%u status=%s/%s/%s",
+            static_cast<unsigned long>(debug_ibeacon_seen),
+            static_cast<unsigned long>(debug_ibeacon_queued),
+            static_cast<unsigned long>(debug_ibeacon_queue_dropped),
+            static_cast<unsigned long>(debug_ibeacon_filtered),
+            static_cast<unsigned long>(debug_ibeacon_suppressed),
+            static_cast<unsigned long>(debug_ibeacon_published),
+            static_cast<unsigned long>(debug_ibeacon_publish_failed),
+#if MYMOTA32_IBEACON_SUPPORTED
+            ibeacon_queue_count,
+#else
+            0,
+#endif
+            ibeacon_status, switchbot_lock_status, shelly_blu_button_status);
+  }
+}
+
+void debugMaybeLogSlowLoop(uint32_t started_us, uint32_t ended_us) {
+  const uint32_t elapsed_us = ended_us - started_us;
+  if (elapsed_us < kDebugSlowLoopUs) return;
+  DBG_LOG("slowloop", "total=%lu us http=%lu/%lu/%lu/%lu wifi=%lu device=%lu mqtt=%lu ble=%lu",
+          static_cast<unsigned long>(elapsed_us),
+          static_cast<unsigned long>(debug_loop_http1_us),
+          static_cast<unsigned long>(debug_loop_http2_us),
+          static_cast<unsigned long>(debug_loop_http3_us),
+          static_cast<unsigned long>(debug_loop_http4_us),
+          static_cast<unsigned long>(debug_loop_wifi_us),
+          static_cast<unsigned long>(debug_loop_device_us),
+          static_cast<unsigned long>(debug_loop_mqtt_us),
+          static_cast<unsigned long>(debug_loop_ble_us));
+}
+#else
+void debugSerialBegin() {}
+void debugLogBootSummary() {}
+void debugMaybeLogRuntimeSummary() {}
+void debugMaybeLogSlowLoop(uint32_t, uint32_t) {}
+#endif
+
 }  // namespace
 
 void idleAfterLoopWork() {
@@ -13703,41 +14262,52 @@ void idleAfterLoopWork() {
 }
 
 void setup() {
+  debugSerialBegin();
+  DBG_LOG("boot", "setup entry reset_reason=%d", static_cast<int>(esp_reset_reason()));
   delay(20);
   boot_started_ms = millis();
-  loadBootRecoveryState();
-  loadConfig();
-  decodeTemplateConfig();
-  loadGracefulRelaySnapshot();
-  loadLastRelaySnapshot();
-  setupDevicePins();
-  setupLightRuntime();
-  setupEnergyMonitor();
-  connectWifi();
-  boot_id = makeBootId();
-  refreshStaticSystemInfo();
-  setupRoutes();
+  DBG_SETUP_STEP("loadBootRecoveryState", loadBootRecoveryState(););
+  DBG_SETUP_STEP("loadConfig", loadConfig(););
+  DBG_SETUP_STEP("decodeTemplateConfig", decodeTemplateConfig(););
+  DBG_SETUP_STEP("loadGracefulRelaySnapshot", loadGracefulRelaySnapshot(););
+  DBG_SETUP_STEP("loadLastRelaySnapshot", loadLastRelaySnapshot(););
+  DBG_SETUP_STEP("setupDevicePins", setupDevicePins(););
+  DBG_SETUP_STEP("setupLightRuntime", setupLightRuntime(););
+  DBG_SETUP_STEP("setupEnergyMonitor", setupEnergyMonitor(););
+  DBG_SETUP_STEP("connectWifi", connectWifi(););
+  DBG_SETUP_STEP("makeBootId", boot_id = makeBootId(););
+  DBG_SETUP_STEP("refreshStaticSystemInfo", refreshStaticSystemInfo(););
+  DBG_SETUP_STEP("setupRoutes", setupRoutes(););
   server.begin();
+  DBG_LOG("boot", "http server started");
+  debugLogBootSummary();
 }
 
 void loop() {
   const uint32_t loop_started_us = micros();
-  server.handleClient();
-  maintainBootRecovery();
-  maintainWifi();
-  maintainWifiDynamicPower();
-  server.handleClient();
-  maintainDevice();
-  maintainLight();
-  maintainEnergy();
-  server.handleClient();
-  maintainMqtt();
-  maintainIBeacon();
-  maintainShellyBluButton();
-  maintainSwitchbotLock();
-  server.handleClient();
+  DBG_LOOP_STEP(debug_loop_http1_us, { server.handleClient(); });
+  DBG_LOOP_STEP(debug_loop_wifi_us, {
+    maintainBootRecovery();
+    maintainWifi();
+    maintainWifiDynamicPower();
+  });
+  DBG_LOOP_STEP(debug_loop_http2_us, { server.handleClient(); });
+  DBG_LOOP_STEP(debug_loop_device_us, {
+    maintainDevice();
+    maintainLight();
+    maintainEnergy();
+  });
+  DBG_LOOP_STEP(debug_loop_http3_us, { server.handleClient(); });
+  DBG_LOOP_STEP(debug_loop_mqtt_us, { maintainMqtt(); });
+  DBG_LOOP_STEP(debug_loop_ble_us, {
+    maintainIBeacon();
+    maintainShellyBluButton();
+    maintainSwitchbotLock();
+  });
+  DBG_LOOP_STEP(debug_loop_http4_us, { server.handleClient(); });
 
   if (restartDue()) {
+    DBG_LOG("reboot", "restart due preserve_relays=%u", restart_preserve_relays ? 1 : 0);
     if (restart_preserve_relays) {
       saveGracefulRelaySnapshot();
     } else {
@@ -13746,8 +14316,14 @@ void loop() {
     persistEnergyTotal(true);
     persistLightConfig(true);
     delay(50);
+#if MYMOTA32_DEBUG_LOG
+    Serial.flush();
+#endif
     ESP.restart();
   }
-  recordLoopPerf(loop_started_us, micros());
+  const uint32_t loop_ended_us = micros();
+  debugMaybeLogSlowLoop(loop_started_us, loop_ended_us);
+  recordLoopPerf(loop_started_us, loop_ended_us);
+  debugMaybeLogRuntimeSummary();
   idleAfterLoopWork();
 }

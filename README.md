@@ -69,6 +69,21 @@ image metadata, purges stale gzip artifacts, keeps only the latest three
 firmware versions in `dist/`, and refreshes `dist/MD5SUMS` and
 `dist/SHA256SUMS`.
 
+Debug logging is controlled at build time in `[common] build_flags`:
+
+- `MYMOTA32_DEBUG_LOG=1` enables detailed serial diagnostics at 115200 baud and
+  reports `debug_log:true` from `/health`.
+- `CORE_DEBUG_LEVEL=5` is paired with the debug build so ESP32 core diagnostics
+  are visible when chasing startup, Wi-Fi, MQTT, OTA, BLE, input, relay, light,
+  and energy issues.
+- For production-style quiet builds, set `MYMOTA32_DEBUG_LOG=0` and
+  `CORE_DEBUG_LEVEL=0`. The myMota32 debug logging paths compile out when the
+  flag is disabled.
+
+Debug logs intentionally avoid printing Wi-Fi passwords, BLE keys, and other
+secret values. Lengths, configured/not-configured flags, target names, timings,
+status codes, queue depths, and state transitions are logged instead.
+
 For OTA or web uploads, use the raw target image:
 
 ```text
@@ -132,7 +147,8 @@ status, template, device, Bluetooth, network, and maintenance areas.
 - Overview tiles show Wi-Fi RSSI, MQTT queue depth, heap, and uptime.
 - System Status shows hostname, chip model, chip ID, firmware target, loop
   performance, flash and partition information, Wi-Fi SDK state, gateway, DNS,
-  MQTT state, and iBeacon report rate.
+  MQTT state, iBeacon report rate, and whether debug serial logging is compiled
+  into the running build.
 - Template shows the decoded hardware profile: relays, inputs, LEDs, energy
   driver, light driver, and unsupported template functions.
 - Settings export/import allows moving device settings between devices without
