@@ -8084,7 +8084,7 @@ main{max-width:1200px;margin:0 auto;padding:32px 28px 56px}.grid{display:grid;gr
 .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.stat{background:linear-gradient(180deg,var(--panel) 0%,var(--panel-2) 100%);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;min-height:96px;box-shadow:var(--shadow);position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between}.stat .accent-bar{position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);opacity:.7}.stat .stat-label{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}.stat .stat-value{font-family:var(--mono);font-size:22px;font-weight:500;color:var(--text);margin-top:6px;letter-spacing:-.01em}.stat .stat-sub{font-family:var(--mono);font-size:11px;color:var(--text-2);margin-top:4px;word-break:break-word}@media(max-width:980px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){.stats{grid-template-columns:1fr}}
 .panel{background:linear-gradient(180deg,var(--panel) 0%,var(--panel-2) 100%);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}.panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);background:var(--tint-soft)}.panel-head h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text)}.panel-head .h-meta{font-family:var(--mono);font-size:11px;color:var(--muted)}.panel-body{padding:18px}.panel-foot{padding:12px 18px;border-top:1px solid var(--line);background:var(--tint-foot);display:flex;justify-content:flex-end;gap:8px}.panel-foot button,.panel-foot .btn{margin:0}.panel h3{font-size:13px;margin:0 0 10px;color:var(--text)}.panel p{margin:10px 0}.kv{display:grid;grid-template-columns:140px 1fr;gap:0 16px}.kv>span,.kv>div{padding:9px 0;border-bottom:1px dashed var(--line);min-width:0}.kv>span{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}.kv>div{font-family:var(--mono);font-size:13px;color:var(--text);word-break:break-word}.hint,.muted{color:var(--muted);font-size:12px}.ok{color:var(--ok)}.bad{color:var(--bad)}
 code{font-family:var(--mono);font-size:12.5px;background:var(--tint-low);border:1px solid var(--line);border-radius:var(--radius-sm);padding:2px 7px;color:var(--text);word-break:break-word}.pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;font-weight:500;padding:3px 9px;border-radius:999px;background:var(--tint-mid);color:var(--text-2);border:1px solid var(--line)}.pill:before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}.pill.ok{background:var(--ok-soft);color:var(--ok);border-color:var(--accent-soft)}.pill.warn{background:rgba(240,185,90,.1);color:var(--warn);border-color:rgba(240,185,90,.3)}.pill.bad{background:var(--bad-soft);color:var(--bad);border-color:var(--bad-border)}
-form{margin:0}.row{margin:0 0 14px}.row:last-child{margin-bottom:0}.field-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 14px}.field-row.three{grid-template-columns:repeat(3,minmax(0,1fr))}.field-row .row{margin:0}@media(max-width:560px){.field-row,.field-row.three{grid-template-columns:1fr}}label{display:block;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);margin-bottom:6px}input:not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]):not([type=reset]),select,textarea{width:100%;margin-top:6px;padding:10px 12px;background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:13px}input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);background:var(--bg-2);box-shadow:0 0 0 3px var(--accent-soft)}input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus,input:-webkit-autofill:active,textarea:-webkit-autofill,select:-webkit-autofill{-webkit-text-fill-color:var(--text)!important;-webkit-box-shadow:0 0 0 1000px var(--bg-2) inset!important;box-shadow:0 0 0 1000px var(--bg-2) inset!important;caret-color:var(--text)!important;border:1px solid var(--line)!important;transition:background-color 9999s ease-in-out 0s}input:-webkit-autofill:focus,textarea:-webkit-autofill:focus,select:-webkit-autofill:focus{-webkit-box-shadow:0 0 0 1000px var(--bg-2) inset,0 0 0 3px var(--accent-soft)!important;box-shadow:0 0 0 1000px var(--bg-2) inset,0 0 0 3px var(--accent-soft)!important;border-color:var(--accent)!important}textarea{min-height:88px;resize:vertical;line-height:1.5}input[type=checkbox],input[type=radio]{width:16px;height:16px;margin:0 8px 0 0;vertical-align:-3px;accent-color:var(--accent)}input[type=file]{font-size:12px}
+form{margin:0}.field{margin:0 0 14px}.field:last-child{margin-bottom:0}.field-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 14px}.field-row.three{grid-template-columns:repeat(3,minmax(0,1fr))}.field-row .field{margin:0}@media(max-width:560px){.field-row,.field-row.three{grid-template-columns:1fr}}label{display:block;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);margin-bottom:6px}input:not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]):not([type=reset]),select,textarea{width:100%;margin-top:6px;padding:10px 12px;background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:13px}label input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]),label select,label textarea{display:block}input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);background:var(--bg-2);box-shadow:0 0 0 3px var(--accent-soft)}input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus,input:-webkit-autofill:active,textarea:-webkit-autofill,select:-webkit-autofill{-webkit-text-fill-color:var(--text)!important;-webkit-box-shadow:0 0 0 1000px var(--bg-2) inset!important;box-shadow:0 0 0 1000px var(--bg-2) inset!important;caret-color:var(--text)!important;border:1px solid var(--line)!important;transition:background-color 9999s ease-in-out 0s}input:-webkit-autofill:focus,textarea:-webkit-autofill:focus,select:-webkit-autofill:focus{-webkit-box-shadow:0 0 0 1000px var(--bg-2) inset,0 0 0 3px var(--accent-soft)!important;box-shadow:0 0 0 1000px var(--bg-2) inset,0 0 0 3px var(--accent-soft)!important;border-color:var(--accent)!important}textarea{min-height:88px;resize:vertical;line-height:1.5}input[type=checkbox],input[type=radio]{width:16px;height:16px;margin:0 8px 0 0;vertical-align:-3px;accent-color:var(--accent)}input[type=file]{font-size:12px}
 button,.btn{font-family:var(--sans);display:inline-flex;align-items:center;justify-content:center;gap:6px;margin:4px 4px 0 0;padding:8px 14px;background:var(--accent);color:var(--btn-text);border:1px solid var(--accent);border-radius:var(--radius-sm);font-size:12px;font-weight:600;letter-spacing:.04em;cursor:pointer;text-decoration:none;text-transform:uppercase}button:hover,.btn:hover{filter:brightness(1.08)}button:disabled,.btn:disabled{opacity:.55;cursor:not-allowed}.secondary{background:transparent;color:var(--text);border-color:var(--line-2)}.secondary:hover{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);filter:none}.danger{background:transparent;color:var(--bad);border-color:var(--bad-border)}.danger:hover{background:var(--bad-soft);filter:none}.inline{display:inline}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.inline button{margin:0}
 .subblock{border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;background:var(--tint-foot)}.subblock+.subblock{margin-top:12px}.subblock-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.subblock-head .title{font-weight:600;font-size:13px;color:var(--text)}.subblock-head .meta{font-family:var(--mono);font-size:11px;color:var(--muted)}.ae,.me{display:none;padding-top:12px;margin-top:12px;border-top:1px dashed var(--line)}.ae.show,.me.show{display:block}.hidden{display:none}.tokens{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.tokens div{display:flex;flex-direction:column;gap:3px}.help{position:relative;margin-left:auto}.help-q{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--tint-mid);color:var(--text-2);font-weight:700;font-size:11px;border:1px solid var(--line);cursor:help}.help-box{display:none;position:absolute;right:0;top:28px;z-index:30;width:420px;max-width:calc(100vw - 60px);background:var(--panel-2);border:1px solid var(--line-2);border-radius:var(--radius);padding:14px 16px;font-size:12.5px;line-height:1.55;box-shadow:var(--shadow-pop);color:var(--text)}.help:hover .help-box,.help:focus-within .help-box{display:block}.list{margin:0;padding-left:18px}.foot{grid-column:1/-1;text-align:center;padding:24px 0 0;font-family:var(--mono);font-size:11px;color:var(--muted)}
 @media(max-width:820px){.topin{grid-template-columns:1fr;gap:10px}.host{text-align:left}.meta{justify-content:flex-start}main{padding:22px 14px 42px}.grid{grid-template-columns:1fr}.kv{grid-template-columns:1fr}.kv>span{padding-bottom:0;border-bottom:0}.kv>div{padding-top:3px}}
@@ -8138,7 +8138,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
   page += F("function fmt(v,d,s){return v==null?'n/a':Number(v).toFixed(d)+s;}if(d.energy){t('live-energy-driver',nv(d.energy.driver));t('live-energy-power',fmt(d.energy.power,1,' W'));t('live-energy-voltage',fmt(d.energy.voltage,1,' V'));t('live-energy-current',fmt(d.energy.current,3,' A'));t('live-energy-total',fmt(d.energy.total_kwh,4,' kWh'));t('live-energy-recorded-total',fmt(d.energy.recorded_total_kwh,4,' kWh'));t('live-energy-offset',fmt(d.energy.offset_kwh,4,' kWh'));t('live-energy-temp',fmt(d.energy.temperature,1,' C'));t('live-energy-report-interval',d.energy.report_interval?d.energy.report_interval+'s':'disabled');t('live-energy-report-change',fmt(d.energy.report_change_percent,1,'%')+' / '+d.energy.report_change_watts+' W');t('live-energy-mqtt-age',ms(d.energy.last_mqtt_report_ms_ago));t('live-energy-mqtt-reason',d.energy.last_mqtt_report_reason||'n/a');if(d.energy.debug){t('live-energy-debug-age',ms(d.energy.debug.last_success_ms_ago));t('live-energy-debug-raw',d.energy.debug.voltage_raw==null?'n/a':d.energy.debug.voltage_raw);}if(d.energy.channels){for(var e=0;e<d.energy.channels.length;e++){t('live-energy-ch'+e+'-voltage',fmt(d.energy.channels[e].voltage,1,' V'));t('live-energy-ch'+e+'-power',fmt(d.energy.channels[e].power,1,' W'));t('live-energy-ch'+e+'-current',fmt(d.energy.channels[e].current,3,' A'));}}}");
   page += F("lp=0;}).catch(function(){lp=0;});}");
-  page += F("function ba(s){var k=s.getAttribute('data-key'),v=s.value,b=document.getElementById('extra-'+k);if(!b)return;var t=b.querySelector('.ti'),p=b.querySelector('.pi'),rr=b.querySelector('.rr'),tr=b.querySelector('.tr'),pr=b.querySelector('.pr'),tl=b.querySelector('.tl'),off=s.disabled;b.className=(v=='1'||v=='2'||v=='3')?'ae show':'ae';if(rr)rr.className=v=='1'?'row rr':'row rr hidden';if(tr)tr.className=(v=='2'||v=='3')?'row tr':'row tr hidden';if(pr)pr.className=v=='2'?'row pr':'row pr hidden';sd(rr,off||v!='1');sd(tr,off||!(v=='2'||v=='3'));sd(pr,off||v!='2');if(v=='2'){if(t&&(!t.value||t.value.indexOf('http://')==0))t.value=t.getAttribute('data-default-topic');if(p&&!p.value)p.value=p.getAttribute('data-default-payload');if(tl)tl.textContent='MQTT topic';}else if(v=='3'&&tl)tl.textContent='Webhook URL';}");
+  page += F("function ba(s){var k=s.getAttribute('data-key'),v=s.value,b=document.getElementById('extra-'+k);if(!b)return;var t=b.querySelector('.ti'),p=b.querySelector('.pi'),rr=b.querySelector('.rr'),tr=b.querySelector('.tr'),pr=b.querySelector('.pr'),tl=b.querySelector('.tl'),off=s.disabled;b.className=(v=='1'||v=='2'||v=='3')?'ae show':'ae';if(rr)rr.className=v=='1'?'field rr':'field rr hidden';if(tr)tr.className=(v=='2'||v=='3')?'field tr':'field tr hidden';if(pr)pr.className=v=='2'?'field pr':'field pr hidden';sd(rr,off||v!='1');sd(tr,off||!(v=='2'||v=='3'));sd(pr,off||v!='2');if(v=='2'){if(t&&(!t.value||t.value.indexOf('http://')==0))t.value=t.getAttribute('data-default-topic');if(p&&!p.value)p.value=p.getAttribute('data-default-payload');if(tl)tl.textContent='MQTT topic';}else if(v=='3'&&tl)tl.textContent='Webhook URL';}");
   page += F("function im(s){var k=s.getAttribute('data-input'),v=s.value,b=document.getElementById('input-button-'+k),w=document.getElementById('input-switch-'+k);if(b)b.className=v=='0'?'me show':'me';if(w)w.className=v=='1'?'me show':'me';sd(b,v!='0');sd(w,v!='1');if(b){var a=b.querySelectorAll('.ba');for(var i=0;i<a.length;i++)ba(a[i]);}}");
   page += F("function rb(s){var k=s.getAttribute('data-relay'),o=document.getElementById('relay_on_boot'+k),r=document.getElementById('relay_restore_boot'+k);if(!o||!r||!s.checked)return;if(s==r)o.checked=false;else if(s==o)r.checked=false;}");
 #if MYMOTA32_LIGHT_SUPPORTED
@@ -8761,7 +8761,7 @@ void appendDeviceControls(String &page) {
   page += F("<section class='panel'><div class='panel-head'><h2>Device</h2></div><div class='panel-body'>");
 #if MYMOTA32_LIGHT_SUPPORTED
   if (light.present) {
-    page += F("<div class='row'><strong>Light</strong> <span id='live-light-power' class='pill ");
+    page += F("<div class='field'><strong>Light</strong> <span id='live-light-power' class='pill ");
     page += light.power ? F("ok'>on") : F("bad'>off");
     page += F("</span><div class='kv'><span>Dimmer</span><div><code id='live-light-dimmer'>");
     page += String(light.dimmer);
@@ -8779,21 +8779,21 @@ void appendDeviceControls(String &page) {
     page += light.fade_running ? F("yes") : F("no");
     page += F("</code></div><span>Driver</span><div><code id='live-light-driver'>SM2335</code></div></div>");
     page += F("<form class='inline' data-inline='1' method='post' action='/light'><span class='actions'><button name='power' value='toggle'>Toggle</button><button name='power' value='on'>On</button><button class='secondary' name='power' value='off'>Off</button></span></form>");
-    page += F("<div class='row'><label>Dimmer<br><input class='la' data-live='live-light-dimmer' data-suffix='%' name='dimmer' type='range' min='0' max='100' step='1' value='");
+    page += F("<div class='field'><label>Dimmer<input class='la' data-live='live-light-dimmer' data-suffix='%' name='dimmer' type='range' min='0' max='100' step='1' value='");
     page += String(light.dimmer);
-    page += F("'></label></div><div class='row'><label>Color temperature<br><input name='ct' type='range' min='");
+    page += F("'></label></div><div class='field'><label>Color temperature<input name='ct' type='range' min='");
     page += String(kLightCtMin);
     page += F("' max='");
     page += String(kLightCtMax);
     page += F("' step='1' value='");
     page += String(light.ct);
-    page += F("' class='la' data-live='live-light-ct' data-suffix=' mired'></label></div><div class='row'><label>Color RGB<br><input class='la' data-live='live-light-color' name='color' maxlength='6' value='");
+    page += F("' class='la' data-live='live-light-ct' data-suffix=' mired'></label></div><div class='field'><label>Color RGB<input class='la' data-live='live-light-color' name='color' maxlength='6' value='");
     appendLightColorHex(page);
-    page += F("'></label></div><div class='row'><label>ON dimmer<br><input class='la' data-live='live-light-on-dimmer' data-suffix='%' name='on_dimmer' type='number' min='1' max='100' step='1' value='");
+    page += F("'></label></div><div class='field'><label>ON dimmer<input class='la' data-live='live-light-on-dimmer' data-suffix='%' name='on_dimmer' type='number' min='1' max='100' step='1' value='");
     page += String(config.light_on_dimmer);
-    page += F("'></label></div><div class='row'><label><input class='la' data-live='live-light-fade' data-on='on' data-off='off' name='fade' type='checkbox' value='1'");
+    page += F("'></label></div><div class='field'><label><input class='la' data-live='live-light-fade' data-on='on' data-off='off' name='fade' type='checkbox' value='1'");
     if (config.light_fade) page += F(" checked");
-    page += F(">Fade</label></div><div class='row'><label>Speed<br><input class='la' data-live='live-light-speed' name='speed' type='number' min='");
+    page += F(">Fade</label></div><div class='field'><label>Speed<input class='la' data-live='live-light-speed' name='speed' type='number' min='");
     page += String(kLightSpeedMin);
     page += F("' max='");
     page += String(kLightSpeedMax);
@@ -8804,7 +8804,7 @@ void appendDeviceControls(String &page) {
 #endif
   for (uint8_t i = 0; i < runtime_template.relay_count; i++) {
     if (!hasPin(runtime_template.relays[i])) continue;
-    page += F("<div class='row'><strong>Relay ");
+    page += F("<div class='field'><strong>Relay ");
     page += String(i + 1);
     page += F("</strong> <span class='hint'>on</span> <code>");
     page += pinName(runtime_template.relays[i].pin);
@@ -8885,21 +8885,21 @@ void appendDeviceControls(String &page) {
       }
       page += F("</div>");
     }
-    page += F("<form data-inline='1' method='post' action='/energy'><div class='field-row'><div class='row'><label>Total kWh offset<br><input name='total_offset_kwh' type='number' min='");
+    page += F("<form data-inline='1' method='post' action='/energy'><div class='field-row'><div class='field'><label>Total kWh offset<input name='total_offset_kwh' type='number' min='");
     appendFloatDecimal(page, kEnergyTotalOffsetMinKwh, 0);
     page += F("' max='");
     appendFloatDecimal(page, kEnergyTotalOffsetMaxKwh, 0);
     page += F("' step='0.0001' value='");
     appendFloatDecimal(page, config.energy_total_offset_kwh, 4);
-    page += F("'></label></div><div class='row'><label>MQTT report interval seconds<br><input name='energy_report_interval' type='number' min='0' max='");
+    page += F("'></label></div><div class='field'><label>MQTT report interval seconds<input name='energy_report_interval' type='number' min='0' max='");
     page += String(kMqttEnergyIntervalMax);
     page += F("' step='1' value='");
     page += String(config.energy_mqtt_interval);
-    page += F("'></label></div></div><div class='field-row'><div class='row'><label>MQTT report power change percent<br><input name='energy_report_change_percent' type='number' min='0' max='");
+    page += F("'></label></div></div><div class='field-row'><div class='field'><label>MQTT report power change percent<input name='energy_report_change_percent' type='number' min='0' max='");
     appendFloatDecimal(page, kMqttEnergyChangeMaxPercent, 1);
     page += F("' step='0.1' value='");
     appendScaledDecimal(page, config.energy_mqtt_change_percent_x10, 1);
-    page += F("'></label></div><div class='row'><label>MQTT report power change watts<br><input name='energy_report_change_watts' type='number' min='0' max='");
+    page += F("'></label></div><div class='field'><label>MQTT report power change watts<input name='energy_report_change_watts' type='number' min='0' max='");
     page += String(kMqttEnergyChangeMaxWatts);
     page += F("' step='1' value='");
     page += String(config.energy_mqtt_change_watts);
@@ -8925,7 +8925,7 @@ void appendLedSettings(String &page) {
     const PinAssignment *assignment = ledOutputAssignment(i);
     if (!assignment || !hasLedOutput(i)) continue;
     const uint8_t selected = config.led_attach[i];
-    page += F("<div class='row'><label>");
+    page += F("<div class='field'><label>");
     page += htmlEscape(ledOutputName(i));
     page += F(" <span class='hint'>");
     page += pinName(assignment->pin);
@@ -8933,7 +8933,7 @@ void appendLedSettings(String &page) {
     page += String(i);
     page += F("' class='pill ");
     page += ledOutputOn(i) ? F("ok'>on") : F("bad'>off");
-    page += F("</span><br><select name='led");
+    page += F("</span><select name='led");
     page += String(i);
     page += F("'>");
     appendLedAttachmentOption(page, kLedAttachNone, F("Nothing"), selected);
@@ -8969,7 +8969,7 @@ void appendDeviceStateEnforcementSettings(String &page) {
     page += String(i + 1);
     page += F("</div><div class='meta'>");
     page += pinName(runtime_template.relays[i].pin);
-    page += F("</div></div></div><div class='row'><label><input class='rbc' id='relay_on_boot");
+    page += F("</div></div></div><div class='field'><label><input class='rbc' id='relay_on_boot");
     page += String(i);
     page += F("' data-relay='");
     page += String(i);
@@ -8977,7 +8977,7 @@ void appendDeviceStateEnforcementSettings(String &page) {
     page += String(i);
     page += F("' value='1'");
     if (config.relay_on_boot[i]) page += F(" checked");
-    page += F(">Turn on at boot</label></div><div class='row'><label><input class='rbc' id='relay_restore_boot");
+    page += F(">Turn on at boot</label></div><div class='field'><label><input class='rbc' id='relay_restore_boot");
     page += String(i);
     page += F("' data-relay='");
     page += String(i);
@@ -8985,7 +8985,7 @@ void appendDeviceStateEnforcementSettings(String &page) {
     page += String(i);
     page += F("' value='1'");
     if (config.relay_restore_boot[i]) page += F(" checked");
-    page += F(">Restore last state at boot</label></div><div class='row'><label><input type='checkbox' name='relay_time_enabled");
+    page += F(">Restore last state at boot</label></div><div class='field'><label><input type='checkbox' name='relay_time_enabled");
     page += String(i);
     page += F("' value='1'");
     if (config.relay_time_enabled[i]) page += F(" checked");
@@ -9003,7 +9003,7 @@ void appendDeviceStateEnforcementSettings(String &page) {
   }
 #if MYMOTA32_LIGHT_SUPPORTED
   if (light.present) {
-    page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Light</div></div><div class='row'><label><input type='checkbox' name='light_restore_boot' value='1'");
+    page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Light</div></div><div class='field'><label><input type='checkbox' name='light_restore_boot' value='1'");
     if (config.light_restore_boot) page += F(" checked");
     page += F(">Restore last state at boot</label><span class='hint'>Power, dimmer, color temperature, and color</span></div></div>");
   }
@@ -9021,7 +9021,7 @@ void appendRelayPulseSettings(String &page) {
     page += String(i + 1);
     page += F("</div><div class='meta'>");
     page += pinName(runtime_template.relays[i].pin);
-    page += F("</div></div></div><div class='row'><label><input type='checkbox' name='relay_pulse_enabled");
+    page += F("</div></div></div><div class='field'><label><input type='checkbox' name='relay_pulse_enabled");
     page += String(i);
     page += F("' value='1'");
     if (config.relay_pulse_enabled[i]) page += F(" checked");
@@ -9093,7 +9093,7 @@ void appendButtonActionExtra(String &page, uint8_t button, const char *name, boo
   page += String(button);
   page += F("' class='ae'>");
   if (has_relay_target) {
-    page += F("<div class='row rr'><label>Target relay<br><select name='");
+    page += F("<div class='field rr'><label>Target relay<select name='");
     page += name;
     page += F("_relay");
     page += String(button);
@@ -9104,9 +9104,9 @@ void appendButtonActionExtra(String &page, uint8_t button, const char *name, boo
     }
     page += F("</select></label></div>");
   } else {
-    page += F("<div class='row rr'><span class='hint'>No relay available.</span></div>");
+    page += F("<div class='field rr'><span class='hint'>No relay available.</span></div>");
   }
-  page += F("<div class='row tr'><label><span class='tl'>MQTT topic</span><br><input class='ti' name='");
+  page += F("<div class='field tr'><label><span class='tl'>MQTT topic</span><input class='ti' name='");
   page += name;
   page += F("_target");
   page += String(button);
@@ -9116,7 +9116,7 @@ void appendButtonActionExtra(String &page, uint8_t button, const char *name, boo
   page += htmlEscape(kDefaultButtonMqttTopic);
   page += F("' value='");
   page += htmlEscape(buttonActionTarget(button, hold));
-  page += F("'></label></div><div class='row pr'><label>MQTT payload<br><textarea class='pi' name='");
+  page += F("'></label></div><div class='field pr'><label>MQTT payload<textarea class='pi' name='");
   page += name;
   page += F("_payload");
   page += String(button);
@@ -9158,13 +9158,13 @@ void appendButtonSettings(String &page) {
   page += F("<div><code>{TOPIC}</code><span class='hint'>current MQTT topic</span></div>");
   page += F("<div><code>{RELAYX_STATE}</code><span class='hint'>relay state, for example {RELAY1_STATE}</span></div>");
   page += F("</div><p class='hint'>MQTT broadcast sends a topic and payload through the configured broker.</p></div></div></div><form id='form-buttons' data-inline='1' method='post' action='/buttons'><div class='panel-body'>");
-  page += F("<div class='row'><label>Hold time ms<br><input name='hold_ms' type='number' min='");
+  page += F("<div class='field'><label>Hold time ms<input name='hold_ms' type='number' min='");
   page += String(kButtonHoldMinMs);
   page += F("' max='");
   page += String(kButtonHoldMaxMs);
   page += F("' step='1' value='");
   page += String(config.button_hold_ms);
-  page += F("'></label><label>Debounce ms<br><input name='debounce_ms' type='number' min='");
+  page += F("'></label><label>Debounce ms<input name='debounce_ms' type='number' min='");
   page += String(kButtonDebounceMinMs);
   page += F("' max='");
   page += String(kButtonDebounceMaxMs);
@@ -9191,7 +9191,7 @@ void appendButtonSettings(String &page) {
     page += htmlEscape(inputStateName(i, button_state[i].stable_pressed));
     page += F("</span></div>");
 
-    page += F("<div class='row'><label>Kind<br><select class='im' data-input='");
+    page += F("<div class='field'><label>Kind<select class='im' data-input='");
     page += String(i);
     page += F("' name='mode");
     page += String(i);
@@ -9209,7 +9209,7 @@ void appendButtonSettings(String &page) {
     page += F("'>");
     uint8_t unused_relay = 0;
     if (defaultButtonRelayTarget(i, unused_relay)) {
-      page += F("<div class='row'><label>Target relay<br><select name='relay");
+      page += F("<div class='field'><label>Target relay<select name='relay");
       page += String(i);
       page += F("'>");
       for (uint8_t relay = 0; relay < runtime_template.relay_count; relay++) {
@@ -9218,7 +9218,7 @@ void appendButtonSettings(String &page) {
       }
       page += F("</select></label></div>");
     }
-    page += F("<div class='row'><label>Reverse<br><select name='reverse");
+    page += F("<div class='field'><label>Reverse<select name='reverse");
     page += String(i);
     page += F("'><option value='0'");
     if (on_level == kInputOnLevelHigh) page += F(" selected");
@@ -9230,11 +9230,11 @@ void appendButtonSettings(String &page) {
     page += String(i);
     page += F("' class='me");
     if (mode == kInputModeButton) page += F(" show");
-    page += F("'><div class='row'><label>Press<br>");
+    page += F("'><div class='field'><label>Press");
     appendButtonActionSelect(page, i, "press", config.button_press_action[i]);
     page += F("</label>");
     appendButtonActionExtra(page, i, "press", false);
-    page += F("</div><div class='row'><label>Hold<br>");
+    page += F("</div><div class='field'><label>Hold");
     appendButtonActionSelect(page, i, "hold", config.button_hold_action[i]);
     page += F("</label>");
     appendButtonActionExtra(page, i, "hold", true);
@@ -9245,7 +9245,7 @@ void appendButtonSettings(String &page) {
 
 void appendTemplateForm(String &page) {
   page += F("<section class='panel wide'><div class='panel-head'><h2>Template Selection</h2><span class='h-meta'>Tasmota ESP32 JSON</span></div><form id='form-template' method='post' action='/template'><div class='panel-body'>");
-  page += F("<div class='row'><label>Known template<br><select id='known-template' onchange='tp(this)'><option value=''>Select a template</option>");
+  page += F("<div class='field'><label>Known template<select id='known-template' onchange='tp(this)'><option value=''>Select a template</option>");
 #if CONFIG_IDF_TARGET_ESP32C3
   page += F("<option data-json='");
   page += htmlEscape(String(FPSTR(kTemplateGenericC3RelayJson)));
@@ -9276,7 +9276,7 @@ void appendTemplateForm(String &page) {
   page += F("'>Sonoff MINIR4</option>");
 #endif
   page += F("</select></label></div>");
-  page += F("<div class='row'><label>Tasmota ESP32 template JSON<br><textarea id='template-json' name='template' rows='6' maxlength='");
+  page += F("<div class='field'><label>Tasmota ESP32 template JSON<textarea id='template-json' name='template' rows='6' maxlength='");
   page += String(kTemplateJsonMaxLen);
   page += F("'>");
   page += htmlEscape(currentTemplateJson());
@@ -9293,23 +9293,23 @@ void appendMqttForm(String &page) {
     page += String(config.mqtt_port);
   }
   page += F("</span></div><form id='form-mqtt' data-inline='1' method='post' action='/mqtt'><div class='panel-body'>");
-  page += F("<div class='field-row'><div class='row'><label>Host<br><input name='host' maxlength='");
+  page += F("<div class='field-row'><div class='field'><label>Host<input name='host' maxlength='");
   page += String(kMqttHostMaxLen);
   page += F("' value='");
   page += htmlEscape(config.mqtt_host);
-  page += F("'></label></div><div class='row'><label>Port<br><input name='port' type='number' min='1' max='65535' value='");
+  page += F("'></label></div><div class='field'><label>Port<input name='port' type='number' min='1' max='65535' value='");
   page += String(config.mqtt_port);
-  page += F("'></label></div></div><div class='row'><label>Topic<br><input name='topic' maxlength='");
+  page += F("'></label></div></div><div class='field'><label>Topic<input name='topic' maxlength='");
   page += String(kMqttTopicMaxLen);
   page += F("' required value='");
   page += htmlEscape(config.mqtt_topic);
-  page += F("'></label></div><div class='field-row'><div class='row'><label>MQTT keepalive seconds<br><input name='protocol_keepalive' type='number' min='");
+  page += F("'></label></div><div class='field-row'><div class='field'><label>MQTT keepalive seconds<input name='protocol_keepalive' type='number' min='");
   page += String(kMqttProtocolKeepaliveMinSec);
   page += F("' max='");
   page += String(kMqttProtocolKeepaliveMaxSec);
   page += F("' value='");
   page += String(config.mqtt_protocol_keepalive);
-  page += F("'></label></div><div class='row'><label>State keepalive seconds<br><input name='keepalive' type='number' min='0' max='");
+  page += F("'></label></div><div class='field'><label>State keepalive seconds<input name='keepalive' type='number' min='0' max='");
   page += String(kMqttKeepaliveMax);
   page += F("' value='");
   page += String(config.mqtt_keepalive);
@@ -9321,11 +9321,11 @@ void appendTasmotaSafebootForm(String &page) {
   if (!settings.present) return;
 
   page += F("<section class='panel'><div class='panel-head'><h2>Tasmota Safeboot</h2><span class='h-meta'>Wi-Fi credentials</span></div><form id='form-tasmota-safeboot' method='post' action='/tasmota-safeboot'><div class='panel-body'>");
-  page += F("<div class='row'><label>SSID<br><input name='ssid' maxlength='32' required");
+  page += F("<div class='field'><label>SSID<input name='ssid' maxlength='32' required");
   if (!settings.settings_valid) page += F(" disabled");
   page += F(" value='");
   if (settings.settings_valid) page += htmlEscape(settings.ssid);
-  page += F("'></label></div><div class='row'><label>Password<br><input type='password' name='password' maxlength='64' autocomplete='off'");
+  page += F("'></label></div><div class='field'><label>Password<input type='password' name='password' maxlength='64' autocomplete='off'");
   if (!settings.settings_valid) page += F(" disabled");
   page += F(" value='");
   if (settings.settings_valid) page += htmlEscape(settings.password);
@@ -9341,8 +9341,8 @@ void appendTasmotaSafebootForm(String &page) {
 void appendSettingsForm(String &page) {
   page += F("<section class='panel wide'><div class='panel-head'><h2>Settings</h2><span class='h-meta'>Export / import</span></div>");
   page += F("<form id='form-settings-import' method='post' action='/settings/import'><div class='panel-body'>");
-  page += F("<div class='row'><label>Import settings JSON<br><input type='file' accept='application/json,.json' onchange='sf(this)'></label></div>");
-  page += F("<div class='row'><label>Settings JSON<br><textarea id='settings-json' name='settings_json' rows='8' maxlength='");
+  page += F("<div class='field'><label>Import settings JSON<input type='file' accept='application/json,.json' onchange='sf(this)'></label></div>");
+  page += F("<div class='field'><label>Settings JSON<textarea id='settings-json' name='settings_json' rows='8' maxlength='");
   page += String(kSettingsImportJsonMaxLen);
   page += F("'></textarea></label></div>");
   page += F("<p class='hint'>Wi-Fi SSID, password, hostname, and PHY mode are not exported or imported.</p>");
@@ -9383,26 +9383,26 @@ void appendIBeaconForm(String &page) {
     page += F("<span id='live-ibeacon' class='pill'>disabled</span>");
   }
   page += F("</div><form id='form-ibeacon' data-inline='1' method='post' action='/ibeacon'><div class='panel-body'>");
-  page += F("<div class='row'><label><input type='checkbox' name='enabled' value='1'");
+  page += F("<div class='field'><label><input type='checkbox' name='enabled' value='1'");
   if (config.ibeacon_enabled) page += F(" checked");
   if (unsupported) page += F(" disabled");
   page += F(">Enable</label></div>");
-  page += F("<div class='row'><label>G1 MACs<br><input name='f1' maxlength='");
+  page += F("<div class='field'><label>G1 MACs<input name='f1' maxlength='");
   page += String(kIBeaconFilterInputMaxLen);
   page += F("' value='");
   page += htmlEscape(config.ibeacon_filter1_macs);
   page += F("'");
   if (unsupported) page += F(" disabled");
-  page += F("></label><label>Max<br>");
+  page += F("></label><label>Max");
   appendIBeaconIntervalSelect(page, "i1", config.ibeacon_filter1_interval_sec, unsupported);
   page += F("</label></div>");
-  page += F("<div class='row'><label>G2 MACs<br><input name='f2' maxlength='");
+  page += F("<div class='field'><label>G2 MACs<input name='f2' maxlength='");
   page += String(kIBeaconFilterInputMaxLen);
   page += F("' value='");
   page += htmlEscape(config.ibeacon_filter2_macs);
   page += F("'");
   if (unsupported) page += F(" disabled");
-  page += F("></label><label>Max<br>");
+  page += F("></label><label>Max");
   appendIBeaconIntervalSelect(page, "i2", config.ibeacon_filter2_interval_sec, unsupported);
   page += F("</label></div></div></form><div class='panel-foot'><button type='submit' form='form-ibeacon'");
   if (unsupported) page += F(" disabled");
@@ -9428,21 +9428,21 @@ void appendSwitchbotLockForm(String &page) {
     page += F("<span id='live-switchbot-lock-status' class='pill'>disabled</span>");
   }
   page += F("</div><form id='switchbot-lock-form' data-inline='1' method='post' action='/switchbot-lock'></form><div class='panel-body'>");
-  page += F("<div class='row'><label><input form='switchbot-lock-form' type='checkbox' name='enabled' value='1'");
+  page += F("<div class='field'><label><input form='switchbot-lock-form' type='checkbox' name='enabled' value='1'");
   if (config.switchbot_lock_enabled) page += F(" checked");
   if (unsupported) page += F(" disabled");
   page += F(">Enable</label></div>");
-  page += F("<div class='field-row'><div class='row'><label>Lock MAC<br><input form='switchbot-lock-form' name='mac' maxlength='17' value='");
+  page += F("<div class='field-row'><div class='field'><label>Lock MAC<input form='switchbot-lock-form' name='mac' maxlength='17' value='");
   page += htmlEscape(config.switchbot_lock_mac);
   page += F("'");
   if (unsupported) page += F(" disabled");
   page += F("></label></div>");
-  page += F("<div class='row'><label>BLE key ID<br><input form='switchbot-lock-form' name='key_id' maxlength='2' value='");
+  page += F("<div class='field'><label>BLE key ID<input form='switchbot-lock-form' name='key_id' maxlength='2' value='");
   page += htmlEscape(config.switchbot_lock_key_id);
   page += F("'");
   if (unsupported) page += F(" disabled");
   page += F("></label></div></div>");
-  page += F("<div class='row'><label>BLE key<br><input form='switchbot-lock-form' type='password' name='key' maxlength='32' autocomplete='off' value='");
+  page += F("<div class='field'><label>BLE key<input form='switchbot-lock-form' type='password' name='key' maxlength='32' autocomplete='off' value='");
   page += htmlEscape(config.switchbot_lock_key);
   page += F("' onfocus=\"this.type='text'\" onclick=\"this.type='text'\"");
   if (unsupported) page += F(" disabled");
@@ -9539,38 +9539,38 @@ void appendSwitchbotLockForm(String &page) {
   page += F("s / ");
   page += String(config.switchbot_lock_battery_notify_sec);
   page += F("s</code></div></div>");
-  page += F("<div class='row'><label>Lock status callback<br><input form='switchbot-lock-form' name='status_callback' maxlength='");
+  page += F("<div class='field'><label>Lock status callback<input form='switchbot-lock-form' name='status_callback' maxlength='");
   page += String(kSwitchbotLockCallbackMaxLen);
   page += F("' placeholder='http://192.168.1.1:80/CMD?LockStatus={STATE}' value='");
   page += htmlEscape(config.switchbot_lock_status_callback);
   page += F("'");
   if (unsupported) page += F(" disabled");
   page += F("></label></div>");
-  page += F("<div class='row'><label>Battery quality callback<br><input form='switchbot-lock-form' name='battery_callback' maxlength='");
+  page += F("<div class='field'><label>Battery quality callback<input form='switchbot-lock-form' name='battery_callback' maxlength='");
   page += String(kSwitchbotLockCallbackMaxLen);
   page += F("' placeholder='http://192.168.1.1:80/CMD?LockBattery={STATE}' value='");
   page += htmlEscape(config.switchbot_lock_battery_callback);
   page += F("'");
   if (unsupported) page += F(" disabled");
   page += F("></label></div>");
-  page += F("<div class='row'><label>Device health callback<br><input form='switchbot-lock-form' name='device_callback' maxlength='");
+  page += F("<div class='field'><label>Device health callback<input form='switchbot-lock-form' name='device_callback' maxlength='");
   page += String(kSwitchbotLockCallbackMaxLen);
   page += F("' placeholder='http://192.168.1.1:80/CMD?DeviceStatus={STATE}' value='");
   page += htmlEscape(config.switchbot_lock_device_callback);
   page += F("'");
   if (unsupported) page += F(" disabled");
   page += F("></label></div>");
-  page += F("<div class='field-row three'><div class='row'><label>Offline delay seconds<br><input form='switchbot-lock-form' type='number' min='1' max='65535' name='offline_delay' value='");
+  page += F("<div class='field-row three'><div class='field'><label>Offline delay seconds<input form='switchbot-lock-form' type='number' min='1' max='65535' name='offline_delay' value='");
   page += config.switchbot_lock_offline_delay_sec;
   page += F("'");
   if (unsupported) page += F(" disabled");
   page += F("></label></div>");
-  page += F("<div class='row'><label>Online refresh seconds<br><input form='switchbot-lock-form' type='number' min='1' max='65535' name='online_heal' value='");
+  page += F("<div class='field'><label>Online refresh seconds<input form='switchbot-lock-form' type='number' min='1' max='65535' name='online_heal' value='");
   page += config.switchbot_lock_online_heal_sec;
   page += F("'");
   if (unsupported) page += F(" disabled");
   page += F("></label></div>");
-  page += F("<div class='row'><label>Battery refresh seconds<br><input form='switchbot-lock-form' type='number' min='1' max='65535' name='battery_notify' value='");
+  page += F("<div class='field'><label>Battery refresh seconds<input form='switchbot-lock-form' type='number' min='1' max='65535' name='battery_notify' value='");
   page += config.switchbot_lock_battery_notify_sec;
   page += F("'");
   if (unsupported) page += F(" disabled");
@@ -9619,10 +9619,10 @@ void appendShellyBluButtonForm(String &page) {
   page += F("</code></div></div>");
 
   page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Pair</div></div><form data-inline='1' method='post' action='/shelly-blu-button'>");
-  page += F("<div class='row'><label>Button MAC<br><input name='mac' maxlength='17' placeholder='AA:BB:CC:DD:EE:FF'");
+  page += F("<div class='field'><label>Button MAC<input name='mac' maxlength='17' placeholder='AA:BB:CC:DD:EE:FF'");
   if (unsupported) page += F(" disabled");
   page += F("></label></div>");
-  page += F("<div class='row'><label>Pair code<br><input name='passkey' maxlength='6' inputmode='numeric' autocomplete='off'");
+  page += F("<div class='field'><label>Pair code<input name='passkey' maxlength='6' inputmode='numeric' autocomplete='off'");
   if (unsupported) page += F(" disabled");
   page += F("></label></div><button name='action' value='pair'");
   if (unsupported) page += F(" disabled");
@@ -9684,7 +9684,7 @@ void appendPowerSavingOption(String &page, uint8_t mode, const __FlashStringHelp
 }
 
 void appendPowerSavingSelect(String &page) {
-  page += F("<div class='row'><select name='power_saving'>");
+  page += F("<div class='field'><select name='power_saving'>");
   appendPowerSavingOption(page, kPowerSavingOff, F("Off"));
   appendPowerSavingOption(page, kPowerSavingOffLocked, F("Off - Locked"));
   appendPowerSavingOption(page, kPowerSavingLight, F("Light"));
@@ -9693,7 +9693,7 @@ void appendPowerSavingSelect(String &page) {
 }
 
 void appendPhyModeSelect(String &page) {
-  page += F("<div class='row'><label>PHY mode<br><select name='phy_mode'>");
+  page += F("<div class='field'><label>PHY mode<select name='phy_mode'>");
   for (uint8_t mode = 0; mode <= kPhyModeN; mode++) {
     page += F("<option value='");
     page += String(mode);
@@ -9707,7 +9707,7 @@ void appendPhyModeSelect(String &page) {
 }
 
 void appendWifiDynamicPowerCheckbox(String &page) {
-  page += F("<div class='row'><label><input type='checkbox' name='wifi_dynamic_power' value='1'");
+  page += F("<div class='field'><label><input type='checkbox' name='wifi_dynamic_power' value='1'");
   if (config.wifi_dynamic_power) page += F(" checked");
   page += F(">Dynamic Wi-Fi power</label></div>");
 }
@@ -9817,12 +9817,12 @@ void handleRoot() {
   page += F("<section class='panel'><div class='panel-head'><h2>Wi-Fi</h2><span class='h-meta'>");
   page += phyModeName(config.phy_mode);
   page += F("</span></div><form id='form-wifi' method='post' action='/wifi'><div class='panel-body'>");
-  page += F("<div class='row'><label>SSID<br><input name='ssid' maxlength='32' required value='");
+  page += F("<div class='field'><label>SSID<input name='ssid' maxlength='32' required value='");
   page += htmlEscape(config.ssid);
-  page += F("'></label></div><div class='row'><label>Password<br><input id='wifi-password' type='password' name='password' maxlength='64' autocomplete='current-password' value='");
+  page += F("'></label></div><div class='field'><label>Password<input id='wifi-password' type='password' name='password' maxlength='64' autocomplete='current-password' value='");
   page += htmlEscape(config.password);
   page += F("' onfocus=\"this.type='text'\" onclick=\"this.type='text'\"></label></div>");
-  page += F("<div class='field-row'><div class='row'><label>Hostname<br><input name='hostname' maxlength='32' value='");
+  page += F("<div class='field-row'><div class='field'><label>Hostname<input name='hostname' maxlength='32' value='");
   page += htmlEscape(config.hostname);
   page += F("'></label></div>");
   appendPhyModeSelect(page);
@@ -9843,7 +9843,7 @@ void handleRoot() {
   page += F(MYMOTA32_TARGET);
   page += F("'>");
   page += F("<input type='file' name='firmware' accept='.bin' required>");
-  page += F("<div class='row'><label><input class='fv' type='checkbox' checked>Verify target</label></div>");
+  page += F("<div class='field'><label><input class='fv' type='checkbox' checked>Verify target</label></div>");
   page += F("</form></div>");
   page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Power Saving</div></div><form id='form-system' method='post' action='/system'>");
   appendPowerSavingSelect(page);
@@ -9892,8 +9892,8 @@ void handleScan() {
   if (count <= 0) {
     page += F("<p>No networks found.</p>");
   } else {
-    page += F("<form id='form-scan-wifi' method='post' action='/wifi'><div class='row'><label>Password<br><input type='password' name='password' maxlength='64'></label></div>");
-    page += F("<div class='field-row'><div class='row'><label>Hostname<br><input name='hostname' maxlength='32' value='");
+    page += F("<form id='form-scan-wifi' method='post' action='/wifi'><div class='field'><label>Password<input type='password' name='password' maxlength='64'></label></div>");
+    page += F("<div class='field-row'><div class='field'><label>Hostname<input name='hostname' maxlength='32' value='");
     page += htmlEscape(config.hostname);
     page += F("'></label></div>");
     appendPhyModeSelect(page);
