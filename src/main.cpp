@@ -8069,14 +8069,14 @@ void appendHeader(String &page, const __FlashStringHelper *title, bool show_spin
 }
 
 void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false) {
-  page += F("<script>var ls=Date.now();function ok(){ls=Date.now();var e=document.getElementById('poll-spin');if(e)e.className='spin active';}");
+  page += F("<script>var ls=Date.now(),lp=0;function ok(){ls=Date.now();var e=document.getElementById('poll-spin');if(e)e.className='spin active';}");
   page += F("function ck(){var e=document.getElementById('poll-spin');if(e&&Date.now()-ls>5000)e.className='spin';}");
   page += F("function fh(){return fetch('/health',{cache:'no-store'}).then(function(r){if(!r.ok)throw Error();return r.json();}).then(function(d){ok();return d;});}");
   page += F("function t(i,v){var e=document.getElementById(i);if(e)e.textContent=v;}");
   page += F("function p(i,v,c){var e=document.getElementById(i);if(e){e.textContent=v;e.className=c;}}");
   page += F("function nv(v){return v==null||v===''?'n/a':v;}function yn(v){return v?'yes':'no';}function ag(v){return v==null?'n/a':Math.floor(v/1000)+'s ago';}function ms(v){return v==null?'n/a':v+' ms ago';}");
   page += F("function sd(e,d){if(!e)return;var q=e.querySelectorAll('input,select,textarea,button');for(var i=0;i<q.length;i++)q[i].disabled=d;}var fbz={};function sdb(k,d){var a=document.querySelectorAll('form[data-busy=\"'+k+'\"]');for(var i=0;i<a.length;i++)sd(a[i],d);}");
-  page += F("function live(){fh().then(function(d){");
+  page += F("function live(){if(lp)return;lp=1;fh().then(function(d){");
   page += F("t('live-version',nv(d.version));t('live-target',nv(d.target));t('live-chip',(d.chip_model?d.chip_model:'Chip')+(d.chip_id?' ('+d.chip_id+')':''));t('live-hostname',nv(d.hostname));t('live-heap',d.heap+' bytes');if(d.flash){t('live-flash-used',d.flash.used+' bytes');t('live-flash-total',d.flash.total+' bytes');t('live-flash-free',d.flash.free+' bytes');t('live-flash-chip',d.flash.chip_size+' bytes');}");
   page += F("if(d.partitions){var r=d.partitions.running||{},u=d.partitions.next_update||{},f=d.partitions.factory||{};t('live-part-running-label',nv(r.label));t('live-part-running-size',r.size==null?'n/a':r.size+' bytes');t('live-part-update-label',nv(u.label));t('live-part-update-size',u.size==null?'n/a':u.size+' bytes');t('live-part-factory-label',nv(f.label));t('live-part-factory-size',f.size==null?'n/a':f.size+' bytes');t('live-part-ota-slots',nv(d.partitions.ota_slots));}");
   page += F("t('live-uptime',d.uptime+'s');t('live-configured-phy',nv(d.configured_phy));t('live-active-phy',nv(d.active_phy));");
@@ -8095,7 +8095,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
   page += F("function fmt(v,d,s){return v==null?'n/a':Number(v).toFixed(d)+s;}if(d.energy){t('live-energy-driver',nv(d.energy.driver));t('live-energy-power',fmt(d.energy.power,1,' W'));t('live-energy-voltage',fmt(d.energy.voltage,1,' V'));t('live-energy-current',fmt(d.energy.current,3,' A'));t('live-energy-total',fmt(d.energy.total_kwh,4,' kWh'));t('live-energy-recorded-total',fmt(d.energy.recorded_total_kwh,4,' kWh'));t('live-energy-offset',fmt(d.energy.offset_kwh,4,' kWh'));t('live-energy-temp',fmt(d.energy.temperature,1,' C'));t('live-energy-report-interval',d.energy.report_interval?d.energy.report_interval+'s':'disabled');t('live-energy-report-change',fmt(d.energy.report_change_percent,1,'%')+' / '+d.energy.report_change_watts+' W');t('live-energy-mqtt-age',ms(d.energy.last_mqtt_report_ms_ago));t('live-energy-mqtt-reason',d.energy.last_mqtt_report_reason||'n/a');if(d.energy.debug){t('live-energy-debug-age',ms(d.energy.debug.last_success_ms_ago));t('live-energy-debug-raw',d.energy.debug.voltage_raw==null?'n/a':d.energy.debug.voltage_raw);}if(d.energy.channels){for(var e=0;e<d.energy.channels.length;e++){t('live-energy-ch'+e+'-voltage',fmt(d.energy.channels[e].voltage,1,' V'));t('live-energy-ch'+e+'-power',fmt(d.energy.channels[e].power,1,' W'));t('live-energy-ch'+e+'-current',fmt(d.energy.channels[e].current,3,' A'));}}}");
-  page += F("}).catch(function(){});}");
+  page += F("lp=0;}).catch(function(){lp=0;});}");
   page += F("function ba(s){var k=s.getAttribute('data-key'),v=s.value,b=document.getElementById('extra-'+k);if(!b)return;var t=b.querySelector('.ti'),p=b.querySelector('.pi'),rr=b.querySelector('.rr'),tr=b.querySelector('.tr'),pr=b.querySelector('.pr'),tl=b.querySelector('.tl'),off=s.disabled;b.className=(v=='1'||v=='2'||v=='3')?'ae show':'ae';if(rr)rr.className=v=='1'?'row rr':'row rr hidden';if(tr)tr.className=(v=='2'||v=='3')?'row tr':'row tr hidden';if(pr)pr.className=v=='2'?'row pr':'row pr hidden';sd(rr,off||v!='1');sd(tr,off||!(v=='2'||v=='3'));sd(pr,off||v!='2');if(v=='2'){if(t&&(!t.value||t.value.indexOf('http://')==0))t.value=t.getAttribute('data-default-topic');if(p&&!p.value)p.value=p.getAttribute('data-default-payload');if(tl)tl.textContent='MQTT topic';}else if(v=='3'&&tl)tl.textContent='Webhook URL';}");
   page += F("function im(s){var k=s.getAttribute('data-input'),v=s.value,b=document.getElementById('input-button-'+k),w=document.getElementById('input-switch-'+k);if(b)b.className=v=='0'?'me show':'me';if(w)w.className=v=='1'?'me show':'me';sd(b,v!='0');sd(w,v!='1');if(b){var a=b.querySelectorAll('.ba');for(var i=0;i<a.length;i++)ba(a[i]);}}");
   page += F("function rb(s){var k=s.getAttribute('data-relay'),o=document.getElementById('relay_on_boot'+k),r=document.getElementById('relay_restore_boot'+k);if(!o||!r||!s.checked)return;if(s==r)o.checked=false;else if(s==o)r.checked=false;}");
@@ -12690,7 +12690,6 @@ void handleHealth() {
   updateIBeaconMqttReportRate(millis());
   String out;
   out.reserve(3200);
-  beginStreamedResponse("application/json");
   out += F("{\"name\":\"myMota32\",\"version\":\"");
   out += F(MYMOTA32_VERSION);
   out += F("\",\"target\":\"");
@@ -13117,8 +13116,8 @@ void handleHealth() {
   if (last_mqtt_connect_attempt == 0) out += F("null");
   else out += millis() - last_mqtt_connect_attempt;
   out += F("}}");
-  flushStreamChunk(out);
-  server.sendContent(F(""));
+  server.sendHeader(F("Cache-Control"), F("no-store"));
+  server.send(200, F("application/json"), out);
 }
 
 void handleCmnd() {
