@@ -639,6 +639,7 @@ struct StoredConfig {
   uint16_t switchbot_lock_online_heal_sec;
   uint16_t switchbot_lock_battery_notify_sec;
 
+  uint8_t shelly_blu_button_enabled;
   char shelly_blu_button_macs[kShellyBluButtonMax][kShellyBluButtonMacMaxLen + 1];
 
   uint16_t power_saving_mode;
@@ -2039,6 +2040,7 @@ void setDefaultConfig() {
   config.switchbot_lock_offline_delay_sec = kSwitchbotLockOfflineDefaultSec;
   config.switchbot_lock_online_heal_sec = kSwitchbotLockOnlineHealDefaultSec;
   config.switchbot_lock_battery_notify_sec = kSwitchbotLockBatteryNotifyDefaultSec;
+  config.shelly_blu_button_enabled = 0;
   config.power_saving_mode = kPowerSavingOff;
   config.wifi_dynamic_power = kWifiDynamicPowerDefault;
 }
@@ -2178,6 +2180,8 @@ bool loadConfig() {
   uint16_t switchbot_lock_offline_delay = prefs.getUShort("sb_off_s", kSwitchbotLockOfflineDefaultSec);
   uint16_t switchbot_lock_online_heal = prefs.getUShort("sb_on_s", kSwitchbotLockOnlineHealDefaultSec);
   uint16_t switchbot_lock_battery_notify = prefs.getUShort("sb_bat_s", kSwitchbotLockBatteryNotifyDefaultSec);
+  const bool shelly_blu_button_enabled_present = prefs.isKey("blu_en");
+  uint8_t shelly_blu_button_enabled = prefs.getUChar("blu_en", 0);
   char shelly_blu_button_macs[kShellyBluButtonMax][kShellyBluButtonMacMaxLen + 1]{};
   if (prefs.getBytesLength("blu_macs") == sizeof(shelly_blu_button_macs)) {
     prefs.getBytes("blu_macs", shelly_blu_button_macs, sizeof(shelly_blu_button_macs));
@@ -2336,6 +2340,8 @@ bool loadConfig() {
     sanitizeSwitchbotLockCallbackSeconds(switchbot_lock_online_heal, kSwitchbotLockOnlineHealDefaultSec);
   config.switchbot_lock_battery_notify_sec =
     sanitizeSwitchbotLockCallbackSeconds(switchbot_lock_battery_notify, kSwitchbotLockBatteryNotifyDefaultSec);
+  config.shelly_blu_button_enabled = shelly_blu_button_enabled ? 1 : 0;
+  uint8_t shelly_blu_button_paired_count = 0;
   for (uint8_t i = 0; i < kShellyBluButtonMax; i++) {
     shelly_blu_button_macs[i][kShellyBluButtonMacMaxLen] = '\0';
     char normalized[kShellyBluButtonMacMaxLen + 1]{};
@@ -2352,7 +2358,13 @@ bool loadConfig() {
       }
     }
     if (duplicate) config.shelly_blu_button_macs[i][0] = '\0';
-    else strlcpy(config.shelly_blu_button_macs[i], normalized, sizeof(config.shelly_blu_button_macs[i]));
+    else {
+      strlcpy(config.shelly_blu_button_macs[i], normalized, sizeof(config.shelly_blu_button_macs[i]));
+      shelly_blu_button_paired_count++;
+    }
+  }
+  if (!shelly_blu_button_enabled_present) {
+    config.shelly_blu_button_enabled = shelly_blu_button_paired_count > 0 ? 1 : 0;
   }
   config.power_saving_mode = powerSavingModePersists(power_saving_mode) ? kPowerSavingOffLocked : kPowerSavingOff;
   config.wifi_dynamic_power = wifi_dynamic_power ? 1 : 0;
@@ -2474,8 +2486,10 @@ bool saveSwitchbotLockConfig(bool enabled, const char *mac, const char *key_id, 
   return loadConfig();
 }
 
-bool saveShellyBluButtonConfig(const char macs[kShellyBluButtonMax][kShellyBluButtonMacMaxLen + 1]) {
+bool saveShellyBluButtonConfig(bool enabled,
+                               const char macs[kShellyBluButtonMax][kShellyBluButtonMacMaxLen + 1]) {
   if (!prefs.begin("mymota32", false)) return false;
+  prefs.putUChar("blu_en", enabled ? 1 : 0);
   prefs.putBytes("blu_macs", macs, sizeof(config.shelly_blu_button_macs));
   prefs.end();
   return loadConfig();
@@ -5228,7 +5242,7 @@ bool shellyBluButtonRememberMac(const char *mac) {
   if (slot < 0) slot = shellyBluButtonFirstFreeSlot();
   if (slot < 0) return false;
   strlcpy(candidate.shelly_blu_button_macs[slot], mac, sizeof(candidate.shelly_blu_button_macs[slot]));
-  return saveShellyBluButtonConfig(candidate.shelly_blu_button_macs);
+  return saveShellyBluButtonConfig(config.shelly_blu_button_enabled, candidate.shelly_blu_button_macs);
 }
 
 bool shellyBluButtonForgetMac(const char *mac) {
@@ -5243,7 +5257,7 @@ bool shellyBluButtonForgetMac(const char *mac) {
   }
   if (!found) return false;
   shellyBluButtonDeleteBond(mac);
-  return saveShellyBluButtonConfig(candidate.shelly_blu_button_macs);
+  return saveShellyBluButtonConfig(config.shelly_blu_button_enabled, candidate.shelly_blu_button_macs);
 }
 
 void shellyBluButtonBackgroundDelay(uint32_t duration_ms) {
@@ -6796,6 +6810,10 @@ bool shellyBluButtonRunReset(const char *mac) {
     setShellyBluButtonStatus("unsupported");
     return false;
   }
+  if (!config.shelly_blu_button_enabled) {
+    setShellyBluButtonStatus("disabled");
+    return false;
+  }
   if (!mac || !mac[0] || shellyBluButtonSlotForMac(mac) < 0) {
     setShellyBluButtonStatus("reset_invalid");
     return false;
@@ -6832,6 +6850,10 @@ bool shellyBluButtonRunReset(const char *mac) {
 bool shellyBluButtonRunBeep(const char *mac) {
   if (!shellyBluButtonSupported()) {
     setShellyBluButtonStatus("unsupported");
+    return false;
+  }
+  if (!config.shelly_blu_button_enabled) {
+    setShellyBluButtonStatus("disabled");
     return false;
   }
   if (!mac || !mac[0] || shellyBluButtonSlotForMac(mac) < 0) {
@@ -7021,6 +7043,10 @@ bool startShellyBluButtonPair(const char *mac, bool passkey_set, uint32_t passke
     setShellyBluButtonStatus("unsupported");
     return false;
   }
+  if (!config.shelly_blu_button_enabled) {
+    setShellyBluButtonStatus("disabled");
+    return false;
+  }
   if (!mac || !mac[0] || shelly_blu_pair.active || shellyBluButtonJobBusy()) return false;
   if (shellyBluButtonSlotForMac(mac) < 0 && shellyBluButtonFirstFreeSlot() < 0) {
     setShellyBluButtonStatus("slot_full");
@@ -7044,6 +7070,19 @@ bool startShellyBluButtonPair(const char *mac, bool passkey_set, uint32_t passke
 
 void maintainShellyBluButton() {
   maintainShellyBluButtonConfigCompletions();
+  if (!config.shelly_blu_button_enabled) {
+    if (shelly_blu_pair.active) {
+      shelly_blu_pair.active = false;
+      stopBleScanIfIdle();
+    }
+    if (!shellyBluButtonJobBusy() && strcmp(shelly_blu_button_status, "disabled") != 0) {
+      setShellyBluButtonStatus("disabled");
+    }
+    return;
+  }
+  if (strcmp(shelly_blu_button_status, "disabled") == 0) {
+    setShellyBluButtonStatus("idle");
+  }
   if (!shelly_blu_pair.active) return;
   const uint32_t now = millis();
   if (!shelly_blu_pair.seen) {
@@ -8080,11 +8119,11 @@ void appendHeader(String &page, const __FlashStringHelper *title, bool show_spin
 [data-theme=dark]{--bg:#0e1116;--bg-2:#141821;--panel:#171c26;--panel-2:#1c2230;--line:#262d3d;--line-2:#323a4d;--text:#e6eaf2;--text-2:#a4adc2;--muted:#6b748a;--accent:#7dd3aa;--accent-2:#5eead4;--accent-soft:rgba(125,211,170,.12);--warn:#f0b95a;--bad:#f06b6b;--bad-soft:rgba(240,107,107,.12);--bad-border:rgba(240,107,107,.35);--ok:#7dd3aa;--ok-soft:rgba(125,211,170,.12);--shadow:0 1px 0 rgba(255,255,255,.03) inset,0 1px 2px rgba(0,0,0,.2);--header-bg:rgba(14,17,22,.86);--btn-text:#0e1116;--tint-soft:rgba(255,255,255,.015);--tint-low:rgba(255,255,255,.03);--tint-mid:rgba(255,255,255,.05);--tint-foot:rgba(0,0,0,.15);--shadow-pop:0 12px 40px rgba(0,0,0,.5)}
 *{box-sizing:border-box}html,body{margin:0;padding:0}body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh;background-image:radial-gradient(1200px 600px at 50% -200px,var(--accent-soft),transparent 60%),linear-gradient(180deg,var(--bg) 0%,var(--bg-2) 100%)}
 .top{border-bottom:1px solid var(--line);background:var(--header-bg);backdrop-filter:blur(10px);position:sticky;top:0;z-index:50}.topin{max-width:1200px;margin:0 auto;padding:18px 28px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:24px}.brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:18px;color:var(--text);text-decoration:none}.brand b{color:var(--accent)}.logo{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;color:var(--btn-text);box-shadow:0 0 0 1px var(--accent-soft),0 4px 12px rgba(0,0,0,.08)}[data-theme=dark] .logo{box-shadow:0 0 0 1px var(--accent-soft),0 4px 12px rgba(0,0,0,.3)}.host{text-align:center;font-family:var(--mono);font-size:13px;color:var(--text-2)}.host .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:8px;vertical-align:1px;box-shadow:0 0 8px var(--accent)}.meta{display:flex;align-items:center;justify-content:flex-end;gap:14px;font-family:var(--mono);font-size:12px;color:var(--muted)}.ver{padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--text-2)}.theme-btn{width:30px;height:30px;margin:0;padding:0;display:inline-flex;align-items:center;justify-content:center;background:var(--tint-low);color:var(--text-2);border:1px solid var(--line);border-radius:50%;cursor:pointer;text-transform:none}.theme-btn:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-soft);filter:none}.theme-btn .ic-moon{display:none}.theme-btn .ic-sun{display:block}[data-theme=dark] .theme-btn .ic-sun{display:none}[data-theme=dark] .theme-btn .ic-moon{display:block}.spin{width:10px;height:10px;border:2px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;opacity:.5}.spin.active{opacity:1;animation:rot .9s linear infinite}@keyframes rot{to{transform:rotate(360deg)}}
-main{max-width:1200px;margin:0 auto;padding:32px 28px 56px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.wide,.section-head{grid-column:1/-1}.section-head{display:flex;align-items:baseline;justify-content:space-between;margin:36px 0 16px}.section-head:first-child{margin-top:0}.section-head h1{font-size:11px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin:0}.section-head .rule{flex:1;height:1px;background:var(--line);margin:0 16px}
+main{max-width:1200px;margin:0 auto;padding:32px 28px 56px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.wide,.section-head{grid-column:1/-1}.section-head{display:flex;align-items:baseline;justify-content:space-between;margin:16px 0}.section-head:first-child{margin-top:0}.section-head h1{font-size:11px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin:0}.section-head .rule{flex:1;height:1px;background:var(--line);margin:0 16px}
 .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.stat{background:linear-gradient(180deg,var(--panel) 0%,var(--panel-2) 100%);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;min-height:96px;box-shadow:var(--shadow);position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between}.stat .accent-bar{position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);opacity:.7}.stat .stat-label{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}.stat .stat-value{font-family:var(--mono);font-size:22px;font-weight:500;color:var(--text);margin-top:6px;letter-spacing:-.01em}.stat .stat-sub{font-family:var(--mono);font-size:11px;color:var(--text-2);margin-top:4px;word-break:break-word}@media(max-width:980px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){.stats{grid-template-columns:1fr}}
 .panel{background:linear-gradient(180deg,var(--panel) 0%,var(--panel-2) 100%);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}.panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);background:var(--tint-soft)}.panel-head h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text)}.panel-head .h-meta{font-family:var(--mono);font-size:11px;color:var(--muted)}.panel-body{padding:18px}.panel-foot{padding:12px 18px;border-top:1px solid var(--line);background:var(--tint-foot);display:flex;justify-content:flex-end;gap:8px}.panel-foot button,.panel-foot .btn{margin:0}.panel h3{font-size:13px;margin:0 0 10px;color:var(--text)}.panel p{margin:10px 0}.kv{display:grid;grid-template-columns:140px 1fr;gap:0 16px}.kv>span,.kv>div{padding:9px 0;border-bottom:1px dashed var(--line);min-width:0}.kv>span{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}.kv>div{font-family:var(--mono);font-size:13px;color:var(--text);word-break:break-word}.hint,.muted{color:var(--muted);font-size:12px}.ok{color:var(--ok)}.bad{color:var(--bad)}
 code{font-family:var(--mono);font-size:12.5px;background:var(--tint-low);border:1px solid var(--line);border-radius:var(--radius-sm);padding:2px 7px;color:var(--text);word-break:break-word}.pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;font-weight:500;padding:3px 9px;border-radius:999px;background:var(--tint-mid);color:var(--text-2);border:1px solid var(--line)}.pill:before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}.pill.ok{background:var(--ok-soft);color:var(--ok);border-color:var(--accent-soft)}.pill.warn{background:rgba(240,185,90,.1);color:var(--warn);border-color:rgba(240,185,90,.3)}.pill.bad{background:var(--bad-soft);color:var(--bad);border-color:var(--bad-border)}
-form{margin:0}.field{margin:0 0 14px}.field:last-child{margin-bottom:0}.field-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 14px}.field-row.three{grid-template-columns:repeat(3,minmax(0,1fr))}.field-row .field{margin:0}@media(max-width:560px){.field-row,.field-row.three{grid-template-columns:1fr}}label{display:block;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);margin-bottom:6px}input:not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]):not([type=reset]),select,textarea{width:100%;margin-top:6px;padding:10px 12px;background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:13px}label input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]),label select,label textarea{display:block}input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);background:var(--bg-2);box-shadow:0 0 0 3px var(--accent-soft)}input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus,input:-webkit-autofill:active,textarea:-webkit-autofill,select:-webkit-autofill{-webkit-text-fill-color:var(--text)!important;-webkit-box-shadow:0 0 0 1000px var(--bg-2) inset!important;box-shadow:0 0 0 1000px var(--bg-2) inset!important;caret-color:var(--text)!important;border:1px solid var(--line)!important;transition:background-color 9999s ease-in-out 0s}input:-webkit-autofill:focus,textarea:-webkit-autofill:focus,select:-webkit-autofill:focus{-webkit-box-shadow:0 0 0 1000px var(--bg-2) inset,0 0 0 3px var(--accent-soft)!important;box-shadow:0 0 0 1000px var(--bg-2) inset,0 0 0 3px var(--accent-soft)!important;border-color:var(--accent)!important}textarea{min-height:88px;resize:vertical;line-height:1.5}input[type=checkbox],input[type=radio]{width:16px;height:16px;margin:0 8px 0 0;vertical-align:-3px;accent-color:var(--accent)}input[type=file]{font-size:12px}
+form{margin:0}.field{margin:0 0 14px}.field:last-child{margin-bottom:0}.field-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 14px}.field-row.three{grid-template-columns:repeat(3,minmax(0,1fr))}.field-row .field{margin:0}.field-row.three .field>label{display:flex;flex-direction:column;justify-content:flex-end;min-height:56px}@media(max-width:560px){.field-row,.field-row.three{grid-template-columns:1fr}.field-row.three .field>label{min-height:0}}label{display:block;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);margin-bottom:6px}input:not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]):not([type=reset]),select,textarea{width:100%;margin-top:6px;padding:10px 12px;background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:13px}select{display:block;min-width:0}select option{background:var(--bg-2);color:var(--text)}label input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]),label select,label textarea{display:block}input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);background:var(--bg-2);box-shadow:0 0 0 3px var(--accent-soft)}input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus,input:-webkit-autofill:active,textarea:-webkit-autofill,select:-webkit-autofill{-webkit-text-fill-color:var(--text)!important;-webkit-box-shadow:0 0 0 1000px var(--bg-2) inset!important;box-shadow:0 0 0 1000px var(--bg-2) inset!important;caret-color:var(--text)!important;border:1px solid var(--line)!important;transition:background-color 9999s ease-in-out 0s}input:-webkit-autofill:focus,textarea:-webkit-autofill:focus,select:-webkit-autofill:focus{-webkit-box-shadow:0 0 0 1000px var(--bg-2) inset,0 0 0 3px var(--accent-soft)!important;box-shadow:0 0 0 1000px var(--bg-2) inset,0 0 0 3px var(--accent-soft)!important;border-color:var(--accent)!important}textarea{min-height:88px;resize:vertical;line-height:1.5}input[type=checkbox],input[type=radio]{width:16px;height:16px;margin:0 8px 0 0;vertical-align:-3px;accent-color:var(--accent)}input[type=file]{font-size:12px}
 button,.btn{font-family:var(--sans);display:inline-flex;align-items:center;justify-content:center;gap:6px;margin:4px 4px 0 0;padding:8px 14px;background:var(--accent);color:var(--btn-text);border:1px solid var(--accent);border-radius:var(--radius-sm);font-size:12px;font-weight:600;letter-spacing:.04em;cursor:pointer;text-decoration:none;text-transform:uppercase}button:hover,.btn:hover{filter:brightness(1.08)}button:disabled,.btn:disabled{opacity:.55;cursor:not-allowed}.secondary{background:transparent;color:var(--text);border-color:var(--line-2)}.secondary:hover{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);filter:none}.danger{background:transparent;color:var(--bad);border-color:var(--bad-border)}.danger:hover{background:var(--bad-soft);filter:none}.inline{display:inline}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.inline button{margin:0}
 .subblock{border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;background:var(--tint-foot)}.subblock+.subblock{margin-top:12px}.subblock-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.subblock-head .title{font-weight:600;font-size:13px;color:var(--text)}.subblock-head .meta{font-family:var(--mono);font-size:11px;color:var(--muted)}.ae,.me{display:none;padding-top:12px;margin-top:12px;border-top:1px dashed var(--line)}.ae.show,.me.show{display:block}.hidden{display:none}.tokens{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.tokens div{display:flex;flex-direction:column;gap:3px}.help{position:relative;margin-left:auto}.help-q{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--tint-mid);color:var(--text-2);font-weight:700;font-size:11px;border:1px solid var(--line);cursor:help}.help-box{display:none;position:absolute;right:0;top:28px;z-index:30;width:420px;max-width:calc(100vw - 60px);background:var(--panel-2);border:1px solid var(--line-2);border-radius:var(--radius);padding:14px 16px;font-size:12.5px;line-height:1.55;box-shadow:var(--shadow-pop);color:var(--text)}.help:hover .help-box,.help:focus-within .help-box{display:block}.list{margin:0;padding-left:18px}.foot{grid-column:1/-1;text-align:center;padding:24px 0 0;font-family:var(--mono);font-size:11px;color:var(--muted)}
 @media(max-width:820px){.topin{grid-template-columns:1fr;gap:10px}.host{text-align:left}.meta{justify-content:flex-start}main{padding:22px 14px 42px}.grid{grid-template-columns:1fr}.kv{grid-template-columns:1fr}.kv>span{padding-bottom:0;border-bottom:0}.kv>div{padding-top:3px}}
@@ -8132,7 +8171,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
 #endif
   page += F("if(d.ibeacon){var ib=d.ibeacon,ic=!ib.enabled?'pill':(ib.scanning?'pill ok':'pill bad');p('live-ibeacon',ib.enabled?(ib.status||'enabled'):'disabled',ic);t('live-ibeacon-mqtt-rpm',ib.mqtt_reports_per_minute+'/min');}");
   page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,st=sl.status||'',bad=st.indexOf('failed')>=0||st=='unsupported'||st=='missing_key'||st=='bad_key'||st.indexOf('connect_e')==0||st.indexOf('timeout')>=0,good=st=='ok'||st=='connected'||st=='advertisement'||st=='lock_sent'||st=='unlock_sent'||st.indexOf('confirmed')>=0,sc=!sl.enabled?'pill':(bad?'pill bad':(good?'pill ok':'pill warn'));p('live-switchbot-lock-status',sl.enabled?(st||'unknown'):'disabled',sc);t('live-switchbot-lock-ble',sl.connected?'connected':'disconnected');t('live-switchbot-lock-connected-age',sl.connected_ms_ago==null?'n/a':Math.floor(sl.connected_ms_ago/1000)+'s');t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-door',sl.door_open==null?'n/a':(sl.door_open?'open':'closed'));t('live-switchbot-lock-device',sl.device_health||'n/a');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-battery-quality',sl.battery_quality||'n/a');t('live-switchbot-lock-updated',ag(sl.last_update_ms_ago));t('live-switchbot-lock-status-cb',ag(sl.last_status_callback_ms_ago));t('live-switchbot-lock-battery-cb',ag(sl.last_battery_callback_ms_ago));t('live-switchbot-lock-device-cb',ag(sl.last_device_callback_ms_ago));t('live-switchbot-lock-mac',sl.mac||'n/a');t('live-switchbot-lock-address-type',nv(sl.address_type));t('live-switchbot-lock-error',nv(sl.error_code));t('live-switchbot-lock-disconnect',nv(sl.disconnect_reason));t('live-switchbot-lock-command',sl.command?(sl.command.id+' '+sl.command.status):'n/a');if(sl.callbacks){t('live-switchbot-lock-cb-enabled',yn(sl.callbacks.status_configured)+' / '+yn(sl.callbacks.battery_configured)+' / '+yn(sl.callbacks.device_configured));t('live-switchbot-lock-cb-times',sl.callbacks.offline_delay+'s / '+sl.callbacks.online_heal+'s / '+sl.callbacks.battery_notify+'s');}}");
-  page += F("if(d.shelly_blu_button){var sb=d.shelly_blu_button,st=sb.status||'',busy=!!(sb.busy||sb.beeping||sb.resetting),bad=st=='unsupported'||st.indexOf('failed')>=0||st.indexOf('timeout')>=0||st.indexOf('connect_e')==0||st.indexOf('secure_e')==0||st=='svc_missing'||st=='bond_missing'||st=='slot_full'||st=='passkey_required'||st=='char_missing'||st=='beep_invalid'||st=='reset_invalid'||st.indexOf('write_failed')>=0,good=st=='paired'||st=='beep_ok'||st=='reset_ok'||(!sb.pairing&&sb.paired_count>0),sc=bad?'pill bad':(sb.pairing||busy||st=='beeping'||st=='resetting'||st.indexOf('_queued')>0?'pill warn':(good?'pill ok':'pill')),dt=(st=='idle'&&sb.paired_count>0)?'paired':(st||'idle');p('live-shelly-blu-status',dt,sc);t('live-shelly-blu-count',sb.paired_count+'/'+sb.max);t('live-shelly-blu-error',nv(sb.last_error));t('live-shelly-blu-action',nv(sb.action));t('live-shelly-blu-stage',nv(sb.stage));t('live-shelly-blu-duration',sb.last_duration_ms?sb.last_duration_ms+' ms':'n/a');for(var x=0;x<sb.max;x++){var bt=sb.buttons&&sb.buttons[x]?sb.buttons[x]:null,has=!!(bt&&bt.mac),mac=has?bt.mac:'empty';t('live-shelly-blu-mac-'+x,mac);var ac=document.getElementById('shelly-blu-actions-'+x),bi=document.getElementById('shelly-blu-beep-mac-'+x),bb=document.getElementById('shelly-blu-beep-btn-'+x),fi=document.getElementById('shelly-blu-forget-mac-'+x),fb=document.getElementById('shelly-blu-forget-btn-'+x),ri=document.getElementById('shelly-blu-reset-mac-'+x),rb=document.getElementById('shelly-blu-reset-btn-'+x);if(ac)ac.classList.toggle('hidden',!has);if(bi)bi.value=has?bt.mac:'';if(bb)bb.disabled=!has||busy;if(fi)fi.value=has?bt.mac:'';if(fb)fb.disabled=!has||busy;if(ri)ri.value=has?bt.mac:'';if(rb)rb.disabled=!has||busy;}}");
+  page += F("if(d.shelly_blu_button){var sb=d.shelly_blu_button,st=sb.status||'',busy=!!(sb.busy||sb.beeping||sb.resetting),bad=st=='unsupported'||st.indexOf('failed')>=0||st.indexOf('timeout')>=0||st.indexOf('connect_e')==0||st.indexOf('secure_e')==0||st=='svc_missing'||st=='bond_missing'||st=='slot_full'||st=='passkey_required'||st=='char_missing'||st=='beep_invalid'||st=='reset_invalid'||st.indexOf('write_failed')>=0,good=st=='paired'||st=='beep_ok'||st=='reset_ok'||(!sb.pairing&&sb.paired_count>0),sc=!sb.enabled?'pill':(bad?'pill bad':(sb.pairing||busy||st=='beeping'||st=='resetting'||st.indexOf('_queued')>0?'pill warn':(good?'pill ok':'pill'))),dt=!sb.enabled?'disabled':((st=='idle'&&sb.paired_count>0)?'paired':(st||'idle'));p('live-shelly-blu-status',dt,sc);t('live-shelly-blu-count',sb.paired_count+'/'+sb.max);t('live-shelly-blu-error',nv(sb.last_error));t('live-shelly-blu-action',nv(sb.action));t('live-shelly-blu-stage',nv(sb.stage));t('live-shelly-blu-duration',sb.last_duration_ms?sb.last_duration_ms+' ms':'n/a');for(var x=0;x<sb.max;x++){var bt=sb.buttons&&sb.buttons[x]?sb.buttons[x]:null,has=!!(bt&&bt.mac),mac=has?bt.mac:'empty';t('live-shelly-blu-mac-'+x,mac);var ac=document.getElementById('shelly-blu-actions-'+x),bi=document.getElementById('shelly-blu-beep-mac-'+x),bb=document.getElementById('shelly-blu-beep-btn-'+x),fi=document.getElementById('shelly-blu-forget-mac-'+x),fb=document.getElementById('shelly-blu-forget-btn-'+x),ri=document.getElementById('shelly-blu-reset-mac-'+x),rb=document.getElementById('shelly-blu-reset-btn-'+x);if(ac)ac.classList.toggle('hidden',!has);if(bi)bi.value=has?bt.mac:'';if(bb)bb.disabled=!has||busy||!sb.enabled;if(fi)fi.value=has?bt.mac:'';if(fb)fb.disabled=!has||busy||!sb.enabled;if(ri)ri.value=has?bt.mac:'';if(rb)rb.disabled=!has||busy||!sb.enabled;}}");
   page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!==null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
@@ -8156,7 +8195,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("function bi(){var a=document.querySelectorAll('.ba');for(var i=0;i<a.length;i++){a[i].onchange=function(){ba(this)};ba(a[i]);}var m=document.querySelectorAll('.im');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var c=document.querySelectorAll('.rbc');for(var k=0;k<c.length;k++){c[k].onchange=function(){rb(this)};rb(c[k]);}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ts();}bi();fw();");
 #endif
   page += F("document.addEventListener('click',function(e){var b=e.target;while(b&&b.tagName!='BUTTON'&&b.tagName!='INPUT')b=b.parentNode;if(!b||!b.form)return;var t=(b.type||'').toLowerCase();if(t=='submit'||t=='image')b.form._s=b;},true);");
-  page += F("document.addEventListener('submit',function(e){var f=e.target;if(!f||f.getAttribute('data-inline')!='1')return;e.preventDefault();var bk=f.getAttribute('data-busy');if(bk&&fbz[bk])return;var fd=new FormData(f),b=e.submitter||f._s;if(b&&b.name)fd.append(b.name,b.value);fd.append('_inline','1');var body=new URLSearchParams();fd.forEach(function(v,k){body.append(k,v);});if(bk){fbz[bk]=1;sdb(bk,true);}var fin=function(){if(bk){fbz[bk]=0;sdb(bk,false);}};fetch(f.getAttribute('action')||location.pathname,{method:(f.method||'POST').toUpperCase(),body:body,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});live();}).then(fin).catch(function(x){fin();alert(x.message||x);});},true);");
+  page += F("document.addEventListener('submit',function(e){var f=e.target;if(!f||f.getAttribute('data-inline')!='1')return;e.preventDefault();var bk=f.getAttribute('data-busy');if(bk&&fbz[bk])return;var fd=new FormData(f),b=e.submitter||f._s;if(b&&b.name)fd.append(b.name,b.value);fd.append('_inline','1');var body=new URLSearchParams();fd.forEach(function(v,k){body.append(k,v);});if(bk){fbz[bk]=1;sdb(bk,true);}var fin=function(){if(bk){fbz[bk]=0;sdb(bk,false);}};fetch(f.getAttribute('action')||location.pathname,{method:(f.method||'POST').toUpperCase(),body:body,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});if(f.getAttribute('data-reload')=='1'){location.reload();return;}live();}).then(fin).catch(function(x){fin();alert(x.message||x);});},true);");
   if (live_poll) page += F("setInterval(live,1000);setInterval(ck,1000);live();");
   if (reboot_wait) {
     page += F("var rb=");
@@ -9382,29 +9421,32 @@ void appendIBeaconForm(String &page) {
   } else {
     page += F("<span id='live-ibeacon' class='pill'>disabled</span>");
   }
-  page += F("</div><form id='form-ibeacon' data-inline='1' method='post' action='/ibeacon'><div class='panel-body'>");
+  page += F("</div><form id='form-ibeacon' data-inline='1' data-reload='1' method='post' action='/ibeacon'><div class='panel-body'>");
   page += F("<div class='field'><label><input type='checkbox' name='enabled' value='1'");
   if (config.ibeacon_enabled) page += F(" checked");
   if (unsupported) page += F(" disabled");
   page += F(">Enable</label></div>");
-  page += F("<div class='field'><label>G1 MACs<input name='f1' maxlength='");
-  page += String(kIBeaconFilterInputMaxLen);
-  page += F("' value='");
-  page += htmlEscape(config.ibeacon_filter1_macs);
-  page += F("'");
-  if (unsupported) page += F(" disabled");
-  page += F("></label><label>Max");
-  appendIBeaconIntervalSelect(page, "i1", config.ibeacon_filter1_interval_sec, unsupported);
-  page += F("</label></div>");
-  page += F("<div class='field'><label>G2 MACs<input name='f2' maxlength='");
-  page += String(kIBeaconFilterInputMaxLen);
-  page += F("' value='");
-  page += htmlEscape(config.ibeacon_filter2_macs);
-  page += F("'");
-  if (unsupported) page += F(" disabled");
-  page += F("></label><label>Max");
-  appendIBeaconIntervalSelect(page, "i2", config.ibeacon_filter2_interval_sec, unsupported);
-  page += F("</label></div></div></form><div class='panel-foot'><button type='submit' form='form-ibeacon'");
+  if (config.ibeacon_enabled) {
+    page += F("<div class='field'><label>G1 MACs<input name='f1' maxlength='");
+    page += String(kIBeaconFilterInputMaxLen);
+    page += F("' value='");
+    page += htmlEscape(config.ibeacon_filter1_macs);
+    page += F("'");
+    if (unsupported) page += F(" disabled");
+    page += F("></label><label>Max");
+    appendIBeaconIntervalSelect(page, "i1", config.ibeacon_filter1_interval_sec, unsupported);
+    page += F("</label></div>");
+    page += F("<div class='field'><label>G2 MACs<input name='f2' maxlength='");
+    page += String(kIBeaconFilterInputMaxLen);
+    page += F("' value='");
+    page += htmlEscape(config.ibeacon_filter2_macs);
+    page += F("'");
+    if (unsupported) page += F(" disabled");
+    page += F("></label><label>Max");
+    appendIBeaconIntervalSelect(page, "i2", config.ibeacon_filter2_interval_sec, unsupported);
+    page += F("</label></div>");
+  }
+  page += F("</div></form><div class='panel-foot'><button type='submit' form='form-ibeacon'");
   if (unsupported) page += F(" disabled");
   page += F(">Save iBeacon</button></div></section>");
 }
@@ -9427,11 +9469,12 @@ void appendSwitchbotLockForm(String &page) {
   } else {
     page += F("<span id='live-switchbot-lock-status' class='pill'>disabled</span>");
   }
-  page += F("</div><form id='switchbot-lock-form' data-inline='1' method='post' action='/switchbot-lock'></form><div class='panel-body'>");
+  page += F("</div><form id='switchbot-lock-form' data-inline='1' data-reload='1' method='post' action='/switchbot-lock'></form><div class='panel-body'>");
   page += F("<div class='field'><label><input form='switchbot-lock-form' type='checkbox' name='enabled' value='1'");
   if (config.switchbot_lock_enabled) page += F(" checked");
   if (unsupported) page += F(" disabled");
   page += F(">Enable</label></div>");
+  if (config.switchbot_lock_enabled) {
   page += F("<div class='field-row'><div class='field'><label>Lock MAC<input form='switchbot-lock-form' name='mac' maxlength='17' value='");
   page += htmlEscape(config.switchbot_lock_mac);
   page += F("'");
@@ -9580,6 +9623,7 @@ void appendSwitchbotLockForm(String &page) {
   page += F(">Lock</button><button class='secondary' name='action' value='unlock'");
   if (controls_disabled) page += F(" disabled");
   page += F(">Unlock</button></span></form></div>");
+  }
   page += F("</div><div class='panel-foot'><button form='switchbot-lock-form' type='submit'");
   if (unsupported) page += F(" disabled");
   page += F(">Save Switchbot Lock</button></div></section>");
@@ -9591,6 +9635,8 @@ void appendShellyBluButtonForm(String &page) {
   page += F("<section class='panel'><div class='panel-head'><h2>Shelly BLU Button</h2>");
   if (unsupported) {
     page += F("<span id='live-shelly-blu-status' class='pill bad'>unsupported</span>");
+  } else if (!config.shelly_blu_button_enabled) {
+    page += F("<span id='live-shelly-blu-status' class='pill'>disabled</span>");
   } else if (shelly_blu_pair.active) {
     page += F("<span id='live-shelly-blu-status' class='pill warn'>");
     page += htmlEscape(shelly_blu_button_status);
@@ -9603,7 +9649,13 @@ void appendShellyBluButtonForm(String &page) {
   } else {
     page += F("<span id='live-shelly-blu-status' class='pill'>idle</span>");
   }
-  page += F("</div><div class='panel-body'><div class='kv'><span>Paired</span><div><code id='live-shelly-blu-count'>");
+  page += F("</div><form id='form-shelly-blu' data-inline='1' data-reload='1' method='post' action='/shelly-blu-button'></form><div class='panel-body'>");
+  page += F("<div class='field'><label><input form='form-shelly-blu' type='checkbox' name='enabled' value='1'");
+  if (config.shelly_blu_button_enabled) page += F(" checked");
+  if (unsupported) page += F(" disabled");
+  page += F(">Enable</label></div>");
+  if (config.shelly_blu_button_enabled) {
+  page += F("<div class='kv'><span>Paired</span><div><code id='live-shelly-blu-count'>");
   page += String(paired_count);
   page += F("/");
   page += String(kShellyBluButtonMax);
@@ -9670,7 +9722,11 @@ void appendShellyBluButtonForm(String &page) {
     if (unsupported || !mac[0]) page += F(" disabled");
     page += F(">Reset</button></form></div></div></div>");
   }
-  page += F("</div></div></div></section>");
+  page += F("</div></div>");
+  }
+  page += F("</div><div class='panel-foot'><button form='form-shelly-blu' type='submit' name='action' value='save'");
+  if (unsupported) page += F(" disabled");
+  page += F(">Save Shelly BLU Button</button></div></section>");
 }
 
 void appendPowerSavingOption(String &page, uint8_t mode, const __FlashStringHelper *label) {
@@ -9842,7 +9898,7 @@ void handleRoot() {
   page += F("<section class='panel'><div class='panel-head'><h2>System</h2><span class='h-meta'>Firmware / reboot</span></div><div class='panel-body'><div class='subblock'><div class='subblock-head'><div class='title'>Firmware</div></div><form id='form-firmware' class='fu' method='post' action='/update?verify=1' enctype='multipart/form-data' data-target='");
   page += F(MYMOTA32_TARGET);
   page += F("'>");
-  page += F("<input type='file' name='firmware' accept='.bin' required>");
+  page += F("<div class='field'><label>Firmware binary<input type='file' name='firmware' accept='.bin' required></label></div>");
   page += F("<div class='field'><label><input class='fv' type='checkbox' checked>Verify target</label></div>");
   page += F("</form></div>");
   page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Power Saving</div></div><form id='form-system' method='post' action='/system'>");
@@ -10884,12 +10940,12 @@ void handleIBeaconSave() {
     return;
   }
 
-  uint16_t filter1_interval = kIBeaconFilter1DefaultSec;
-  uint16_t filter2_interval = kIBeaconFilter2DefaultSec;
-  if (!parseUint16Input(server.hasArg("i1") ? server.arg("i1") : String(kIBeaconFilter1DefaultSec),
+  uint16_t filter1_interval = config.ibeacon_filter1_interval_sec;
+  uint16_t filter2_interval = config.ibeacon_filter2_interval_sec;
+  if (!parseUint16Input(server.hasArg("i1") ? server.arg("i1") : String(config.ibeacon_filter1_interval_sec),
                         1, 600, filter1_interval) ||
       !isIBeaconFilterInterval(filter1_interval) ||
-      !parseUint16Input(server.hasArg("i2") ? server.arg("i2") : String(kIBeaconFilter2DefaultSec),
+      !parseUint16Input(server.hasArg("i2") ? server.arg("i2") : String(config.ibeacon_filter2_interval_sec),
                         1, 600, filter2_interval) ||
       !isIBeaconFilterInterval(filter2_interval)) {
     sendPlain(400, F("invalid interval"));
@@ -10898,9 +10954,9 @@ void handleIBeaconSave() {
 
   char filter1_macs[kIBeaconFilterListMaxLen + 1]{};
   char filter2_macs[kIBeaconFilterListMaxLen + 1]{};
-  if (!normalizeIBeaconMacList(server.hasArg("f1") ? server.arg("f1") : String(),
+  if (!normalizeIBeaconMacList(server.hasArg("f1") ? server.arg("f1") : String(config.ibeacon_filter1_macs),
                                filter1_macs, sizeof(filter1_macs)) ||
-      !normalizeIBeaconMacList(server.hasArg("f2") ? server.arg("f2") : String(),
+      !normalizeIBeaconMacList(server.hasArg("f2") ? server.arg("f2") : String(config.ibeacon_filter2_macs),
                                filter2_macs, sizeof(filter2_macs))) {
     sendPlain(400, F("invalid mac"));
     return;
@@ -10931,28 +10987,28 @@ void handleSwitchbotLockSave() {
   char status_callback[kSwitchbotLockCallbackMaxLen + 1]{};
   char battery_callback[kSwitchbotLockCallbackMaxLen + 1]{};
   char device_callback[kSwitchbotLockCallbackMaxLen + 1]{};
-  if (!normalizeSwitchbotMac(server.hasArg("mac") ? server.arg("mac") : String(), mac, sizeof(mac)) ||
-      !normalizeFixedHex(server.hasArg("key_id") ? server.arg("key_id") : String(), key_id, sizeof(key_id),
+  if (!normalizeSwitchbotMac(server.hasArg("mac") ? server.arg("mac") : String(config.switchbot_lock_mac), mac, sizeof(mac)) ||
+      !normalizeFixedHex(server.hasArg("key_id") ? server.arg("key_id") : String(config.switchbot_lock_key_id), key_id, sizeof(key_id),
                          kSwitchbotLockKeyIdMaxLen) ||
-      !normalizeFixedHex(server.hasArg("key") ? server.arg("key") : String(), key, sizeof(key),
+      !normalizeFixedHex(server.hasArg("key") ? server.arg("key") : String(config.switchbot_lock_key), key, sizeof(key),
                          kSwitchbotLockKeyMaxLen) ||
-      !normalizeSwitchbotLockCallbackTemplate(server.hasArg("status_callback") ? server.arg("status_callback") : String(),
+      !normalizeSwitchbotLockCallbackTemplate(server.hasArg("status_callback") ? server.arg("status_callback") : String(config.switchbot_lock_status_callback),
                                               status_callback, sizeof(status_callback)) ||
-      !normalizeSwitchbotLockCallbackTemplate(server.hasArg("battery_callback") ? server.arg("battery_callback") : String(),
+      !normalizeSwitchbotLockCallbackTemplate(server.hasArg("battery_callback") ? server.arg("battery_callback") : String(config.switchbot_lock_battery_callback),
                                               battery_callback, sizeof(battery_callback)) ||
-      !normalizeSwitchbotLockCallbackTemplate(server.hasArg("device_callback") ? server.arg("device_callback") : String(),
+      !normalizeSwitchbotLockCallbackTemplate(server.hasArg("device_callback") ? server.arg("device_callback") : String(config.switchbot_lock_device_callback),
                                               device_callback, sizeof(device_callback))) {
     sendPlain(400, F("invalid switchbot lock settings"));
     return;
   }
-  uint16_t offline_delay = kSwitchbotLockOfflineDefaultSec;
-  uint16_t online_heal = kSwitchbotLockOnlineHealDefaultSec;
-  uint16_t battery_notify = kSwitchbotLockBatteryNotifyDefaultSec;
-  if (!parseUint16Input(server.arg("offline_delay"), kSwitchbotLockCallbackMinSec,
+  uint16_t offline_delay = config.switchbot_lock_offline_delay_sec;
+  uint16_t online_heal = config.switchbot_lock_online_heal_sec;
+  uint16_t battery_notify = config.switchbot_lock_battery_notify_sec;
+  if (!parseUint16Input(server.hasArg("offline_delay") ? server.arg("offline_delay") : String(config.switchbot_lock_offline_delay_sec), kSwitchbotLockCallbackMinSec,
                         kSwitchbotLockCallbackMaxSec, offline_delay) ||
-      !parseUint16Input(server.arg("online_heal"), kSwitchbotLockCallbackMinSec,
+      !parseUint16Input(server.hasArg("online_heal") ? server.arg("online_heal") : String(config.switchbot_lock_online_heal_sec), kSwitchbotLockCallbackMinSec,
                         kSwitchbotLockCallbackMaxSec, online_heal) ||
-      !parseUint16Input(server.arg("battery_notify"), kSwitchbotLockCallbackMinSec,
+      !parseUint16Input(server.hasArg("battery_notify") ? server.arg("battery_notify") : String(config.switchbot_lock_battery_notify_sec), kSwitchbotLockCallbackMinSec,
                         kSwitchbotLockCallbackMaxSec, battery_notify)) {
     sendPlain(400, F("invalid switchbot lock callback seconds"));
     return;
@@ -11039,6 +11095,29 @@ void handleShellyBluButton() {
   }
   String action = server.hasArg("action") ? server.arg("action") : String(F("pair"));
   action.toLowerCase();
+
+  if (action == F("save")) {
+    const bool enabled = server.hasArg("enabled") && server.arg("enabled") == "1";
+    if (!saveShellyBluButtonConfig(enabled, config.shelly_blu_button_macs)) {
+      sendPlain(500, F("save failed"));
+      return;
+    }
+    if (!config.shelly_blu_button_enabled) {
+      shelly_blu_pair.active = false;
+      if (!shellyBluButtonJobBusy()) setShellyBluButtonStatus("disabled");
+      if (!config.ibeacon_enabled && !config.switchbot_lock_enabled) stopBleScanIfIdle();
+    } else if (strcmp(shelly_blu_button_status, "disabled") == 0) {
+      setShellyBluButtonStatus("idle");
+    }
+    sendInlineOkOrHome();
+    return;
+  }
+
+  if (!config.shelly_blu_button_enabled) {
+    sendPlain(400, F("disabled"));
+    return;
+  }
+
   char mac[kShellyBluButtonMacMaxLen + 1]{};
   if (!normalizeSwitchbotMac(server.hasArg("mac") ? server.arg("mac") : String(), mac, sizeof(mac), false)) {
     sendPlain(400, F("invalid mac"));
@@ -11130,6 +11209,10 @@ void handleShellyBluButton() {
 void handleShellyBluButtonBeepApi() {
   if (!shellyBluButtonSupported()) {
     server.send(400, F("application/json"), F("{\"ok\":false,\"error\":\"unsupported\"}"));
+    return;
+  }
+  if (!config.shelly_blu_button_enabled) {
+    server.send(400, F("application/json"), F("{\"ok\":false,\"error\":\"disabled\"}"));
     return;
   }
   if (shelly_blu_pair.active) {
@@ -11625,6 +11708,12 @@ bool switchbotLockConfigDiffers(const StoredConfig &a, const StoredConfig &b) {
          a.switchbot_lock_battery_notify_sec != b.switchbot_lock_battery_notify_sec;
 }
 
+bool shellyBluButtonConfigDiffers(const StoredConfig &a, const StoredConfig &b) {
+  return a.shelly_blu_button_enabled != b.shelly_blu_button_enabled ||
+         memcmp(a.shelly_blu_button_macs, b.shelly_blu_button_macs,
+                sizeof(a.shelly_blu_button_macs)) != 0;
+}
+
 bool commitStoredConfig(const StoredConfig &source) {
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putString("ssid", source.ssid);
@@ -11694,6 +11783,7 @@ bool commitStoredConfig(const StoredConfig &source) {
                                                                   kSwitchbotLockOnlineHealDefaultSec));
   prefs.putUShort("sb_bat_s", sanitizeSwitchbotLockCallbackSeconds(source.switchbot_lock_battery_notify_sec,
                                                                    kSwitchbotLockBatteryNotifyDefaultSec));
+  prefs.putUChar("blu_en", source.shelly_blu_button_enabled ? 1 : 0);
   prefs.putBytes("blu_macs", source.shelly_blu_button_macs, sizeof(source.shelly_blu_button_macs));
   const uint8_t power_saving_mode = sanitizePowerSavingMode(source.power_saving_mode);
   if (powerSavingModePersists(power_saving_mode)) prefs.putUShort("pwr_save", power_saving_mode);
@@ -11842,6 +11932,16 @@ void appendSettingsExportJson(String &out) {
   out += config.switchbot_lock_online_heal_sec;
   out += F(",\"battery_notify\":");
   out += config.switchbot_lock_battery_notify_sec;
+  out += F("},\"shelly_blu_button\":{\"enabled\":");
+  out += config.shelly_blu_button_enabled ? F("true") : F("false");
+  out += F(",\"macs\":[");
+  for (uint8_t i = 0; i < kShellyBluButtonMax; i++) {
+    if (i) out += ',';
+    out += '"';
+    out += jsonEscape(config.shelly_blu_button_macs[i]);
+    out += '"';
+  }
+  out += F("]");
   out += F("},\"inputs\":{\"hold_ms\":");
   out += config.button_hold_ms;
   out += F(",\"debounce_ms\":");
@@ -12444,6 +12544,60 @@ void importSettingsSwitchbotLock(const cJSON *root, StoredConfig &target, Settin
   }
 }
 
+void importSettingsShellyBluButton(const cJSON *root, StoredConfig &target, SettingsImportStats &stats) {
+  const cJSON *blu = cjsonObjectItem(root, "shelly_blu_button");
+  if (!blu) return;
+  if (!cjsonIsType(blu, cJSON_Object)) {
+    recordSettingsSkipped(stats, F("shelly_blu_button"));
+    return;
+  }
+  if (const cJSON *value = cjsonObjectItem(blu, "enabled")) {
+    bool enabled = false;
+    if (settingsReadBool(value, enabled) && (!enabled || shellyBluButtonSupported())) {
+      target.shelly_blu_button_enabled = enabled ? 1 : 0;
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("shelly_blu_button.enabled"));
+    }
+  }
+  const cJSON *macs = cjsonObjectItem(blu, "macs");
+  if (!macs) return;
+  if (!cjsonIsType(macs, cJSON_Array)) {
+    recordSettingsSkipped(stats, F("shelly_blu_button.macs"));
+    return;
+  }
+  char next[kShellyBluButtonMax][kShellyBluButtonMacMaxLen + 1]{};
+  const uint8_t count = min(cjsonArraySize(macs), static_cast<uint8_t>(kShellyBluButtonMax));
+  for (uint8_t i = 0; i < count; i++) {
+    const cJSON *item = cjsonArrayItem(macs, i);
+    String mac;
+    char normalized[kShellyBluButtonMacMaxLen + 1]{};
+    if (!settingsReadString(item, mac, kShellyBluButtonMacMaxLen) ||
+        !normalizeSwitchbotMac(mac, normalized, sizeof(normalized))) {
+      recordSettingsSkipped(stats, String(F("shelly_blu_button.macs[")) + String(i) + F("]"));
+      continue;
+    }
+    if (normalized[0] == '\0') {
+      recordSettingsApplied(stats);
+      continue;
+    }
+    bool duplicate = false;
+    for (uint8_t j = 0; j < i; j++) {
+      if (strcmp(next[j], normalized) == 0) {
+        duplicate = true;
+        break;
+      }
+    }
+    if (duplicate) {
+      recordSettingsSkipped(stats, String(F("shelly_blu_button.macs[")) + String(i) + F("]"));
+      continue;
+    }
+    strlcpy(next[i], normalized, sizeof(next[i]));
+    recordSettingsApplied(stats);
+  }
+  memcpy(target.shelly_blu_button_macs, next, sizeof(target.shelly_blu_button_macs));
+}
+
 void importSettingsAction(const cJSON *value, StoredConfig &target, const RuntimeTemplate &rt,
                           uint8_t button, bool hold, SettingsImportStats &stats, const String &field) {
   if (!value) return;
@@ -12692,6 +12846,7 @@ void handleSettingsImport() {
   importSettingsRelayPulsing(doc, candidate, candidate_runtime, stats);
   importSettingsIBeacon(doc, candidate, stats);
   importSettingsSwitchbotLock(doc, candidate, stats);
+  importSettingsShellyBluButton(doc, candidate, stats);
   importSettingsInputs(doc, candidate, candidate_runtime, stats);
   cJSON_Delete(doc);
 
@@ -12717,6 +12872,7 @@ void handleSettingsImport() {
   const bool input_changed = inputConfigDiffers(before, candidate);
   const bool ibeacon_changed = iBeaconConfigDiffers(before, candidate);
   const bool switchbot_lock_changed = switchbotLockConfigDiffers(before, candidate);
+  const bool shelly_blu_button_changed = shellyBluButtonConfigDiffers(before, candidate);
   const bool wifi_dynamic_power_changed = before.wifi_dynamic_power != candidate.wifi_dynamic_power;
 
   if (!commitStoredConfig(candidate)) {
@@ -12770,6 +12926,15 @@ void handleSettingsImport() {
       switchbot_lock_next_poll_ms = millis() + 1000UL;
     } else if (!config.ibeacon_enabled) {
       stopBleScanIfIdle();
+    }
+  }
+  if (shelly_blu_button_changed) {
+    if (!config.shelly_blu_button_enabled) {
+      shelly_blu_pair.active = false;
+      if (!shellyBluButtonJobBusy()) setShellyBluButtonStatus("disabled");
+      if (!config.ibeacon_enabled && !config.switchbot_lock_enabled) stopBleScanIfIdle();
+    } else if (strcmp(shelly_blu_button_status, "disabled") == 0) {
+      setShellyBluButtonStatus("idle");
     }
   }
   if (wifi_dynamic_power_changed) resetWifiDynamicPowerRuntime(true);
@@ -13198,6 +13363,8 @@ void handleHealth() {
   out += F("}");
   out += F(",\"shelly_blu_button\":{\"supported\":");
   out += shellyBluButtonSupported() ? F("true") : F("false");
+  out += F(",\"enabled\":");
+  out += config.shelly_blu_button_enabled ? F("true") : F("false");
   out += F(",\"status\":\"");
   out += jsonEscape(shelly_blu_button_status);
   out += F("\",\"action\":\"");
