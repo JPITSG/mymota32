@@ -1977,6 +1977,7 @@ uint16_t sanitizeSwitchbotLockCallbackSeconds(uint16_t value, uint16_t default_v
 bool normalizeSwitchbotLockCallbackTemplate(const String &input, char *out, size_t out_size);
 void scheduleMqttLightPublish(uint8_t mask);
 bool persistLightConfig(bool force = false);
+bool inputConfigDiffers(const StoredConfig &a, const StoredConfig &b);
 
 void setDefaultConfig() {
   memset(&config, 0, sizeof(config));
@@ -2542,28 +2543,24 @@ bool saveLightConfig() {
 }
 
 bool saveInputConfig(const StoredConfig &source) {
-  const bool mqtt_protocol_changed = source.mqtt_protocol_keepalive != config.mqtt_protocol_keepalive;
+  if (!inputConfigDiffers(config, source)) return true;
+
   if (!prefs.begin("mymota32", false)) return false;
-  prefs.putUShort("btn_hold", source.button_hold_ms);
-  prefs.putUShort("btn_db", source.button_debounce_ms);
-  prefs.putBytes("in_mode", source.input_mode, sizeof(source.input_mode));
-  prefs.putBytes("in_relay", source.input_relay, sizeof(source.input_relay));
-  prefs.putBytes("in_level", source.input_on_level, sizeof(source.input_on_level));
-  prefs.putBytes("bp_act", source.button_press_action, sizeof(source.button_press_action));
-  prefs.putBytes("bh_act", source.button_hold_action, sizeof(source.button_hold_action));
-  prefs.putBytes("bp_rel", source.button_press_relay, sizeof(source.button_press_relay));
-  prefs.putBytes("bh_rel", source.button_hold_relay, sizeof(source.button_hold_relay));
-  prefs.putBytes("bp_tgt", source.button_press_target, sizeof(source.button_press_target));
-  prefs.putBytes("bp_pld", source.button_press_payload, sizeof(source.button_press_payload));
-  prefs.putBytes("bh_tgt", source.button_hold_target, sizeof(source.button_hold_target));
-  prefs.putBytes("bh_pld", source.button_hold_payload, sizeof(source.button_hold_payload));
-  prefs.putUShort("mqtt_pkeep", source.mqtt_protocol_keepalive);
+  if (source.button_hold_ms != config.button_hold_ms) { prefs.putUShort("btn_hold", source.button_hold_ms); delay(0); }
+  if (source.button_debounce_ms != config.button_debounce_ms) { prefs.putUShort("btn_db", source.button_debounce_ms); delay(0); }
+  if (memcmp(source.input_mode, config.input_mode, sizeof(source.input_mode)) != 0) { prefs.putBytes("in_mode", source.input_mode, sizeof(source.input_mode)); delay(0); }
+  if (memcmp(source.input_relay, config.input_relay, sizeof(source.input_relay)) != 0) { prefs.putBytes("in_relay", source.input_relay, sizeof(source.input_relay)); delay(0); }
+  if (memcmp(source.input_on_level, config.input_on_level, sizeof(source.input_on_level)) != 0) { prefs.putBytes("in_level", source.input_on_level, sizeof(source.input_on_level)); delay(0); }
+  if (memcmp(source.button_press_action, config.button_press_action, sizeof(source.button_press_action)) != 0) { prefs.putBytes("bp_act", source.button_press_action, sizeof(source.button_press_action)); delay(0); }
+  if (memcmp(source.button_hold_action, config.button_hold_action, sizeof(source.button_hold_action)) != 0) { prefs.putBytes("bh_act", source.button_hold_action, sizeof(source.button_hold_action)); delay(0); }
+  if (memcmp(source.button_press_relay, config.button_press_relay, sizeof(source.button_press_relay)) != 0) { prefs.putBytes("bp_rel", source.button_press_relay, sizeof(source.button_press_relay)); delay(0); }
+  if (memcmp(source.button_hold_relay, config.button_hold_relay, sizeof(source.button_hold_relay)) != 0) { prefs.putBytes("bh_rel", source.button_hold_relay, sizeof(source.button_hold_relay)); delay(0); }
+  if (memcmp(source.button_press_target, config.button_press_target, sizeof(source.button_press_target)) != 0) { prefs.putBytes("bp_tgt", source.button_press_target, sizeof(source.button_press_target)); delay(0); }
+  if (memcmp(source.button_press_payload, config.button_press_payload, sizeof(source.button_press_payload)) != 0) { prefs.putBytes("bp_pld", source.button_press_payload, sizeof(source.button_press_payload)); delay(0); }
+  if (memcmp(source.button_hold_target, config.button_hold_target, sizeof(source.button_hold_target)) != 0) { prefs.putBytes("bh_tgt", source.button_hold_target, sizeof(source.button_hold_target)); delay(0); }
+  if (memcmp(source.button_hold_payload, config.button_hold_payload, sizeof(source.button_hold_payload)) != 0) { prefs.putBytes("bh_pld", source.button_hold_payload, sizeof(source.button_hold_payload)); delay(0); }
   prefs.end();
-  if (!loadConfig()) return false;
-  if (mqtt_protocol_changed) {
-    resetMqttRuntimeState();
-    if (mqtt_client.connected()) mqtt_client.stop();
-  }
+  config = source;
   return true;
 }
 
