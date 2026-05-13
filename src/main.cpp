@@ -96,6 +96,7 @@ constexpr uint8_t kPhyModeB = 1;
 constexpr uint8_t kPhyModeG = 2;
 constexpr uint8_t kPhyModeN = 3;
 constexpr uint8_t kPhyModeFailsafe = kPhyModeG;
+constexpr size_t kPartitionLabelCacheLen = 17;
 
 constexpr size_t kSsidMaxLen = 32;
 constexpr size_t kPasswordMaxLen = 64;
@@ -554,6 +555,15 @@ struct RuntimeTemplate {
   uint16_t unsupported_code[12];
 };
 
+struct CachedPartitionInfo {
+  bool present;
+  char label[kPartitionLabelCacheLen];
+  uint8_t type;
+  uint8_t subtype;
+  uint32_t offset;
+  uint32_t size;
+};
+
 struct StoredConfig {
   char ssid[kSsidMaxLen + 1];
   char password[kPasswordMaxLen + 1];
@@ -794,6 +804,17 @@ uint8_t wifi_dynamic_power_samples = 0;
 int16_t wifi_dynamic_power_rssi_sum = 0;
 int16_t wifi_dynamic_power_last_rssi = 0;
 int8_t wifi_tx_power_qdbm = kWifiTxPowerMaxQdbm;
+int16_t wifi_last_rssi = 0;
+bool wifi_last_rssi_valid = false;
+
+uint32_t cached_flash_used = 0;
+uint32_t cached_flash_total = 0;
+uint32_t cached_flash_free = 0;
+uint32_t cached_flash_chip_size = 0;
+uint8_t cached_ota_slots = 0;
+CachedPartitionInfo cached_running_partition{};
+CachedPartitionInfo cached_next_update_partition{};
+CachedPartitionInfo cached_factory_partition{};
 
 uint32_t boot_recovery_count = 0;
 bool boot_recovery_factory_reset = false;
@@ -1072,6 +1093,12 @@ bool wifiStationHasIp() {
 
 bool wifiUsable() {
   return wifiSdkConnected() || wifiStationHasIp();
+}
+
+void rememberWifiRssi(int16_t rssi) {
+  if (rssi == 0) return;
+  wifi_last_rssi = rssi;
+  wifi_last_rssi_valid = true;
 }
 
 const __FlashStringHelper *wifiStatusName(wl_status_t status) {
@@ -2688,6 +2715,7 @@ void maintainWifiDynamicPower() {
   if (wifi_dynamic_power_last_sample && now - wifi_dynamic_power_last_sample < kWifiDynamicPowerSampleMs) return;
 
   const int16_t rssi = static_cast<int16_t>(WiFi.RSSI());
+  rememberWifiRssi(rssi);
   wifi_dynamic_power_last_sample = now;
   wifi_dynamic_power_rssi_sum += rssi;
   wifi_dynamic_power_samples++;
@@ -2725,7 +2753,9 @@ bool connectWifiWithPhy(uint8_t phy_mode, uint32_t timeout_ms) {
   prepareWifiTxPowerForConnect();
   WiFi.begin(config.ssid, config.password);
   last_wifi_begin_attempt = millis();
-  return waitForWifi(timeout_ms);
+  const bool connected = waitForWifi(timeout_ms);
+  if (connected) rememberWifiRssi(static_cast<int16_t>(WiFi.RSSI()));
+  return connected;
 }
 
 void startAp() {
@@ -8186,6 +8216,47 @@ uint32_t flashFreeBytes() {
   return total > used ? total - used : 0;
 }
 
+void cachePartitionInfo(CachedPartitionInfo &target, const esp_partition_t *partition) {
+  target = {};
+  if (!partition) return;
+  target.present = true;
+  strlcpy(target.label, partition->label, sizeof(target.label));
+  target.type = static_cast<uint8_t>(partition->type);
+  target.subtype = static_cast<uint8_t>(partition->subtype);
+  target.offset = partition->address;
+  target.size = partition->size;
+}
+
+uint8_t countOtaAppPartitions() {
+  uint8_t count = 0;
+  esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, nullptr);
+  while (it) {
+    const esp_partition_t *partition = esp_partition_get(it);
+    if (partition &&
+        partition->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MIN &&
+        partition->subtype < ESP_PARTITION_SUBTYPE_APP_OTA_MAX) {
+      count++;
+    }
+    it = esp_partition_next(it);
+  }
+  esp_partition_iterator_release(it);
+  return count;
+}
+
+void refreshStaticSystemInfo() {
+  cached_flash_used = flashUsedBytes();
+  cached_flash_total = flashTotalBytes();
+  cached_flash_free = flashFreeBytes();
+  cached_flash_chip_size = ESP.getFlashChipSize();
+  cached_ota_slots = countOtaAppPartitions();
+  cachePartitionInfo(cached_running_partition, esp_ota_get_running_partition());
+  cachePartitionInfo(cached_next_update_partition, esp_ota_get_next_update_partition(nullptr));
+  cachePartitionInfo(cached_factory_partition,
+                     esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+                                              ESP_PARTITION_SUBTYPE_APP_FACTORY,
+                                              nullptr));
+}
+
 bool containsIgnoreCase(const char *text, const char *needle) {
   String value(text ? text : "");
   value.toLowerCase();
@@ -8426,14 +8497,7 @@ bool writeTasmotaSafebootSettings(const String &ssid, const String &password, St
   return ok;
 }
 
-uint8_t otaAppPartitionCount();
-
 void appendStatusBlock(String &page) {
-  const esp_partition_t *running_partition = esp_ota_get_running_partition();
-  const esp_partition_t *next_update_partition = esp_ota_get_next_update_partition(nullptr);
-  const esp_partition_t *factory_partition = esp_partition_find_first(ESP_PARTITION_TYPE_APP,
-                                                                      ESP_PARTITION_SUBTYPE_APP_FACTORY,
-                                                                      nullptr);
   page += F("<section class='panel wide'><h2>System Status</h2><div class='kv'>");
   page += F("<span>Version</span><div><code id='live-version'>");
   page += F(MYMOTA32_VERSION);
@@ -8446,39 +8510,39 @@ void appendStatusBlock(String &page) {
   page += F("</code></div><span>Heap</span><div><code id='live-heap'>");
   page += String(ESP.getFreeHeap());
   page += F(" bytes</code></div><span>Flash</span><div><code id='live-flash-used'>");
-  page += String(flashUsedBytes());
+  page += String(cached_flash_used);
   page += F(" bytes</code> (used) / <code id='live-flash-total'>");
-  page += String(flashTotalBytes());
+  page += String(cached_flash_total);
   page += F(" bytes</code> (app slot) / <code id='live-flash-free'>");
-  page += String(flashFreeBytes());
+  page += String(cached_flash_free);
   page += F(" bytes</code> (free) / chip <code id='live-flash-chip'>");
-  page += String(ESP.getFlashChipSize());
+  page += String(cached_flash_chip_size);
   page += F(" bytes</code></div><span>Partitions</span><div>running <code id='live-part-running-label'>");
-  page += running_partition ? htmlEscape(running_partition->label) : String(F("n/a"));
+  page += cached_running_partition.present ? htmlEscape(cached_running_partition.label) : String(F("n/a"));
   page += F("</code>");
-  if (running_partition) {
+  if (cached_running_partition.present) {
     page += F(" <code id='live-part-running-size'>");
-    page += String(running_partition->size);
+    page += String(cached_running_partition.size);
     page += F(" bytes</code>");
   }
   page += F(" / update <code id='live-part-update-label'>");
-  page += next_update_partition ? htmlEscape(next_update_partition->label) : String(F("n/a"));
+  page += cached_next_update_partition.present ? htmlEscape(cached_next_update_partition.label) : String(F("n/a"));
   page += F("</code>");
-  if (next_update_partition) {
+  if (cached_next_update_partition.present) {
     page += F(" <code id='live-part-update-size'>");
-    page += String(next_update_partition->size);
+    page += String(cached_next_update_partition.size);
     page += F(" bytes</code>");
   }
   page += F(" / factory <code id='live-part-factory-label'>");
-  page += factory_partition ? htmlEscape(factory_partition->label) : String(F("none"));
+  page += cached_factory_partition.present ? htmlEscape(cached_factory_partition.label) : String(F("none"));
   page += F("</code>");
-  if (factory_partition) {
+  if (cached_factory_partition.present) {
     page += F(" <code id='live-part-factory-size'>");
-    page += String(factory_partition->size);
+    page += String(cached_factory_partition.size);
     page += F(" bytes</code>");
   }
   page += F(" / OTA slots <code id='live-part-ota-slots'>");
-  page += String(otaAppPartitionCount());
+  page += String(cached_ota_slots);
   page += F("</code></div><span>Uptime</span><div><code id='live-uptime'>");
   page += String(millis() / 1000);
   page += F("s</code></div><span>Loop load</span><div><code id='live-loop-load'>");
@@ -8513,7 +8577,7 @@ void appendStatusBlock(String &page) {
   page += F("'>");
   page += wifiDisplayLabel(wifi_status, station_has_ip);
   page += F("</span> <code id='live-ssid'>");
-  if (wifi_usable) page += htmlEscape(wifi_sdk_connected ? WiFi.SSID() : String(config.ssid));
+  if (wifi_usable) page += htmlEscape(config.ssid);
   else page += F("n/a");
   page += F("</code></div><span>Wi-Fi SDK</span><div><code id='live-wifi-sdk'>");
   page += wifiStatusName(wifi_status);
@@ -8526,8 +8590,8 @@ void appendStatusBlock(String &page) {
   page += F("</code></div><span>DNS</span><div><code id='live-dns'>");
   page += station_has_ip ? ipToString(WiFi.dnsIP()) : String(F("n/a"));
   page += F("</code></div><span>RSSI</span><div><code id='live-rssi'>");
-  if (wifi_usable) {
-    page += String(WiFi.RSSI());
+  if (wifi_usable && wifi_last_rssi_valid) {
+    page += String(wifi_last_rssi);
     page += F(" dBm");
   } else {
     page += F("n/a");
@@ -12635,54 +12699,33 @@ void handleFactoryReset() {
   scheduleRestart(800);
 }
 
-void appendPartitionJson(String &out, const esp_partition_t *partition) {
-  if (!partition) {
+void appendPartitionJson(String &out, const CachedPartitionInfo &partition) {
+  if (!partition.present) {
     out += F("null");
     return;
   }
   out += F("{\"label\":\"");
-  out += jsonEscape(partition->label);
+  out += jsonEscape(partition.label);
   out += F("\",\"type\":");
-  out += static_cast<unsigned>(partition->type);
+  out += static_cast<unsigned>(partition.type);
   out += F(",\"subtype\":");
-  out += static_cast<unsigned>(partition->subtype);
+  out += static_cast<unsigned>(partition.subtype);
   out += F(",\"offset\":");
-  out += partition->address;
+  out += partition.offset;
   out += F(",\"size\":");
-  out += partition->size;
+  out += partition.size;
   out += F("}");
 }
 
-uint8_t otaAppPartitionCount() {
-  uint8_t count = 0;
-  esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, nullptr);
-  while (it) {
-    const esp_partition_t *partition = esp_partition_get(it);
-    if (partition &&
-        partition->subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MIN &&
-        partition->subtype < ESP_PARTITION_SUBTYPE_APP_OTA_MAX) {
-      count++;
-    }
-    it = esp_partition_next(it);
-  }
-  esp_partition_iterator_release(it);
-  return count;
-}
-
 void appendHealthPartitionsJson(String &out) {
-  const esp_partition_t *running = esp_ota_get_running_partition();
-  const esp_partition_t *next_update = esp_ota_get_next_update_partition(nullptr);
-  const esp_partition_t *factory = esp_partition_find_first(ESP_PARTITION_TYPE_APP,
-                                                            ESP_PARTITION_SUBTYPE_APP_FACTORY,
-                                                            nullptr);
   out += F(",\"partitions\":{\"running\":");
-  appendPartitionJson(out, running);
+  appendPartitionJson(out, cached_running_partition);
   out += F(",\"next_update\":");
-  appendPartitionJson(out, next_update);
+  appendPartitionJson(out, cached_next_update_partition);
   out += F(",\"factory\":");
-  appendPartitionJson(out, factory);
+  appendPartitionJson(out, cached_factory_partition);
   out += F(",\"ota_slots\":");
-  out += otaAppPartitionCount();
+  out += cached_ota_slots;
   out += F("}");
 }
 
@@ -12707,13 +12750,13 @@ void handleHealth() {
   out += F(",\"heap\":");
   out += ESP.getFreeHeap();
   out += F(",\"flash\":{\"used\":");
-  out += flashUsedBytes();
+  out += cached_flash_used;
   out += F(",\"total\":");
-  out += flashTotalBytes();
+  out += cached_flash_total;
   out += F(",\"free\":");
-  out += flashFreeBytes();
+  out += cached_flash_free;
   out += F(",\"chip_size\":");
-  out += ESP.getFlashChipSize();
+  out += cached_flash_chip_size;
   out += F("}");
   appendHealthPartitionsJson(out);
   out += F(",\"uptime\":");
@@ -12741,8 +12784,7 @@ void handleHealth() {
   out += wifiStatusName(wifi_status);
   out += F("\",\"wifi_ssid\":\"");
   if (wifi_usable) {
-    const String ssid = wifi_sdk_connected ? WiFi.SSID() : String(config.ssid);
-    out += jsonEscape(ssid.c_str());
+    out += jsonEscape(config.ssid);
   }
   out += F("\",\"ip\":\"");
   if (station_has_ip) out += ipToString(station_ip);
@@ -12751,7 +12793,7 @@ void handleHealth() {
   out += F("\",\"dns_ip\":\"");
   if (station_has_ip) out += ipToString(WiFi.dnsIP());
   out += F("\",\"rssi\":");
-  if (wifi_usable) out += WiFi.RSSI();
+  if (wifi_usable && wifi_last_rssi_valid) out += wifi_last_rssi;
   else out += F("null");
   out += F(",\"wifi_tx_power\":{\"dynamic\":");
   out += config.wifi_dynamic_power ? F("true") : F("false");
@@ -13383,6 +13425,7 @@ void setup() {
   setupEnergyMonitor();
   connectWifi();
   boot_id = makeBootId();
+  refreshStaticSystemInfo();
   setupRoutes();
   server.begin();
 }
