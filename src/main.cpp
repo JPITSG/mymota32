@@ -8115,18 +8115,18 @@ void appendHeader(String &page, const __FlashStringHelper *title, bool show_spin
     page += htmlEscape(config.hostname);
   }
   page += F(R"CSS(</title><style>
-:root{--bg:#f4f5f7;--bg-2:#fff;--panel:#fff;--panel-2:#fafbfc;--line:#e1e5ec;--line-2:#cdd3dd;--text:#1a1f2b;--text-2:#525a6b;--muted:#8b93a3;--accent:#1f8a5f;--accent-2:#2aa074;--accent-soft:rgba(31,138,95,.10);--warn:#b7791f;--bad:#c0392b;--bad-soft:rgba(192,57,43,.10);--bad-border:rgba(192,57,43,.35);--ok:#1f8a5f;--ok-soft:rgba(31,138,95,.10);--radius:8px;--radius-sm:6px;--shadow:0 1px 2px rgba(20,30,50,.06),0 1px 1px rgba(20,30,50,.04);--header-bg:rgba(255,255,255,.86);--btn-text:#fff;--tint-soft:rgba(20,30,50,.025);--tint-low:rgba(20,30,50,.04);--tint-mid:rgba(20,30,50,.06);--tint-foot:rgba(20,30,50,.025);--shadow-pop:0 12px 40px rgba(20,30,50,.18);--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono','Courier New',monospace;--sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}
-[data-theme=dark]{--bg:#0e1116;--bg-2:#141821;--panel:#171c26;--panel-2:#1c2230;--line:#262d3d;--line-2:#323a4d;--text:#e6eaf2;--text-2:#a4adc2;--muted:#6b748a;--accent:#7dd3aa;--accent-2:#5eead4;--accent-soft:rgba(125,211,170,.12);--warn:#f0b95a;--bad:#f06b6b;--bad-soft:rgba(240,107,107,.12);--bad-border:rgba(240,107,107,.35);--ok:#7dd3aa;--ok-soft:rgba(125,211,170,.12);--shadow:0 1px 0 rgba(255,255,255,.03) inset,0 1px 2px rgba(0,0,0,.2);--header-bg:rgba(14,17,22,.86);--btn-text:#0e1116;--tint-soft:rgba(255,255,255,.015);--tint-low:rgba(255,255,255,.03);--tint-mid:rgba(255,255,255,.05);--tint-foot:rgba(0,0,0,.15);--shadow-pop:0 12px 40px rgba(0,0,0,.5)}
+:root{--bg:#f4f5f7;--bg-2:#fff;--panel:#fff;--panel-2:#fafbfc;--line:#e1e5ec;--line-2:#cdd3dd;--text:#1a1f2b;--text-2:#525a6b;--muted:#8b93a3;--accent:#1f8a5f;--accent-2:#2aa074;--accent-soft:rgba(31,138,95,.10);--warn:#b7791f;--bad:#c0392b;--bad-soft:rgba(192,57,43,.10);--bad-border:rgba(192,57,43,.35);--ok:#1f8a5f;--ok-soft:rgba(31,138,95,.10);--radius:8px;--radius-sm:6px;--shadow:0 1px 2px rgba(20,30,50,.06),0 1px 1px rgba(20,30,50,.04);--header-bg:rgba(255,255,255,.72);--btn-text:#fff;--tint-soft:rgba(20,30,50,.025);--tint-low:rgba(20,30,50,.04);--tint-mid:rgba(20,30,50,.06);--tint-foot:rgba(20,30,50,.025);--shadow-pop:0 12px 40px rgba(20,30,50,.18);--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono','Courier New',monospace;--sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif}
+[data-theme=dark]{--bg:#0e1116;--bg-2:#141821;--panel:#171c26;--panel-2:#1c2230;--line:#262d3d;--line-2:#323a4d;--text:#e6eaf2;--text-2:#a4adc2;--muted:#6b748a;--accent:#7dd3aa;--accent-2:#5eead4;--accent-soft:rgba(125,211,170,.12);--warn:#f0b95a;--bad:#f06b6b;--bad-soft:rgba(240,107,107,.12);--bad-border:rgba(240,107,107,.35);--ok:#7dd3aa;--ok-soft:rgba(125,211,170,.12);--shadow:0 1px 0 rgba(255,255,255,.03) inset,0 1px 2px rgba(0,0,0,.2);--header-bg:rgba(14,17,22,.72);--btn-text:#0e1116;--tint-soft:rgba(255,255,255,.015);--tint-low:rgba(255,255,255,.03);--tint-mid:rgba(255,255,255,.05);--tint-foot:rgba(0,0,0,.15);--shadow-pop:0 12px 40px rgba(0,0,0,.5)}
 *{box-sizing:border-box}html,body{margin:0;padding:0}body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh;background-image:radial-gradient(1200px 600px at 50% -200px,var(--accent-soft),transparent 60%),linear-gradient(180deg,var(--bg) 0%,var(--bg-2) 100%)}
-.top{border-bottom:1px solid var(--line);background:var(--header-bg);backdrop-filter:blur(10px);position:sticky;top:0;z-index:50}.topin{max-width:1200px;margin:0 auto;padding:18px 28px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:24px}.brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:18px;color:var(--text);text-decoration:none}.brand b{color:var(--accent)}.logo{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;color:var(--btn-text);box-shadow:0 0 0 1px var(--accent-soft),0 4px 12px rgba(0,0,0,.08)}[data-theme=dark] .logo{box-shadow:0 0 0 1px var(--accent-soft),0 4px 12px rgba(0,0,0,.3)}.host{text-align:center;font-family:var(--mono);font-size:13px;color:var(--text-2)}.host .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:8px;vertical-align:1px;box-shadow:0 0 8px var(--accent)}.meta{display:flex;align-items:center;justify-content:flex-end;gap:14px;font-family:var(--mono);font-size:12px;color:var(--muted)}.ver{padding:4px 10px;border:1px solid var(--line);border-radius:999px;color:var(--text-2)}.theme-btn{width:30px;height:30px;margin:0;padding:0;display:inline-flex;align-items:center;justify-content:center;background:var(--tint-low);color:var(--text-2);border:1px solid var(--line);border-radius:50%;cursor:pointer;text-transform:none}.theme-btn:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-soft);filter:none}.theme-btn .ic-moon{display:none}.theme-btn .ic-sun{display:block}[data-theme=dark] .theme-btn .ic-sun{display:none}[data-theme=dark] .theme-btn .ic-moon{display:block}.spin{width:10px;height:10px;border:2px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;opacity:.5}.spin.active{opacity:1;animation:rot .9s linear infinite}@keyframes rot{to{transform:rotate(360deg)}}
-main{max-width:1200px;margin:0 auto;padding:32px 28px 56px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.wide,.section-head{grid-column:1/-1}.section-head{display:flex;align-items:baseline;justify-content:space-between;margin:16px 0}.section-head:first-child{margin-top:0}.section-head h1{font-size:11px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin:0}.section-head .rule{flex:1;height:1px;background:var(--line);margin:0 16px}
+.top{border-bottom:1px solid var(--line);background:var(--header-bg);backdrop-filter:blur(10px);position:sticky;top:0;z-index:50}.topin{max-width:1200px;margin:0 auto;padding:18px 28px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:24px}.brand{display:flex;align-items:center;gap:12px;font-weight:700;font-size:18px;color:var(--text);text-decoration:none}.brand b{color:var(--accent)}.logo{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;color:var(--btn-text);box-shadow:0 0 0 1px var(--accent-soft),0 4px 12px rgba(0,0,0,.08)}[data-theme=dark] .logo{box-shadow:0 0 0 1px var(--accent-soft),0 4px 12px rgba(0,0,0,.3)}.host{text-align:center;font-family:var(--mono);font-size:13px;color:var(--text-2)}.host .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:8px;vertical-align:1px;box-shadow:0 0 8px var(--accent)}.meta{display:flex;align-items:center;justify-content:flex-end;gap:14px;font-family:var(--mono);font-size:12px;color:var(--muted)}.ver{padding:4px 10px;border:1px solid transparent;border-radius:999px;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:var(--btn-text);box-shadow:0 0 0 1px var(--accent-soft),0 4px 12px rgba(0,0,0,.08)}[data-theme=dark] .ver{box-shadow:0 0 0 1px var(--accent-soft),0 4px 12px rgba(0,0,0,.3)}.theme-btn{width:30px;height:30px;margin:0;padding:0;display:inline-flex;align-items:center;justify-content:center;background:var(--tint-low);color:var(--text-2);border:1px solid var(--line);border-radius:50%;cursor:pointer;text-transform:none}.theme-btn:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-soft);filter:none}.theme-btn .ic-moon{display:none}.theme-btn .ic-sun{display:block}[data-theme=dark] .theme-btn .ic-sun{display:none}[data-theme=dark] .theme-btn .ic-moon{display:block}.spin{width:10px;height:10px;border:2px solid var(--accent-soft);border-top-color:var(--accent);border-radius:50%;opacity:.5}.spin.active{opacity:1;animation:rot .9s linear infinite}@keyframes rot{to{transform:rotate(360deg)}}
+main{max-width:1200px;margin:0 auto;padding:32px 28px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.wide,.section-head{grid-column:1/-1}.section-head{display:flex;align-items:baseline;justify-content:space-between;margin:16px 0}.section-head:first-child{margin-top:0}.section-head h1{font-size:11px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin:0}.section-head .rule{flex:1;height:1px;background:var(--line);margin:0 16px}
 .stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.stat{background:linear-gradient(180deg,var(--panel) 0%,var(--panel-2) 100%);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;min-height:96px;box-shadow:var(--shadow);position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between}.stat .accent-bar{position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);opacity:.7}.stat .stat-label{font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}.stat .stat-value{font-family:var(--mono);font-size:22px;font-weight:500;color:var(--text);margin-top:6px;letter-spacing:-.01em}.stat .stat-sub{font-family:var(--mono);font-size:11px;color:var(--text-2);margin-top:4px;word-break:break-word}@media(max-width:980px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){.stats{grid-template-columns:1fr}}
 .panel{background:linear-gradient(180deg,var(--panel) 0%,var(--panel-2) 100%);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}.panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);background:var(--tint-soft)}.panel-head h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--text)}.panel-head .h-meta{font-family:var(--mono);font-size:11px;color:var(--muted)}.panel-body{padding:18px}.panel-foot{padding:12px 18px;border-top:1px solid var(--line);background:var(--tint-foot);display:flex;justify-content:flex-end;gap:8px}.panel-foot button,.panel-foot .btn{margin:0}.panel h3{font-size:13px;margin:0 0 10px;color:var(--text)}.panel p{margin:10px 0}.kv{display:grid;grid-template-columns:140px 1fr;gap:0 16px}.kv>span,.kv>div{padding:9px 0;border-bottom:1px dashed var(--line);min-width:0}.kv>span{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}.kv>div{font-family:var(--mono);font-size:13px;color:var(--text);word-break:break-word}.hint,.muted{color:var(--muted);font-size:12px}.ok{color:var(--ok)}.bad{color:var(--bad)}
 code{font-family:var(--mono);font-size:12.5px;background:var(--tint-low);border:1px solid var(--line);border-radius:var(--radius-sm);padding:2px 7px;color:var(--text);word-break:break-word}.pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;font-weight:500;padding:3px 9px;border-radius:999px;background:var(--tint-mid);color:var(--text-2);border:1px solid var(--line)}.pill:before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}.pill.ok{background:var(--ok-soft);color:var(--ok);border-color:var(--accent-soft)}.pill.warn{background:rgba(240,185,90,.1);color:var(--warn);border-color:rgba(240,185,90,.3)}.pill.bad{background:var(--bad-soft);color:var(--bad);border-color:var(--bad-border)}
 form{margin:0}.field{margin:0 0 14px}.field:last-child{margin-bottom:0}.field-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 14px}.field-row.three{grid-template-columns:repeat(3,minmax(0,1fr))}.field-row .field{margin:0}.field-row.three .field>label{display:flex;flex-direction:column;justify-content:flex-end;min-height:56px}@media(max-width:560px){.field-row,.field-row.three{grid-template-columns:1fr}.field-row.three .field>label{min-height:0}}label{display:block;font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);margin-bottom:6px}input:not([type=checkbox]):not([type=radio]):not([type=submit]):not([type=button]):not([type=reset]),select,textarea{width:100%;margin-top:6px;padding:10px 12px;background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:13px}select{display:block;min-width:0}select option{background:var(--bg-2);color:var(--text)}label input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]),label select,label textarea{display:block}input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);background:var(--bg-2);box-shadow:0 0 0 3px var(--accent-soft)}input:-webkit-autofill,input:-webkit-autofill:hover,input:-webkit-autofill:focus,input:-webkit-autofill:active,textarea:-webkit-autofill,select:-webkit-autofill{-webkit-text-fill-color:var(--text)!important;-webkit-box-shadow:0 0 0 1000px var(--bg-2) inset!important;box-shadow:0 0 0 1000px var(--bg-2) inset!important;caret-color:var(--text)!important;border:1px solid var(--line)!important;transition:background-color 9999s ease-in-out 0s}input:-webkit-autofill:focus,textarea:-webkit-autofill:focus,select:-webkit-autofill:focus{-webkit-box-shadow:0 0 0 1000px var(--bg-2) inset,0 0 0 3px var(--accent-soft)!important;box-shadow:0 0 0 1000px var(--bg-2) inset,0 0 0 3px var(--accent-soft)!important;border-color:var(--accent)!important}textarea{min-height:88px;resize:vertical;line-height:1.5}input[type=checkbox],input[type=radio]{width:16px;height:16px;margin:0 8px 0 0;vertical-align:-3px;accent-color:var(--accent)}input[type=file]{font-size:12px}
 button,.btn{font-family:var(--sans);display:inline-flex;align-items:center;justify-content:center;gap:6px;margin:4px 4px 0 0;padding:8px 14px;background:var(--accent);color:var(--btn-text);border:1px solid var(--accent);border-radius:var(--radius-sm);font-size:12px;font-weight:600;letter-spacing:.04em;cursor:pointer;text-decoration:none;text-transform:uppercase}button:hover,.btn:hover{filter:brightness(1.08)}button:disabled,.btn:disabled{opacity:.55;cursor:not-allowed}.secondary{background:transparent;color:var(--text);border-color:var(--line-2)}.secondary:hover{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);filter:none}.danger{background:transparent;color:var(--bad);border-color:var(--bad-border)}.danger:hover{background:var(--bad-soft);filter:none}.inline{display:inline}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.inline button{margin:0}
-.subblock{border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;background:var(--tint-foot)}.subblock+.subblock{margin-top:12px}.subblock-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.subblock-head .title{font-weight:600;font-size:13px;color:var(--text)}.subblock-head .meta{font-family:var(--mono);font-size:11px;color:var(--muted)}.ae,.me{display:none;padding-top:12px;margin-top:12px;border-top:1px dashed var(--line)}.ae.show,.me.show{display:block}.hidden{display:none}.tokens{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.tokens div{display:flex;flex-direction:column;gap:3px}.help{position:relative;margin-left:auto}.help-q{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--tint-mid);color:var(--text-2);font-weight:700;font-size:11px;border:1px solid var(--line);cursor:help}.help-box{display:none;position:absolute;right:0;top:28px;z-index:30;width:420px;max-width:calc(100vw - 60px);background:var(--panel-2);border:1px solid var(--line-2);border-radius:var(--radius);padding:14px 16px;font-size:12.5px;line-height:1.55;box-shadow:var(--shadow-pop);color:var(--text)}.help:hover .help-box,.help:focus-within .help-box{display:block}.list{margin:0;padding-left:18px}.foot{grid-column:1/-1;text-align:center;padding:24px 0 0;font-family:var(--mono);font-size:11px;color:var(--muted)}
-@media(max-width:820px){.topin{grid-template-columns:1fr;gap:10px}.host{text-align:left}.meta{justify-content:flex-start}main{padding:22px 14px 42px}.grid{grid-template-columns:1fr}.kv{grid-template-columns:1fr}.kv>span{padding-bottom:0;border-bottom:0}.kv>div{padding-top:3px}}
+.subblock{border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;background:var(--tint-foot)}.subblock+.subblock{margin-top:12px}.subblock-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.subblock-head .title{font-weight:600;font-size:13px;color:var(--text)}.subblock-head .meta{font-family:var(--mono);font-size:11px;color:var(--muted)}.ae,.me{display:none;padding-top:12px;margin-top:12px;border-top:1px dashed var(--line)}.ae.show,.me.show{display:block}.hidden{display:none}.enable-details.hidden{display:none}.tokens{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px}.tokens div{display:flex;flex-direction:column;gap:3px}.help{position:relative;margin-left:auto}.help-q{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--tint-mid);color:var(--text-2);font-weight:700;font-size:11px;border:1px solid var(--line);cursor:help}.help-box{display:none;position:absolute;right:0;top:28px;z-index:30;width:420px;max-width:calc(100vw - 60px);background:var(--panel-2);border:1px solid var(--line-2);border-radius:var(--radius);padding:14px 16px;font-size:12.5px;line-height:1.55;box-shadow:var(--shadow-pop);color:var(--text)}.help:hover .help-box,.help:focus-within .help-box{display:block}.list{margin:0;padding-left:18px}.settings-note{margin:2px 0 0}.template-panel{overflow:visible}.template-picker{position:relative}.template-trigger{width:100%;margin:6px 0 0;padding:10px 12px;background:var(--bg-2);border:1px solid var(--line);border-radius:var(--radius-sm);color:var(--text);font-family:var(--mono);font-size:13px;text-transform:none;letter-spacing:0;justify-content:space-between}.template-trigger:hover{filter:none;border-color:var(--accent);background:var(--bg-2)}.template-menu{display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:45;max-height:280px;overflow:auto;background:var(--panel-2);border:1px solid var(--line-2);border-radius:var(--radius-sm);box-shadow:var(--shadow-pop);padding:4px}.template-picker.open .template-menu{display:block}.template-menu button{display:flex;width:100%;margin:0;padding:9px 10px;background:transparent;border:0;border-radius:4px;color:var(--text);font-family:var(--mono);font-size:13px;text-align:left;text-transform:none;letter-spacing:0;justify-content:flex-start}.template-menu button:hover,.template-menu button.selected{background:var(--tint-mid);filter:none}.foot{text-align:center;margin:16px 0;padding:16px 0;font-family:var(--mono);font-size:11px;color:var(--muted)}
+@media(max-width:820px){.topin{grid-template-columns:1fr;gap:10px}.host{text-align:left}.meta{justify-content:flex-start}main{padding:22px 14px}.grid{grid-template-columns:1fr}.kv{grid-template-columns:1fr}.kv>span{padding-bottom:0;border-bottom:0}.kv>div{padding-top:3px}}
 </style></head><body>)CSS");
   const String host = config.hostname[0] ? htmlEscape(config.hostname) : htmlEscape(defaultHostname());
   page += F("<header class='top'><div class='topin'><a class='brand' href='/'><span class='logo'>");
@@ -8165,13 +8165,13 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);");
   page += F("var wu=d.wifi_usable!=null?d.wifi_usable:d.wifi,ws=!!d.wifi_sdk_connected,wl=ws?'connected':(wu?'usable':'disconnected'),wc=ws?'pill ok':(wu?'pill warn':'pill bad');p('live-wifi',wl,wc);t('live-ssid',d.wifi_ssid||'n/a');t('live-ssid-2',d.wifi_ssid||'n/a');t('live-wifi-sdk',(d.wifi_status_name||'unknown')+' ('+(d.wifi_status==null?'?':d.wifi_status)+')');t('live-ip',d.ip||'n/a');t('live-ip-2',d.ip||'n/a');t('live-gateway',d.gateway_ip||'n/a');t('live-dns',d.dns_ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');t('live-rssi-2',d.rssi==null?'n/a':d.rssi+' dBm');t('live-ap',d.ap?(d.ap_ssid||'active'):'off');t('live-ap-ip',d.ap_ip||'n/a');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
-  page += F("if(d.mqtt){var mb=d.mqtt.enabled?(d.mqtt.host+':'+d.mqtt.port):'not configured';t('live-mqtt-broker',mb);t('live-mqtt-broker-2',mb);t('live-mqtt-broker-3',mb);t('live-mqtt-topic',nv(d.mqtt.topic));t('live-mqtt-protocol-keepalive',d.mqtt.protocol_keepalive+'s');t('live-mqtt-state-keepalive',d.mqtt.state_keepalive?d.mqtt.state_keepalive+'s':'disabled');t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-pending-2',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',ms(d.mqtt.last_attempt_ms_ago));}");
+  page += F("if(d.mqtt){var mb=d.mqtt.enabled?(d.mqtt.host+':'+d.mqtt.port):'not configured';t('live-mqtt-broker',mb);t('live-mqtt-broker-2',mb);p('live-mqtt-broker-3',mb,d.mqtt.enabled?(d.mqtt.connected?'h-meta pill ok':'h-meta pill warn'):'h-meta pill bad');t('live-mqtt-topic',nv(d.mqtt.topic));t('live-mqtt-protocol-keepalive',d.mqtt.protocol_keepalive+'s');t('live-mqtt-state-keepalive',d.mqtt.state_keepalive?d.mqtt.state_keepalive+'s':'disabled');t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-pending-2',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',ms(d.mqtt.last_attempt_ms_ago));}");
 #if MYMOTA32_LIGHT_SUPPORTED
   page += F("if(d.light){p('live-light-power',d.light.power?'on':'off',d.light.power?'pill ok':'pill bad');t('live-light-dimmer',d.light.dimmer+'%');t('live-light-ct',d.light.ct+' mired');t('live-light-color',d.light.color||'000000');t('live-light-on-dimmer',d.light.on_dimmer+'%');t('live-light-fade',d.light.fade?'on':'off');t('live-light-speed',d.light.speed);t('live-light-fading',d.light.fading?'yes':'no');t('live-light-driver',nv(d.light.driver));}");
 #endif
-  page += F("if(d.ibeacon){var ib=d.ibeacon,ic=!ib.enabled?'pill':(ib.scanning?'pill ok':'pill bad');p('live-ibeacon',ib.enabled?(ib.status||'enabled'):'disabled',ic);t('live-ibeacon-mqtt-rpm',ib.mqtt_reports_per_minute+'/min');}");
-  page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,st=sl.status||'',bad=st.indexOf('failed')>=0||st=='unsupported'||st=='missing_key'||st=='bad_key'||st.indexOf('connect_e')==0||st.indexOf('timeout')>=0,good=st=='ok'||st=='connected'||st=='advertisement'||st=='lock_sent'||st=='unlock_sent'||st.indexOf('confirmed')>=0,sc=!sl.enabled?'pill':(bad?'pill bad':(good?'pill ok':'pill warn'));p('live-switchbot-lock-status',sl.enabled?(st||'unknown'):'disabled',sc);t('live-switchbot-lock-ble',sl.connected?'connected':'disconnected');t('live-switchbot-lock-connected-age',sl.connected_ms_ago==null?'n/a':Math.floor(sl.connected_ms_ago/1000)+'s');t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-door',sl.door_open==null?'n/a':(sl.door_open?'open':'closed'));t('live-switchbot-lock-device',sl.device_health||'n/a');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-battery-quality',sl.battery_quality||'n/a');t('live-switchbot-lock-updated',ag(sl.last_update_ms_ago));t('live-switchbot-lock-status-cb',ag(sl.last_status_callback_ms_ago));t('live-switchbot-lock-battery-cb',ag(sl.last_battery_callback_ms_ago));t('live-switchbot-lock-device-cb',ag(sl.last_device_callback_ms_ago));t('live-switchbot-lock-mac',sl.mac||'n/a');t('live-switchbot-lock-address-type',nv(sl.address_type));t('live-switchbot-lock-error',nv(sl.error_code));t('live-switchbot-lock-disconnect',nv(sl.disconnect_reason));t('live-switchbot-lock-command',sl.command?(sl.command.id+' '+sl.command.status):'n/a');if(sl.callbacks){t('live-switchbot-lock-cb-enabled',yn(sl.callbacks.status_configured)+' / '+yn(sl.callbacks.battery_configured)+' / '+yn(sl.callbacks.device_configured));t('live-switchbot-lock-cb-times',sl.callbacks.offline_delay+'s / '+sl.callbacks.online_heal+'s / '+sl.callbacks.battery_notify+'s');}}");
-  page += F("if(d.shelly_blu_button){var sb=d.shelly_blu_button,st=sb.status||'',busy=!!(sb.busy||sb.beeping||sb.resetting),bad=st=='unsupported'||st.indexOf('failed')>=0||st.indexOf('timeout')>=0||st.indexOf('connect_e')==0||st.indexOf('secure_e')==0||st=='svc_missing'||st=='bond_missing'||st=='slot_full'||st=='passkey_required'||st=='char_missing'||st=='beep_invalid'||st=='reset_invalid'||st.indexOf('write_failed')>=0,good=st=='paired'||st=='beep_ok'||st=='reset_ok'||(!sb.pairing&&sb.paired_count>0),sc=!sb.enabled?'pill':(bad?'pill bad':(sb.pairing||busy||st=='beeping'||st=='resetting'||st.indexOf('_queued')>0?'pill warn':(good?'pill ok':'pill'))),dt=!sb.enabled?'disabled':((st=='idle'&&sb.paired_count>0)?'paired':(st||'idle'));p('live-shelly-blu-status',dt,sc);t('live-shelly-blu-count',sb.paired_count+'/'+sb.max);t('live-shelly-blu-error',nv(sb.last_error));t('live-shelly-blu-action',nv(sb.action));t('live-shelly-blu-stage',nv(sb.stage));t('live-shelly-blu-duration',sb.last_duration_ms?sb.last_duration_ms+' ms':'n/a');for(var x=0;x<sb.max;x++){var bt=sb.buttons&&sb.buttons[x]?sb.buttons[x]:null,has=!!(bt&&bt.mac),mac=has?bt.mac:'empty';t('live-shelly-blu-mac-'+x,mac);var ac=document.getElementById('shelly-blu-actions-'+x),bi=document.getElementById('shelly-blu-beep-mac-'+x),bb=document.getElementById('shelly-blu-beep-btn-'+x),fi=document.getElementById('shelly-blu-forget-mac-'+x),fb=document.getElementById('shelly-blu-forget-btn-'+x),ri=document.getElementById('shelly-blu-reset-mac-'+x),rb=document.getElementById('shelly-blu-reset-btn-'+x);if(ac)ac.classList.toggle('hidden',!has);if(bi)bi.value=has?bt.mac:'';if(bb)bb.disabled=!has||busy||!sb.enabled;if(fi)fi.value=has?bt.mac:'';if(fb)fb.disabled=!has||busy||!sb.enabled;if(ri)ri.value=has?bt.mac:'';if(rb)rb.disabled=!has||busy||!sb.enabled;}}");
+  page += F("if(d.ibeacon){var ib=d.ibeacon,ic=!ib.enabled?'pill bad':(ib.scanning?'pill ok':'pill bad');p('live-ibeacon',ib.enabled?(ib.status||'enabled'):'disabled',ic);t('live-ibeacon-mqtt-rpm',ib.mqtt_reports_per_minute+'/min');}");
+  page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,st=sl.status||'',bad=st.indexOf('failed')>=0||st=='unsupported'||st=='missing_key'||st=='bad_key'||st.indexOf('connect_e')==0||st.indexOf('timeout')>=0,good=st=='ok'||st=='connected'||st=='advertisement'||st=='lock_sent'||st=='unlock_sent'||st.indexOf('confirmed')>=0,sc=!sl.enabled?'pill bad':(bad?'pill bad':(good?'pill ok':'pill warn'));p('live-switchbot-lock-status',sl.enabled?(st||'unknown'):'disabled',sc);t('live-switchbot-lock-ble',sl.connected?'connected':'disconnected');t('live-switchbot-lock-connected-age',sl.connected_ms_ago==null?'n/a':Math.floor(sl.connected_ms_ago/1000)+'s');t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-door',sl.door_open==null?'n/a':(sl.door_open?'open':'closed'));t('live-switchbot-lock-device',sl.device_health||'n/a');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-battery-quality',sl.battery_quality||'n/a');t('live-switchbot-lock-updated',ag(sl.last_update_ms_ago));t('live-switchbot-lock-status-cb',ag(sl.last_status_callback_ms_ago));t('live-switchbot-lock-battery-cb',ag(sl.last_battery_callback_ms_ago));t('live-switchbot-lock-device-cb',ag(sl.last_device_callback_ms_ago));t('live-switchbot-lock-mac',sl.mac||'n/a');t('live-switchbot-lock-address-type',nv(sl.address_type));t('live-switchbot-lock-error',nv(sl.error_code));t('live-switchbot-lock-disconnect',nv(sl.disconnect_reason));t('live-switchbot-lock-command',sl.command?(sl.command.id+' '+sl.command.status):'n/a');if(sl.callbacks){t('live-switchbot-lock-cb-enabled',yn(sl.callbacks.status_configured)+' / '+yn(sl.callbacks.battery_configured)+' / '+yn(sl.callbacks.device_configured));t('live-switchbot-lock-cb-times',sl.callbacks.offline_delay+'s / '+sl.callbacks.online_heal+'s / '+sl.callbacks.battery_notify+'s');}}");
+  page += F("if(d.shelly_blu_button){var sb=d.shelly_blu_button,st=sb.status||'',busy=!!(sb.busy||sb.beeping||sb.resetting),bad=st=='unsupported'||st.indexOf('failed')>=0||st.indexOf('timeout')>=0||st.indexOf('connect_e')==0||st.indexOf('secure_e')==0||st=='svc_missing'||st=='bond_missing'||st=='slot_full'||st=='passkey_required'||st=='char_missing'||st=='beep_invalid'||st=='reset_invalid'||st.indexOf('write_failed')>=0,good=st=='paired'||st=='beep_ok'||st=='reset_ok'||(!sb.pairing&&sb.paired_count>0),sc=!sb.enabled?'pill bad':(bad?'pill bad':(sb.pairing||busy||st=='beeping'||st=='resetting'||st.indexOf('_queued')>0?'pill warn':(good?'pill ok':'pill'))),dt=!sb.enabled?'disabled':((st=='idle'&&sb.paired_count>0)?'paired':(st||'idle'));p('live-shelly-blu-status',dt,sc);t('live-shelly-blu-count',sb.paired_count+'/'+sb.max);t('live-shelly-blu-error',nv(sb.last_error));t('live-shelly-blu-action',nv(sb.action));t('live-shelly-blu-stage',nv(sb.stage));t('live-shelly-blu-duration',sb.last_duration_ms?sb.last_duration_ms+' ms':'n/a');for(var x=0;x<sb.max;x++){var bt=sb.buttons&&sb.buttons[x]?sb.buttons[x]:null,has=!!(bt&&bt.mac),mac=has?bt.mac:'empty';t('live-shelly-blu-mac-'+x,mac);var ac=document.getElementById('shelly-blu-actions-'+x),bi=document.getElementById('shelly-blu-beep-mac-'+x),bb=document.getElementById('shelly-blu-beep-btn-'+x),fi=document.getElementById('shelly-blu-forget-mac-'+x),fb=document.getElementById('shelly-blu-forget-btn-'+x),ri=document.getElementById('shelly-blu-reset-mac-'+x),rb=document.getElementById('shelly-blu-reset-btn-'+x);if(ac)ac.classList.toggle('hidden',!has);if(bi)bi.value=has?bt.mac:'';if(bb)bb.disabled=!has||busy||!sb.enabled;if(fi)fi.value=has?bt.mac:'';if(fb)fb.disabled=!has||busy||!sb.enabled;if(ri)ri.value=has?bt.mac:'';if(rb)rb.disabled=!has||busy||!sb.enabled;}}");
   page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!==null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
@@ -8184,15 +8184,17 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("function lv(i){return i.type=='checkbox'?(i.checked?'1':'0'):i.value;}function lu(i){var e=i.getAttribute('data-live'),s=i.getAttribute('data-suffix')||'',v=lv(i);if(i.type=='checkbox')v=i.checked?(i.getAttribute('data-on')||'on'):(i.getAttribute('data-off')||'off');if(e)t(e,v+s);}function la(i){lu(i);var body=new URLSearchParams();body.append(i.name,lv(i));body.append('_inline','1');fetch('/light',{method:'POST',body:body,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});live();}).catch(function(x){alert(x.message||x);});}");
 #endif
   page += F("function sf(i){var t=document.getElementById('settings-json');if(!i.files||!i.files[0]||!t)return;var r=new FileReader();r.onload=function(){t.value=String(r.result||'');};r.readAsText(i.files[0]);}");
-  page += F("function ts(){var s=document.getElementById('known-template'),t=document.getElementById('template-json');if(!s||!t)return;var v=t.value.trim(),m=0;for(var i=1;i<s.options.length;i++){if(s.options[i].getAttribute('data-json')==v){m=i;break;}}s.selectedIndex=m;}");
-  page += F("function tp(s){var o=s.options[s.selectedIndex],t=document.getElementById('template-json');if(o&&t&&o.getAttribute('data-json')){t.value=o.getAttribute('data-json');ts();}}");
+  page += F("function ts(){var t=document.getElementById('template-json'),p=document.getElementById('known-template-picker'),b=document.getElementById('known-template-button');if(!t||!p||!b)return;var v=t.value.trim(),a=p.querySelectorAll('[data-json]'),m='Select a template';for(var i=0;i<a.length;i++){var x=a[i].getAttribute('data-json')==v;a[i].classList.toggle('selected',x);if(x)m=a[i].textContent;}b.textContent=m;}");
+  page += F("function tp(o){var t=document.getElementById('template-json'),p=document.getElementById('known-template-picker');if(o&&t&&o.getAttribute('data-json')){t.value=o.getAttribute('data-json');if(p)p.classList.remove('open');ts();}}");
+  page += F("function ti(){var p=document.getElementById('known-template-picker'),b=document.getElementById('known-template-button');if(!p||!b)return;b.onclick=function(e){e.preventDefault();p.classList.toggle('open');};var a=p.querySelectorAll('[data-json]');for(var i=0;i<a.length;i++)a[i].onclick=function(e){e.preventDefault();tp(this);};if(!document._mtp){document._mtp=1;document.addEventListener('click',function(e){var p=document.getElementById('known-template-picker');if(p&&!p.contains(e.target))p.classList.remove('open');},true);}}");
+  page += F("function et(){var a=document.querySelectorAll('.enable-toggle');for(var i=0;i<a.length;i++){var c=a[i],d=document.getElementById(c.getAttribute('data-details'));if(d)d.classList.toggle('hidden',!c.checked);c.onchange=function(){var d=document.getElementById(this.getAttribute('data-details'));if(d)d.classList.toggle('hidden',!this.checked);};}}");
   page += F("function vf(f){var t=(f.getAttribute('data-target')||'').toLowerCase(),i=f.querySelector('input[type=file]'),c=f.querySelector('.fv');if(!i||!t)return true;if(c&&!c.checked){i.setCustomValidity('');return true;}var n=i.files&&i.files[0]?i.files[0].name.toLowerCase():'';var o=!n||n.indexOf(t)>=0;i.setCustomValidity(o?'':'Firmware file name must include '+t);return o;}");
   page += F("function fu(f){var c=f.querySelector('.fv');f.action='/update?verify='+(!c||c.checked?'1':'0');}");
   page += F("function fw(){var a=document.querySelectorAll('.fu');for(var i=0;i<a.length;i++){(function(f){var x=f.querySelector('input[type=file]'),c=f.querySelector('.fv');fu(f);if(x)x.onchange=function(){vf(f);this.reportValidity();};if(c)c.onchange=function(){fu(f);vf(f);if(x)x.reportValidity();};f.addEventListener('submit',function(e){fu(f);if(!vf(f)){e.preventDefault();if(x)x.reportValidity();}},true);})(a[i]);}}");
 #if MYMOTA32_LIGHT_SUPPORTED
-  page += F("function bi(){var a=document.querySelectorAll('.ba');for(var i=0;i<a.length;i++){a[i].onchange=function(){ba(this)};ba(a[i]);}var m=document.querySelectorAll('.im');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var c=document.querySelectorAll('.rbc');for(var k=0;k<c.length;k++){c[k].onchange=function(){rb(this)};rb(c[k]);}var l=document.querySelectorAll('.la');for(var n=0;n<l.length;n++){l[n].oninput=function(){lu(this)};l[n].onchange=function(){la(this)};}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ts();}bi();fw();");
+  page += F("function bi(){var a=document.querySelectorAll('.ba');for(var i=0;i<a.length;i++){a[i].onchange=function(){ba(this)};ba(a[i]);}var m=document.querySelectorAll('.im');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var c=document.querySelectorAll('.rbc');for(var k=0;k<c.length;k++){c[k].onchange=function(){rb(this)};rb(c[k]);}var l=document.querySelectorAll('.la');for(var n=0;n<l.length;n++){l[n].oninput=function(){lu(this)};l[n].onchange=function(){la(this)};}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ti();et();ts();}bi();fw();");
 #else
-  page += F("function bi(){var a=document.querySelectorAll('.ba');for(var i=0;i<a.length;i++){a[i].onchange=function(){ba(this)};ba(a[i]);}var m=document.querySelectorAll('.im');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var c=document.querySelectorAll('.rbc');for(var k=0;k<c.length;k++){c[k].onchange=function(){rb(this)};rb(c[k]);}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ts();}bi();fw();");
+  page += F("function bi(){var a=document.querySelectorAll('.ba');for(var i=0;i<a.length;i++){a[i].onchange=function(){ba(this)};ba(a[i]);}var m=document.querySelectorAll('.im');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var c=document.querySelectorAll('.rbc');for(var k=0;k<c.length;k++){c[k].onchange=function(){rb(this)};rb(c[k]);}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ti();et();ts();}bi();fw();");
 #endif
   page += F("document.addEventListener('click',function(e){var b=e.target;while(b&&b.tagName!='BUTTON'&&b.tagName!='INPUT')b=b.parentNode;if(!b||!b.form)return;var t=(b.type||'').toLowerCase();if(t=='submit'||t=='image')b.form._s=b;},true);");
   page += F("document.addEventListener('submit',function(e){var f=e.target;if(!f||f.getAttribute('data-inline')!='1')return;e.preventDefault();var bk=f.getAttribute('data-busy');if(bk&&fbz[bk])return;var fd=new FormData(f),b=e.submitter||f._s;if(b&&b.name)fd.append(b.name,b.value);fd.append('_inline','1');var body=new URLSearchParams();fd.forEach(function(v,k){body.append(k,v);});if(bk){fbz[bk]=1;sdb(bk,true);}var fin=function(){if(bk){fbz[bk]=0;sdb(bk,false);}};fetch(f.getAttribute('action')||location.pathname,{method:(f.method||'POST').toUpperCase(),body:body,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});if(f.getAttribute('data-reload')=='1'){location.reload();return;}live();}).then(fin).catch(function(x){fin();alert(x.message||x);});},true);");
@@ -9282,39 +9284,33 @@ void appendButtonSettings(String &page) {
   page += F("</div></form><div class='panel-foot'><button type='submit' form='form-buttons'>Save inputs</button></div></section>");
 }
 
+void appendTemplatePickerOption(String &page, const char *json, const __FlashStringHelper *label) {
+  page += F("<button type='button' data-json='");
+  page += htmlEscape(String(FPSTR(json)));
+  page += F("'>");
+  page += label;
+  page += F("</button>");
+}
+
 void appendTemplateForm(String &page) {
-  page += F("<section class='panel wide'><div class='panel-head'><h2>Template Selection</h2><span class='h-meta'>Tasmota ESP32 JSON</span></div><form id='form-template' method='post' action='/template'><div class='panel-body'>");
-  page += F("<div class='field'><label>Known template<select id='known-template' onchange='tp(this)'><option value=''>Select a template</option>");
+  page += F("<section class='panel wide template-panel'><div class='panel-head'><h2>Template Selection</h2><span class='h-meta'>Tasmota ESP32 JSON</span></div><form id='form-template' method='post' action='/template'><div class='panel-body'>");
+  page += F("<div class='field'><label>Known template</label><div id='known-template-picker' class='template-picker'><button id='known-template-button' class='template-trigger' type='button'>Select a template</button><div class='template-menu'>");
 #if CONFIG_IDF_TARGET_ESP32C3
-  page += F("<option data-json='");
-  page += htmlEscape(String(FPSTR(kTemplateGenericC3RelayJson)));
-  page += F("'>Generic C3 Relay</option><option data-json='");
-  page += htmlEscape(String(FPSTR(kTemplateSwitchbotW1401400Json)));
-  page += F("'>Switchbot W1401400</option>");
+  appendTemplatePickerOption(page, kTemplateGenericC3RelayJson, F("Generic C3 Relay"));
+  appendTemplatePickerOption(page, kTemplateSwitchbotW1401400Json, F("Switchbot W1401400"));
 #else
-  page += F("<option data-json='");
-  page += htmlEscape(String(FPSTR(kTemplateNousA8tJson)));
-  page += F("'>NOUS A8T</option><option data-json='");
-  page += htmlEscape(String(FPSTR(kTemplateNousB1tJson)));
-  page += F("'>NOUS B1T</option><option data-json='");
-  page += htmlEscape(String(FPSTR(kTemplateNousB3tJson)));
-  page += F("'>NOUS B3T</option><option data-json='");
-  page += htmlEscape(String(FPSTR(kTemplateShellyPlus2PmPcb019Json)));
-  page += F("'>Shelly Plus 2PM PCB v0.1.9</option><option data-json='");
-  page += htmlEscape(String(FPSTR(kTemplateShellyPlus1PmJson)));
-  page += F("'>Shelly Plus 1PM</option><option data-json='");
-  page += htmlEscape(String(FPSTR(kTemplateShellyPlus1Json)));
-  page += F("'>Shelly Plus 1</option><option data-json='");
-  page += htmlEscape(String(FPSTR(kTemplateShellyPlusI4Json)));
-  page += F("'>Shelly Plus i4</option><option data-json='");
-  page += htmlEscape(String(FPSTR(kTemplateShellyPlusPlugSJson)));
-  page += F("'>Shelly Plus Plug S</option><option data-json='");
-  page += htmlEscape(String(FPSTR(kTemplateSonoffDualR3V2Json)));
-  page += F("'>Sonoff Dual R3 v2</option><option data-json='");
-  page += htmlEscape(String(FPSTR(kTemplateSonoffMinir4Json)));
-  page += F("'>Sonoff MINIR4</option>");
+  appendTemplatePickerOption(page, kTemplateNousA8tJson, F("NOUS A8T"));
+  appendTemplatePickerOption(page, kTemplateNousB1tJson, F("NOUS B1T"));
+  appendTemplatePickerOption(page, kTemplateNousB3tJson, F("NOUS B3T"));
+  appendTemplatePickerOption(page, kTemplateShellyPlus2PmPcb019Json, F("Shelly Plus 2PM PCB v0.1.9"));
+  appendTemplatePickerOption(page, kTemplateShellyPlus1PmJson, F("Shelly Plus 1PM"));
+  appendTemplatePickerOption(page, kTemplateShellyPlus1Json, F("Shelly Plus 1"));
+  appendTemplatePickerOption(page, kTemplateShellyPlusI4Json, F("Shelly Plus i4"));
+  appendTemplatePickerOption(page, kTemplateShellyPlusPlugSJson, F("Shelly Plus Plug S"));
+  appendTemplatePickerOption(page, kTemplateSonoffDualR3V2Json, F("Sonoff Dual R3 v2"));
+  appendTemplatePickerOption(page, kTemplateSonoffMinir4Json, F("Sonoff MINIR4"));
 #endif
-  page += F("</select></label></div>");
+  page += F("</div></div></div>");
   page += F("<div class='field'><label>Tasmota ESP32 template JSON<textarea id='template-json' name='template' rows='6' maxlength='");
   page += String(kTemplateJsonMaxLen);
   page += F("'>");
@@ -9324,7 +9320,9 @@ void appendTemplateForm(String &page) {
 }
 
 void appendMqttForm(String &page) {
-  page += F("<section class='panel'><div class='panel-head'><h2>MQTT Settings</h2><span class='h-meta' id='live-mqtt-broker-3'>");
+  page += F("<section class='panel'><div class='panel-head'><h2>MQTT Settings</h2><span class='h-meta pill ");
+  page += config.mqtt_host[0] == '\0' ? F("bad") : (mqtt_client.connected() ? F("ok") : F("warn"));
+  page += F("' id='live-mqtt-broker-3'>");
   if (config.mqtt_host[0] == '\0') page += F("not configured");
   else {
     page += htmlEscape(config.mqtt_host);
@@ -9384,7 +9382,7 @@ void appendSettingsForm(String &page) {
   page += F("<div class='field'><label>Settings JSON<textarea id='settings-json' name='settings_json' rows='8' maxlength='");
   page += String(kSettingsImportJsonMaxLen);
   page += F("'></textarea></label></div>");
-  page += F("<p class='hint'>Wi-Fi SSID, password, hostname, and PHY mode are not exported or imported.</p>");
+  page += F("<div class='hint settings-note'>Wi-Fi SSID, password, hostname, and PHY mode are not exported or imported.</div>");
   page += F("</div></form><div class='panel-foot'><a class='btn secondary' href='/settings/export'>Export settings</a><button type='submit' form='form-settings-import'>Import settings</button></div></section>");
 }
 
@@ -9419,14 +9417,16 @@ void appendIBeaconForm(String &page) {
     page += htmlEscape(ibeacon_status);
     page += F("</span>");
   } else {
-    page += F("<span id='live-ibeacon' class='pill'>disabled</span>");
+    page += F("<span id='live-ibeacon' class='pill bad'>disabled</span>");
   }
   page += F("</div><form id='form-ibeacon' data-inline='1' data-reload='1' method='post' action='/ibeacon'><div class='panel-body'>");
-  page += F("<div class='field'><label><input type='checkbox' name='enabled' value='1'");
+  page += F("<div class='field'><label><input class='enable-toggle' data-details='ibeacon-details' type='checkbox' name='enabled' value='1'");
   if (config.ibeacon_enabled) page += F(" checked");
   if (unsupported) page += F(" disabled");
   page += F(">Enable</label></div>");
-  if (config.ibeacon_enabled) {
+  page += F("<div id='ibeacon-details' class='enable-details");
+  if (!config.ibeacon_enabled) page += F(" hidden");
+  page += F("'>");
     page += F("<div class='field'><label>G1 MACs<input name='f1' maxlength='");
     page += String(kIBeaconFilterInputMaxLen);
     page += F("' value='");
@@ -9445,7 +9445,7 @@ void appendIBeaconForm(String &page) {
     page += F("></label><label>Max");
     appendIBeaconIntervalSelect(page, "i2", config.ibeacon_filter2_interval_sec, unsupported);
     page += F("</label></div>");
-  }
+  page += F("</div>");
   page += F("</div></form><div class='panel-foot'><button type='submit' form='form-ibeacon'");
   if (unsupported) page += F(" disabled");
   page += F(">Save iBeacon</button></div></section>");
@@ -9467,14 +9467,16 @@ void appendSwitchbotLockForm(String &page) {
     page += htmlEscape(switchbot_lock_status);
     page += F("</span>");
   } else {
-    page += F("<span id='live-switchbot-lock-status' class='pill'>disabled</span>");
+    page += F("<span id='live-switchbot-lock-status' class='pill bad'>disabled</span>");
   }
   page += F("</div><form id='switchbot-lock-form' data-inline='1' data-reload='1' method='post' action='/switchbot-lock'></form><div class='panel-body'>");
-  page += F("<div class='field'><label><input form='switchbot-lock-form' type='checkbox' name='enabled' value='1'");
+  page += F("<div class='field'><label><input class='enable-toggle' data-details='switchbot-lock-details' form='switchbot-lock-form' type='checkbox' name='enabled' value='1'");
   if (config.switchbot_lock_enabled) page += F(" checked");
   if (unsupported) page += F(" disabled");
   page += F(">Enable</label></div>");
-  if (config.switchbot_lock_enabled) {
+  page += F("<div id='switchbot-lock-details' class='enable-details");
+  if (!config.switchbot_lock_enabled) page += F(" hidden");
+  page += F("'>");
   page += F("<div class='field-row'><div class='field'><label>Lock MAC<input form='switchbot-lock-form' name='mac' maxlength='17' value='");
   page += htmlEscape(config.switchbot_lock_mac);
   page += F("'");
@@ -9623,7 +9625,7 @@ void appendSwitchbotLockForm(String &page) {
   page += F(">Lock</button><button class='secondary' name='action' value='unlock'");
   if (controls_disabled) page += F(" disabled");
   page += F(">Unlock</button></span></form></div>");
-  }
+  page += F("</div>");
   page += F("</div><div class='panel-foot'><button form='switchbot-lock-form' type='submit'");
   if (unsupported) page += F(" disabled");
   page += F(">Save Switchbot Lock</button></div></section>");
@@ -9636,7 +9638,7 @@ void appendShellyBluButtonForm(String &page) {
   if (unsupported) {
     page += F("<span id='live-shelly-blu-status' class='pill bad'>unsupported</span>");
   } else if (!config.shelly_blu_button_enabled) {
-    page += F("<span id='live-shelly-blu-status' class='pill'>disabled</span>");
+    page += F("<span id='live-shelly-blu-status' class='pill bad'>disabled</span>");
   } else if (shelly_blu_pair.active) {
     page += F("<span id='live-shelly-blu-status' class='pill warn'>");
     page += htmlEscape(shelly_blu_button_status);
@@ -9650,11 +9652,13 @@ void appendShellyBluButtonForm(String &page) {
     page += F("<span id='live-shelly-blu-status' class='pill'>idle</span>");
   }
   page += F("</div><form id='form-shelly-blu' data-inline='1' data-reload='1' method='post' action='/shelly-blu-button'></form><div class='panel-body'>");
-  page += F("<div class='field'><label><input form='form-shelly-blu' type='checkbox' name='enabled' value='1'");
+  page += F("<div class='field'><label><input class='enable-toggle' data-details='shelly-blu-details' form='form-shelly-blu' type='checkbox' name='enabled' value='1'");
   if (config.shelly_blu_button_enabled) page += F(" checked");
   if (unsupported) page += F(" disabled");
   page += F(">Enable</label></div>");
-  if (config.shelly_blu_button_enabled) {
+  page += F("<div id='shelly-blu-details' class='enable-details");
+  if (!config.shelly_blu_button_enabled) page += F(" hidden");
+  page += F("'>");
   page += F("<div class='kv'><span>Paired</span><div><code id='live-shelly-blu-count'>");
   page += String(paired_count);
   page += F("/");
@@ -9670,7 +9674,7 @@ void appendShellyBluButtonForm(String &page) {
   else page += String(shelly_blu_button_last_duration_ms) + F(" ms");
   page += F("</code></div></div>");
 
-  page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Pair</div></div><form data-inline='1' method='post' action='/shelly-blu-button'>");
+  page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Pair</div></div><form data-inline='1' method='post' action='/shelly-blu-button'><input type='hidden' name='enabled' value='1'>");
   page += F("<div class='field'><label>Button MAC<input name='mac' maxlength='17' placeholder='AA:BB:CC:DD:EE:FF'");
   if (unsupported) page += F(" disabled");
   page += F("></label></div>");
@@ -9723,7 +9727,7 @@ void appendShellyBluButtonForm(String &page) {
     page += F(">Reset</button></form></div></div></div>");
   }
   page += F("</div></div>");
-  }
+  page += F("</div>");
   page += F("</div><div class='panel-foot'><button form='form-shelly-blu' type='submit' name='action' value='save'");
   if (unsupported) page += F(" disabled");
   page += F(">Save Shelly BLU Button</button></div></section>");
@@ -9870,7 +9874,7 @@ void handleRoot() {
 
   appendSectionHead(page, F("Network"));
   flushStreamChunk(page);
-  page += F("<section class='panel'><div class='panel-head'><h2>Wi-Fi</h2><span class='h-meta'>");
+  page += F("<section class='panel'><div class='panel-head'><h2>Wi-Fi</h2><span class='h-meta pill ok'>");
   page += phyModeName(config.phy_mode);
   page += F("</span></div><form id='form-wifi' method='post' action='/wifi'><div class='panel-body'>");
   page += F("<div class='field'><label>SSID<input name='ssid' maxlength='32' required value='");
@@ -9906,7 +9910,7 @@ void handleRoot() {
   page += F("</form></div>");
   page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Reboot</div></div><div class='actions'><a class='btn secondary' href='/reboot'>Reboot</a></div>");
   page += F("<div class='actions'><form class='inline' method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset?')\"><button class='danger' type='submit'>Factory Reset</button></form></div></div></div>");
-  page += F("<div class='panel-foot'><button type='submit' form='form-firmware'>Upload firmware</button><button type='submit' form='form-system'>Save power saving</button></div></section>");
+  page += F("<div class='panel-foot'><button type='submit' form='form-system'>Save power saving</button><button type='submit' form='form-firmware'>Upload firmware</button></div></section>");
   flushStreamChunk(page);
 
   appendSettingsForm(page);
@@ -11111,6 +11115,15 @@ void handleShellyBluButton() {
     }
     sendInlineOkOrHome();
     return;
+  }
+
+  if (!config.shelly_blu_button_enabled && action == F("pair") &&
+      server.hasArg("enabled") && server.arg("enabled") == "1") {
+    if (!saveShellyBluButtonConfig(true, config.shelly_blu_button_macs)) {
+      sendPlain(500, F("enable failed"));
+      return;
+    }
+    if (strcmp(shelly_blu_button_status, "disabled") == 0) setShellyBluButtonStatus("idle");
   }
 
   if (!config.shelly_blu_button_enabled) {
