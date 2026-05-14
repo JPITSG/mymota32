@@ -115,8 +115,12 @@ constexpr uint8_t kWifiDynamicPowerDefault = 1;
 constexpr int8_t kWifiTxPowerMaxQdbm = 82;     // 20.5 dBm
 constexpr int8_t kWifiTxPowerMediumQdbm = 52;  // 13.0 dBm
 constexpr int8_t kWifiTxPowerStrongQdbm = 40;  // 10.0 dBm
-constexpr uint32_t kBootRecoveryStableMs = 30000;
-constexpr uint8_t kBootRecoveryLimit = 5;
+constexpr uint8_t kBootRecoveryLimitDefault = 5;
+constexpr uint8_t kBootRecoveryLimitMin = 2;
+constexpr uint8_t kBootRecoveryLimitMax = 20;
+constexpr uint16_t kBootRecoveryStableDefaultSec = 15;
+constexpr uint16_t kBootRecoveryStableMinSec = 5;
+constexpr uint16_t kBootRecoveryStableMaxSec = 600;
 constexpr size_t kUpdateSectorSize = 4096;
 constexpr size_t kUpdateHeaderHoldBytes = 16;
 constexpr uint8_t kEspImageMagic = 0xE9;
@@ -687,6 +691,8 @@ struct StoredConfig {
 
   uint16_t power_saving_mode;
   uint8_t wifi_dynamic_power;
+  uint8_t boot_recovery_limit;
+  uint16_t boot_recovery_stable_seconds;
 };
 
 struct TasmotaSafebootSettings {
@@ -864,6 +870,8 @@ uint32_t boot_recovery_count = 0;
 bool boot_recovery_factory_reset = false;
 bool boot_recovery_cleared = false;
 uint32_t boot_started_ms = 0;
+uint8_t boot_recovery_limit = kBootRecoveryLimitDefault;
+uint16_t boot_recovery_stable_seconds = kBootRecoveryStableDefaultSec;
 
 bool update_started = false;
 bool update_ok = false;
@@ -1100,6 +1108,18 @@ const __FlashStringHelper *phyModeName(uint8_t mode) {
 
 uint8_t sanitizePowerSavingMode(uint16_t mode) {
   return mode <= kPowerSavingOffLocked ? static_cast<uint8_t>(mode) : kPowerSavingOff;
+}
+
+uint8_t sanitizeBootRecoveryLimit(uint16_t value) {
+  if (value < kBootRecoveryLimitMin || value > kBootRecoveryLimitMax) return kBootRecoveryLimitDefault;
+  return static_cast<uint8_t>(value);
+}
+
+uint16_t sanitizeBootRecoveryStableSeconds(uint16_t value) {
+  if (value < kBootRecoveryStableMinSec || value > kBootRecoveryStableMaxSec) {
+    return kBootRecoveryStableDefaultSec;
+  }
+  return value;
 }
 
 bool powerSavingModePersists(uint16_t mode) {
@@ -2140,6 +2160,8 @@ void setDefaultConfig() {
   config.shelly_blu_button_enabled = 0;
   config.power_saving_mode = kPowerSavingOff;
   config.wifi_dynamic_power = kWifiDynamicPowerDefault;
+  config.boot_recovery_limit = kBootRecoveryLimitDefault;
+  config.boot_recovery_stable_seconds = kBootRecoveryStableDefaultSec;
 }
 
 template <size_t N>
@@ -2286,6 +2308,8 @@ bool loadConfig() {
   }
   uint16_t power_saving_mode = prefs.getUShort("pwr_save", kPowerSavingOff);
   uint8_t wifi_dynamic_power = prefs.getUChar("wifi_dyn", kWifiDynamicPowerDefault);
+  uint16_t boot_recovery_limit_value = prefs.getUShort("br_limit", kBootRecoveryLimitDefault);
+  uint16_t boot_recovery_stable_value = prefs.getUShort("br_stable", kBootRecoveryStableDefaultSec);
   prefs.end();
 
   strlcpy(config.ssid, ssid.c_str(), sizeof(config.ssid));
@@ -2466,6 +2490,10 @@ bool loadConfig() {
   }
   config.power_saving_mode = powerSavingModePersists(power_saving_mode) ? kPowerSavingOffLocked : kPowerSavingOff;
   config.wifi_dynamic_power = wifi_dynamic_power ? 1 : 0;
+  config.boot_recovery_limit = sanitizeBootRecoveryLimit(boot_recovery_limit_value);
+  config.boot_recovery_stable_seconds = sanitizeBootRecoveryStableSeconds(boot_recovery_stable_value);
+  boot_recovery_limit = config.boot_recovery_limit;
+  boot_recovery_stable_seconds = config.boot_recovery_stable_seconds;
 
   config_ok = config.ssid[0] != '\0';
   DBG_LOG("config", "loaded ok=%u hostname=%s ssid_set=%u mqtt_set=%u template=%u ibeacon=%u switchbot=%u shelly=%u",
@@ -2629,6 +2657,26 @@ bool savePowerSavingConfig(uint8_t mode) {
   return true;
 }
 
+bool saveSystemConfig(uint8_t power_saving_mode, uint16_t recovery_limit, uint16_t recovery_stable_seconds) {
+  power_saving_mode = sanitizePowerSavingMode(power_saving_mode);
+  recovery_limit = sanitizeBootRecoveryLimit(recovery_limit);
+  recovery_stable_seconds = sanitizeBootRecoveryStableSeconds(recovery_stable_seconds);
+  DBG_LOG("config", "save system power_saving=%u recovery=%u/%u",
+          power_saving_mode, recovery_limit, recovery_stable_seconds);
+  if (!prefs.begin("mymota32", false)) return false;
+  if (powerSavingModePersists(power_saving_mode)) prefs.putUShort("pwr_save", power_saving_mode);
+  else prefs.remove("pwr_save");
+  prefs.putUShort("br_limit", recovery_limit);
+  prefs.putUShort("br_stable", recovery_stable_seconds);
+  prefs.end();
+  config.power_saving_mode = power_saving_mode;
+  config.boot_recovery_limit = static_cast<uint8_t>(recovery_limit);
+  config.boot_recovery_stable_seconds = recovery_stable_seconds;
+  boot_recovery_limit = config.boot_recovery_limit;
+  boot_recovery_stable_seconds = config.boot_recovery_stable_seconds;
+  return true;
+}
+
 bool powerSavingApiLocked() {
   return sanitizePowerSavingMode(config.power_saving_mode) == kPowerSavingOffLocked;
 }
@@ -2720,11 +2768,27 @@ bool factoryResetConfig() {
   clearGracefulRelaySnapshot();
   clearLastRelaySnapshot();
   setDefaultConfig();
+  boot_recovery_limit = config.boot_recovery_limit;
+  boot_recovery_stable_seconds = config.boot_recovery_stable_seconds;
   config_ok = false;
   return true;
 }
 
+void loadBootRecoverySettings() {
+  boot_recovery_limit = kBootRecoveryLimitDefault;
+  boot_recovery_stable_seconds = kBootRecoveryStableDefaultSec;
+  Preferences settings_prefs;
+  if (settings_prefs.begin("mymota32", true)) {
+    boot_recovery_limit = sanitizeBootRecoveryLimit(
+      settings_prefs.getUShort("br_limit", kBootRecoveryLimitDefault));
+    boot_recovery_stable_seconds = sanitizeBootRecoveryStableSeconds(
+      settings_prefs.getUShort("br_stable", kBootRecoveryStableDefaultSec));
+    settings_prefs.end();
+  }
+}
+
 void loadBootRecoveryState() {
+  loadBootRecoverySettings();
   Preferences boot_prefs;
   if (!boot_prefs.begin("mymota32-boot", false)) {
     boot_recovery_count = 0;
@@ -2735,14 +2799,17 @@ void loadBootRecoveryState() {
   boot_recovery_count = boot_prefs.getUInt("count", 0) + 1;
   boot_prefs.putUInt("count", boot_recovery_count);
   boot_prefs.end();
-  DBG_LOG("boot", "recovery count=%lu limit=%u",
-          static_cast<unsigned long>(boot_recovery_count), kBootRecoveryLimit);
+  DBG_LOG("boot", "recovery count=%lu limit=%u stable=%u",
+          static_cast<unsigned long>(boot_recovery_count), boot_recovery_limit,
+          boot_recovery_stable_seconds);
 
-  if (boot_recovery_count >= kBootRecoveryLimit) {
+  if (boot_recovery_count >= boot_recovery_limit) {
     boot_recovery_factory_reset = true;
     DBG_LOG("boot", "recovery limit reached, factory reset");
     factoryResetConfig();
     boot_recovery_count = 0;
+    boot_recovery_limit = kBootRecoveryLimitDefault;
+    boot_recovery_stable_seconds = kBootRecoveryStableDefaultSec;
   }
 }
 
@@ -2758,7 +2825,7 @@ void clearBootRecoveryState() {
 
 void maintainBootRecovery() {
   if (boot_recovery_cleared) return;
-  if (millis() - boot_started_ms >= kBootRecoveryStableMs) {
+  if (millis() - boot_started_ms >= static_cast<uint32_t>(boot_recovery_stable_seconds) * 1000UL) {
     clearBootRecoveryState();
   }
 }
@@ -8572,7 +8639,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("if(d.partitions){var r=d.partitions.running||{},u=d.partitions.next_update||{},f=d.partitions.factory||{};t('live-part-running-label',nv(r.label));t('live-part-running-size',r.size==null?'n/a':r.size+' bytes');t('live-part-update-label',nv(u.label));t('live-part-update-size',u.size==null?'n/a':u.size+' bytes');t('live-part-factory-label',nv(f.label));t('live-part-factory-size',f.size==null?'n/a':f.size+' bytes');t('live-part-ota-slots',nv(d.partitions.ota_slots));}");
   page += F("t('live-uptime',d.uptime+'s');t('live-uptime-2',d.uptime+'s');t('live-configured-phy',nv(d.configured_phy));t('live-active-phy',nv(d.active_phy));");
   page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',Number(d.perf.loop_max_us/1000).toFixed(1)+' ms');}");
-  page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);");
+  page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);t('live-recovery-stable',d.recovery.stable_seconds+'s');");
   page += F("var wu=d.wifi_usable!=null?d.wifi_usable:d.wifi,ws=!!d.wifi_sdk_connected,wl=ws?'connected':(wu?'usable':'disconnected'),wc=ws?'pill ok':(wu?'pill warn':'pill bad');p('live-wifi',wl,wc);t('live-ssid',d.wifi_ssid||'n/a');t('live-ssid-2',d.wifi_ssid||'n/a');t('live-wifi-sdk',(d.wifi_status_name||'unknown')+' ('+(d.wifi_status==null?'?':d.wifi_status)+')');t('live-ip',d.ip||'n/a');t('live-ip-2',d.ip||'n/a');t('live-gateway',d.gateway_ip||'n/a');t('live-dns',d.dns_ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');t('live-rssi-2',d.rssi==null?'n/a':d.rssi+' dBm');t('live-ap',d.ap?(d.ap_ssid||'active'):'off');t('live-ap-ip',d.ap_ip||'n/a');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
   page += F("if(d.mqtt){var mb=d.mqtt.enabled?(d.mqtt.host+':'+d.mqtt.port):'not configured';t('live-mqtt-broker',mb);t('live-mqtt-broker-2',mb);p('live-mqtt-broker-3',mb,d.mqtt.enabled?(d.mqtt.connected?'h-meta pill ok':'h-meta pill warn'):'h-meta pill bad');t('live-mqtt-topic',nv(d.mqtt.topic));t('live-mqtt-protocol-keepalive',d.mqtt.protocol_keepalive+'s');t('live-mqtt-state-keepalive',d.mqtt.state_keepalive?d.mqtt.state_keepalive+'s':'disabled');t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-pending-2',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',ms(d.mqtt.last_attempt_ms_ago));}");
@@ -9023,9 +9090,9 @@ void appendStatusBlock(String &page) {
   page += F("</code> active</div><span>Recovery guard</span><div><code id='live-recovery'>");
   page += String(boot_recovery_count);
   page += F("/");
-  page += String(kBootRecoveryLimit);
-  page += F("</code> clears after <code>");
-  page += String(kBootRecoveryStableMs / 1000);
+  page += String(boot_recovery_limit);
+  page += F("</code> clears after <code id='live-recovery-stable'>");
+  page += String(boot_recovery_stable_seconds);
   page += F("s</code>");
   if (boot_recovery_factory_reset) {
     page += F(" <span class='pill bad'>factory reset</span>");
@@ -10316,12 +10383,24 @@ void handleRoot() {
   page += F("<div class='field'><label>Firmware binary<input type='file' name='firmware' accept='.bin' required></label></div>");
   page += F("<div class='field'><label><input class='fv' type='checkbox' checked>Verify target</label></div>");
   page += F("</form></div>");
-  page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Power Saving</div></div><form id='form-system' method='post' action='/system'>");
+  page += F("<form id='form-system' method='post' action='/system'><div class='subblock'><div class='subblock-head'><div class='title'>Power Saving</div></div>");
   appendPowerSavingSelect(page);
-  page += F("</form></div>");
+  page += F("</div><div class='subblock'><div class='subblock-head'><div class='title'>Recovery Guard</div></div><div class='field-row'><div class='field'><label>Boot limit<input name='recovery_limit' type='number' min='");
+  page += String(kBootRecoveryLimitMin);
+  page += F("' max='");
+  page += String(kBootRecoveryLimitMax);
+  page += F("' step='1' value='");
+  page += String(config.boot_recovery_limit);
+  page += F("'></label></div><div class='field'><label>Stable seconds<input name='recovery_stable_seconds' type='number' min='");
+  page += String(kBootRecoveryStableMinSec);
+  page += F("' max='");
+  page += String(kBootRecoveryStableMaxSec);
+  page += F("' step='1' value='");
+  page += String(config.boot_recovery_stable_seconds);
+  page += F("'></label></div></div></div></form>");
   page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Reboot</div></div><div class='reboot-actions'><a class='btn secondary' href='/reboot-soft'>Reboot Soft</a><a class='btn secondary' href='/reboot-cold'>Reboot Cold</a>");
   page += F("<form method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset?')\"><button class='danger' type='submit'>Factory Reset</button></form><a class='btn danger' href='/force-reset' onclick=\"return confirm('Force reset skips normal shutdown and may drop unsaved runtime state. Continue?')\">Force Reset</a></div></div></div>");
-  page += F("<div class='panel-foot'><button type='submit' form='form-system'>Save power saving</button><button type='submit' form='form-firmware'>Upload firmware</button></div></section>");
+  page += F("<div class='panel-foot'><button type='submit' form='form-system'>Save system</button><button type='submit' form='form-firmware'>Upload firmware</button></div></section>");
   flushStreamChunk(page);
 
   appendSettingsForm(page);
@@ -11820,8 +11899,20 @@ void handleSystemSave() {
     sendPlain(400, F("Invalid power saving"));
     return;
   }
+  uint16_t recovery_limit = config.boot_recovery_limit;
+  uint16_t recovery_stable_seconds = config.boot_recovery_stable_seconds;
+  if (!parseUint16Input(server.arg("recovery_limit"), kBootRecoveryLimitMin,
+                        kBootRecoveryLimitMax, recovery_limit)) {
+    sendPlain(400, F("Invalid recovery guard boot limit"));
+    return;
+  }
+  if (!parseUint16Input(server.arg("recovery_stable_seconds"), kBootRecoveryStableMinSec,
+                        kBootRecoveryStableMaxSec, recovery_stable_seconds)) {
+    sendPlain(400, F("Invalid recovery guard stable seconds"));
+    return;
+  }
 
-  if (!savePowerSavingConfig(mode)) {
+  if (!saveSystemConfig(mode, recovery_limit, recovery_stable_seconds)) {
     sendPlain(500, F("Save failed"));
     return;
   }
@@ -12166,6 +12257,12 @@ bool shellyBluButtonConfigDiffers(const StoredConfig &a, const StoredConfig &b) 
                 sizeof(a.shelly_blu_button_macs)) != 0;
 }
 
+bool systemConfigDiffers(const StoredConfig &a, const StoredConfig &b) {
+  return a.power_saving_mode != b.power_saving_mode ||
+         a.boot_recovery_limit != b.boot_recovery_limit ||
+         a.boot_recovery_stable_seconds != b.boot_recovery_stable_seconds;
+}
+
 bool commitStoredConfig(const StoredConfig &source) {
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putString("ssid", source.ssid);
@@ -12240,6 +12337,8 @@ bool commitStoredConfig(const StoredConfig &source) {
   const uint8_t power_saving_mode = sanitizePowerSavingMode(source.power_saving_mode);
   if (powerSavingModePersists(power_saving_mode)) prefs.putUShort("pwr_save", power_saving_mode);
   else prefs.remove("pwr_save");
+  prefs.putUShort("br_limit", sanitizeBootRecoveryLimit(source.boot_recovery_limit));
+  prefs.putUShort("br_stable", sanitizeBootRecoveryStableSeconds(source.boot_recovery_stable_seconds));
   prefs.end();
   return loadConfig();
 }
@@ -12279,7 +12378,11 @@ void appendSettingsExportJson(String &out) {
   out += chipIdHex();
   out += F("\"},\"system\":{\"power_saving\":\"");
   out += powerSavingModeName(powerSavingModePersists(config.power_saving_mode) ? kPowerSavingOffLocked : kPowerSavingOff);
-  out += F("\"},\"wifi\":{\"dynamic_power\":");
+  out += F("\",\"recovery_guard\":{\"limit\":");
+  out += config.boot_recovery_limit;
+  out += F(",\"stable_seconds\":");
+  out += config.boot_recovery_stable_seconds;
+  out += F("}},\"wifi\":{\"dynamic_power\":");
   out += config.wifi_dynamic_power ? F("true") : F("false");
   out += F("},\"template\":{\"enabled\":");
   out += config.template_enabled ? F("true") : F("false");
@@ -12431,13 +12534,40 @@ void importSettingsSystem(const cJSON *root, StoredConfig &target, SettingsImpor
   }
   const cJSON *power_value = cjsonObjectItem(system, "power_saving");
   if (!power_value) power_value = cjsonObjectItem(system, "power_saving_mode");
-  if (!power_value) return;
-  uint8_t mode = kPowerSavingOff;
-  if (settingsReadPowerSavingMode(power_value, mode)) {
-    target.power_saving_mode = powerSavingModePersists(mode) ? kPowerSavingOffLocked : kPowerSavingOff;
-    recordSettingsApplied(stats);
-  } else {
-    recordSettingsSkipped(stats, F("system.power_saving"));
+  if (power_value) {
+    uint8_t mode = kPowerSavingOff;
+    if (settingsReadPowerSavingMode(power_value, mode)) {
+      target.power_saving_mode = powerSavingModePersists(mode) ? kPowerSavingOffLocked : kPowerSavingOff;
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("system.power_saving"));
+    }
+  }
+  const cJSON *recovery = cjsonObjectItem(system, "recovery_guard");
+  if (!recovery) recovery = cjsonObjectItem(system, "boot_recovery");
+  if (recovery && !cjsonIsType(recovery, cJSON_Object)) {
+    recordSettingsSkipped(stats, F("system.recovery_guard"));
+    recovery = nullptr;
+  }
+  const cJSON *limit_value = recovery ? cjsonObjectItem(recovery, "limit") : cjsonObjectItem(system, "recovery_limit");
+  if (limit_value) {
+    uint16_t limit = kBootRecoveryLimitDefault;
+    if (settingsReadUint16(limit_value, kBootRecoveryLimitMin, kBootRecoveryLimitMax, limit)) {
+      target.boot_recovery_limit = static_cast<uint8_t>(limit);
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("system.recovery_guard.limit"));
+    }
+  }
+  const cJSON *stable_value = recovery ? cjsonObjectItem(recovery, "stable_seconds") : cjsonObjectItem(system, "recovery_stable_seconds");
+  if (stable_value) {
+    uint16_t stable_seconds = kBootRecoveryStableDefaultSec;
+    if (settingsReadUint16(stable_value, kBootRecoveryStableMinSec, kBootRecoveryStableMaxSec, stable_seconds)) {
+      target.boot_recovery_stable_seconds = stable_seconds;
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("system.recovery_guard.stable_seconds"));
+    }
   }
 }
 
@@ -13328,6 +13458,7 @@ void handleSettingsImport() {
   const bool switchbot_lock_changed = switchbotLockConfigDiffers(before, candidate);
   const bool shelly_blu_button_changed = shellyBluButtonConfigDiffers(before, candidate);
   const bool wifi_dynamic_power_changed = before.wifi_dynamic_power != candidate.wifi_dynamic_power;
+  const bool system_changed = systemConfigDiffers(before, candidate);
 
   if (!commitStoredConfig(candidate)) {
     config = before;
@@ -13392,6 +13523,10 @@ void handleSettingsImport() {
     }
   }
   if (wifi_dynamic_power_changed) resetWifiDynamicPowerRuntime(true);
+  if (system_changed) {
+    boot_recovery_limit = config.boot_recovery_limit;
+    boot_recovery_stable_seconds = config.boot_recovery_stable_seconds;
+  }
 
   page += F("<p class='ok'>Settings imported.</p>");
   appendSettingsImportSummary(page, stats);
@@ -13593,9 +13728,9 @@ void handleHealth() {
   out += F("\",\"recovery\":{\"fast_boot_count\":");
   out += boot_recovery_count;
   out += F(",\"limit\":");
-  out += kBootRecoveryLimit;
+  out += boot_recovery_limit;
   out += F(",\"stable_seconds\":");
-  out += kBootRecoveryStableMs / 1000;
+  out += boot_recovery_stable_seconds;
   out += F(",\"factory_reset\":");
   out += (boot_recovery_factory_reset ? F("true") : F("false"));
   out += F("},\"template\":{\"enabled\":");

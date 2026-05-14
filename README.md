@@ -418,7 +418,9 @@ The Maintenance card separates reboot actions:
 
 If station mode cannot connect, the firmware can start its recovery access point
 so the device remains configurable. Boot recovery state is tracked to guard
-against repeated failed boots.
+against repeated failed boots. The System card exposes the recovery guard
+threshold and stable-runtime window; defaults are 5 fast boots and 15 seconds
+of stable runtime before the boot counter is cleared.
 
 ## Tasmota Safeboot Support
 
