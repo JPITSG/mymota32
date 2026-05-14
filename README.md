@@ -1,10 +1,20 @@
 # myMota32
 
-A hat tip to Tasmota and Tasmota32: this project exists because those firmwares
-proved how useful local, template-driven, MQTT-first device firmware can be.
-myMota32 is an ESP32 smart-home firmware built for local control, Tasmota32 OTA
-migration, Tasmota-style hardware templates, MQTT automation, BLE integrations,
-energy monitoring, and a compact device web UI.
+A hat tip to [Tasmota](https://github.com/arendst/Tasmota) and
+[Tasmota32](https://github.com/arendst/Tasmota): this project exists because
+those firmwares proved how useful local, template-driven, MQTT-first device
+firmware can be. myMota32 is an ESP32 smart-home firmware built for local
+control, Tasmota32 OTA migration, Tasmota-style hardware templates, MQTT
+automation, BLE integrations, energy monitoring, and a compact device web UI.
+
+A major reason to use myMota32 instead of full Tasmota32 on supported devices is
+responsiveness. myMota32 intentionally does far fewer things than Tasmota32, so
+its web UI, button handling, MQTT paths, and device loops can stay very fast and
+predictable. That is not a criticism of Tasmota32; it is the natural tradeoff of
+Tasmota32 supporting a much broader range of hardware, drivers, protocols, and
+features. myMota32 focuses on the subset used here, then adds built-in iBeacon,
+Switchbot Lock Ultra, and Shelly BLU Button integrations as first-class local
+automation features.
 
 myMota32 is intended for devices that should remain usable without a cloud
 service. It exposes a browser UI for configuration, a `/health` JSON endpoint
