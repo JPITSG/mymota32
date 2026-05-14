@@ -8,6 +8,7 @@
 #include <esp_chip_info.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
+#include <esp_rom_sys.h>
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
@@ -876,6 +877,12 @@ size_t update_header_len = 0;
 uint32_t restart_due_ms = 0;
 uint32_t restart_scheduled_ms = 0;
 bool restart_preserve_relays = false;
+enum RestartMode : uint8_t {
+  kRestartModeCold = 0,
+  kRestartModeSoft = 1,
+  kRestartModeForce = 2,
+};
+RestartMode restart_mode = kRestartModeCold;
 
 uint32_t perf_loop_count = 0;
 uint64_t perf_busy_us = 0;
@@ -1866,12 +1873,27 @@ String currentTemplateJson() {
   return out;
 }
 
-void scheduleRestart(uint32_t delay_ms, bool preserve_relays = false) {
+const char *restartModeName(RestartMode mode) {
+  switch (mode) {
+    case kRestartModeSoft: return "soft";
+    case kRestartModeCold: return "cold";
+    case kRestartModeForce: return "force";
+  }
+  return "unknown";
+}
+
+void scheduleRestart(uint32_t delay_ms, RestartMode mode) {
   restart_due_ms = millis() + delay_ms;
   restart_scheduled_ms = millis();
-  restart_preserve_relays = preserve_relays;
-  DBG_LOG("reboot", "scheduled delay=%lu preserve_relays=%u",
-          static_cast<unsigned long>(delay_ms), preserve_relays ? 1 : 0);
+  restart_mode = mode;
+  restart_preserve_relays = mode == kRestartModeSoft;
+  DBG_LOG("reboot", "scheduled delay=%lu mode=%s preserve_relays=%u",
+          static_cast<unsigned long>(delay_ms), restartModeName(mode),
+          restart_preserve_relays ? 1 : 0);
+}
+
+void scheduleRestart(uint32_t delay_ms, bool preserve_relays = false) {
+  scheduleRestart(delay_ms, preserve_relays ? kRestartModeSoft : kRestartModeCold);
 }
 
 bool restartDue() {
@@ -10297,8 +10319,8 @@ void handleRoot() {
   page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Power Saving</div></div><form id='form-system' method='post' action='/system'>");
   appendPowerSavingSelect(page);
   page += F("</form></div>");
-  page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Reboot</div></div><div class='actions'><a class='btn secondary' href='/reboot'>Reboot</a></div>");
-  page += F("<div class='actions'><form class='inline' method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset?')\"><button class='danger' type='submit'>Factory Reset</button></form></div></div></div>");
+  page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Reboot</div></div><div class='actions'><a class='btn secondary' href='/reboot-soft'>Reboot Soft</a><a class='btn secondary' href='/reboot-cold'>Reboot Cold</a></div>");
+  page += F("<div class='actions'><form class='inline' method='post' action='/factory-reset' onsubmit=\"return confirm('Factory reset?')\"><button class='danger' type='submit'>Factory Reset</button></form><a class='btn danger' href='/force-reset' onclick=\"return confirm('Force reset skips normal shutdown and may drop unsaved runtime state. Continue?')\">Force Reset</a></div></div></div>");
   page += F("<div class='panel-foot'><button type='submit' form='form-system'>Save power saving</button><button type='submit' form='form-firmware'>Upload firmware</button></div></section>");
   flushStreamChunk(page);
 
@@ -13378,16 +13400,42 @@ void handleSettingsImport() {
   sendHtml(page);
 }
 
-void handleReboot() {
-  DBG_LOG("http", "GET /reboot");
+void sendRestartPage(const __FlashStringHelper *title, const __FlashStringHelper *message,
+                     RestartMode mode, uint32_t delay_ms) {
   String page;
   page.reserve(700);
-  appendHeader(page, F("myMota32 Reboot"));
-  page += F("<p class='ok'>Rebooting.</p>");
+  appendHeader(page, title);
+  page += F("<p class='ok'>");
+  page += message;
+  page += F("</p>");
   page += F("<p>The page will return to the dashboard when the device is reachable again.</p>");
   appendFooter(page, false, true);
   sendHtml(page);
-  scheduleRestart(500, true);
+  scheduleRestart(delay_ms, mode);
+}
+
+void handleRebootSoft() {
+  DBG_LOG("http", "GET /reboot-soft");
+  sendRestartPage(F("myMota32 Reboot Soft"), F("Soft rebooting with relay state preserved."),
+                  kRestartModeSoft, 500);
+}
+
+void handleRebootCold() {
+  DBG_LOG("http", "GET /reboot-cold");
+  sendRestartPage(F("myMota32 Reboot Cold"), F("Cold rebooting without preserving relay state."),
+                  kRestartModeCold, 500);
+}
+
+void handleForceReset() {
+  DBG_LOG("http", "GET /force-reset");
+  sendRestartPage(F("myMota32 Force Reset"), F("Force reset armed."),
+                  kRestartModeForce, 250);
+}
+
+void handleReboot() {
+  DBG_LOG("http", "GET /reboot");
+  sendRestartPage(F("myMota32 Reboot Soft"), F("Soft rebooting with relay state preserved."),
+                  kRestartModeSoft, 500);
 }
 
 void handleFactoryReset() {
@@ -14141,6 +14189,9 @@ void setupRoutes() {
   server.on("/settings/export", HTTP_GET, handleSettingsExport);
   server.on("/settings/import", HTTP_POST, handleSettingsImport);
   server.on("/reboot", HTTP_GET, handleReboot);
+  server.on("/reboot-soft", HTTP_GET, handleRebootSoft);
+  server.on("/reboot-cold", HTTP_GET, handleRebootCold);
+  server.on("/force-reset", HTTP_GET, handleForceReset);
   server.on("/factory-reset", HTTP_POST, handleFactoryReset);
   server.on("/health", HTTP_GET, handleHealth);
   server.on("/cm", HTTP_GET, handleCmnd);
@@ -14308,8 +14359,18 @@ void loop() {
   DBG_LOOP_STEP(debug_loop_http4_us, { server.handleClient(); });
 
   if (restartDue()) {
-    DBG_LOG("reboot", "restart due preserve_relays=%u", restart_preserve_relays ? 1 : 0);
-    if (restart_preserve_relays) {
+    const RestartMode mode = restart_mode;
+    DBG_LOG("reboot", "restart due mode=%s preserve_relays=%u",
+            restartModeName(mode), restart_preserve_relays ? 1 : 0);
+    if (mode == kRestartModeForce) {
+      delay(50);
+#if MYMOTA32_DEBUG_LOG
+      Serial.flush();
+#endif
+      esp_rom_software_reset_system();
+      while (true) delay(1000);
+    }
+    if (mode == kRestartModeSoft) {
       saveGracefulRelaySnapshot();
     } else {
       clearGracefulRelaySnapshot();

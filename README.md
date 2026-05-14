@@ -156,8 +156,8 @@ status, template, device, Bluetooth, network, and maintenance areas.
 - Settings export/import allows moving device settings between devices without
   exporting Wi-Fi SSID or password.
 - Firmware upload supports target filename verification.
-- System controls include power saving, dynamic Wi-Fi TX power, reboot, and
-  factory reset.
+- System controls include power saving, dynamic Wi-Fi TX power, soft reboot,
+  cold reboot, force reset, and factory reset.
 
 ## Templates
 
@@ -397,6 +397,15 @@ when needed. Power saving modes are:
 Only Off - Locked persists across reboot. Other power saving choices reset to
 Off at boot.
 
+The Maintenance card separates reboot actions:
+
+- Reboot Soft saves the graceful relay snapshot before restarting so configured
+  relay restore flows can treat it as a planned reboot.
+- Reboot Cold restarts without preserving the graceful relay snapshot, while
+  still flushing normal persisted light and energy state.
+- Force Reset skips normal shutdown handling and performs a low-level software
+  reset for recovery cases where a normal restart path is undesirable.
+
 If station mode cannot connect, the firmware can start its recovery access point
 so the device remains configurable. Boot recovery state is tracked to guard
 against repeated failed boots.
@@ -423,6 +432,11 @@ Wi-Fi SSID and Wi-Fi password are deliberately not exported or imported.
 script for discovering devices, checking versions and targets, and optionally
 upgrading only devices that need a newer build. The firmware itself does not
 depend on that script.
+
+When an operator needs to reflash the same version or intentionally downgrade to
+the newest image present in `dist/`, `--force=true` can be combined with
+`--upgrade`. Force mode still uses the same target-specific image selection and
+strict abort-on-first-failure behavior.
 
 ## License
 
