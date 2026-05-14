@@ -426,18 +426,6 @@ Ultra, Shelly BLU Button, and input settings.
 
 Wi-Fi SSID and Wi-Fi password are deliberately not exported or imported.
 
-## Firmware Upgrade Helper
-
-`mymota32Upgrade.sh` is intentionally ignored by git. It is a local operator
-script for discovering devices, checking versions and targets, and optionally
-upgrading only devices that need a newer build. The firmware itself does not
-depend on that script.
-
-When an operator needs to reflash the same version or intentionally downgrade to
-the newest image present in `dist/`, `--force=true` can be combined with
-`--upgrade`. Force mode still uses the same target-specific image selection and
-strict abort-on-first-failure behavior.
-
 ## License
 
 myMota32 is released under the MIT License. See `LICENSE`.
