@@ -48,6 +48,8 @@ replaced with placeholders.
   firmware upload, settings import/export, and system controls.
 - MQTT control and telemetry with Tasmota-like command topics.
 - HTTP command support through `/cm?cmnd=...`.
+- Optional lightweight NTP time sync with configurable server and resync
+  interval.
 - Relay, switch, button, LED, light, energy, Bluetooth beacon, Switchbot Lock
   Ultra, and Shelly BLU Button features.
 - No HTTPS, TLS, or MQTT authentication support is included by design.
@@ -159,8 +161,8 @@ status, template, device, Bluetooth, network, and maintenance areas.
 - Overview tiles show Wi-Fi RSSI, MQTT queue depth, heap, and uptime.
 - System Status shows hostname, chip model, chip ID, firmware target, loop
   performance, flash and partition information, Wi-Fi SDK state, gateway, DNS,
-  MQTT state, iBeacon report rate, and whether debug serial logging is compiled
-  into the running build.
+  MQTT state, NTP sync state, iBeacon report rate, and whether debug serial
+  logging is compiled into the running build.
 - Template shows the decoded hardware profile: relays, inputs, LEDs, energy
   driver, light driver, and unsupported template functions.
 - Settings export/import allows moving device settings between devices without
@@ -330,7 +332,7 @@ Useful endpoints:
 The `/health` document includes firmware version, target, chip model, chip ID,
 partition layout, flash usage, power saving mode, Wi-Fi state, MQTT state,
 template summary, relay state, button state, LED state, energy state, iBeacon
-state, Switchbot Lock Ultra state, and Shelly BLU Button state.
+state, NTP state, Switchbot Lock Ultra state, and Shelly BLU Button state.
 
 ## iBeacon Capture
 
@@ -425,6 +427,21 @@ against repeated failed boots. The System card exposes the recovery guard
 threshold and stable-runtime window; defaults are 5 fast boots and 15 seconds
 of stable runtime before the boot counter is cleared.
 
+## NTP
+
+NTP support is disabled by default. When enabled, the Maintenance area shows a
+small NTP card where the user can configure:
+
+- NTP server IPv4 address.
+- Resync interval in seconds, defaulting to `86400` seconds.
+
+The implementation uses the ESP32 SNTP client in immediate-sync polling mode.
+It is lightweight: the firmware provides the server address and interval to the
+SDK, then the normal loop only checks cached sync state and reachability once per
+second. The System Status card and `/health` report the configured server,
+runtime status, reachability byte, sync count, last successful sync age, epoch,
+and UTC date/time once the clock has been set.
+
 ## Tasmota Safeboot Support
 
 When a Tasmota32 safeboot partition is detected, myMota32 shows a Tasmota
@@ -437,7 +454,7 @@ If no safeboot partition is present, the card is hidden.
 
 Settings export produces a JSON document that includes system, template, MQTT,
 energy, light, LED, relay enforcement, relay pulsing, iBeacon, Switchbot Lock
-Ultra, Shelly BLU Button, and input settings.
+Ultra, Shelly BLU Button, NTP, and input settings.
 
 Wi-Fi SSID and Wi-Fi password are deliberately not exported or imported.
 

@@ -9,15 +9,19 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_rom_sys.h>
+#include <esp_sntp.h>
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+#include <lwip/ip_addr.h>
 #include <mbedtls/aes.h>
 #include <stdarg.h>
 #include <string.h>
 #include <math.h>
+#include <sys/time.h>
+#include <time.h>
 
 #ifndef MYMOTA32_VERSION
 #define MYMOTA32_VERSION "dev"
@@ -121,6 +125,13 @@ constexpr uint8_t kBootRecoveryLimitMax = 20;
 constexpr uint16_t kBootRecoveryStableDefaultSec = 15;
 constexpr uint16_t kBootRecoveryStableMinSec = 5;
 constexpr uint16_t kBootRecoveryStableMaxSec = 600;
+constexpr uint32_t kNtpResyncDefaultSec = 86400UL;
+constexpr uint32_t kNtpResyncMinSec = 60UL;
+constexpr uint32_t kNtpResyncMaxSec = 604800UL;
+constexpr size_t kNtpServerMaxLen = 15;
+constexpr uint32_t kNtpMaintainMs = 1000;
+constexpr uint32_t kNtpNoResponseMs = 20000;
+constexpr time_t kNtpValidEpoch = 1483228800;  // 2017-01-01 UTC
 constexpr size_t kUpdateSectorSize = 4096;
 constexpr size_t kUpdateHeaderHoldBytes = 16;
 constexpr uint8_t kEspImageMagic = 0xE9;
@@ -695,6 +706,9 @@ struct StoredConfig {
   uint8_t wifi_dynamic_power;
   uint8_t boot_recovery_limit;
   uint16_t boot_recovery_stable_seconds;
+  uint8_t ntp_enabled;
+  char ntp_server[kNtpServerMaxLen + 1];
+  uint32_t ntp_resync_sec;
 };
 
 struct TasmotaSafebootSettings {
@@ -858,6 +872,19 @@ int16_t wifi_dynamic_power_last_rssi = 0;
 int8_t wifi_tx_power_qdbm = kWifiTxPowerMaxQdbm;
 int16_t wifi_last_rssi = 0;
 bool wifi_last_rssi_valid = false;
+
+bool ntp_started = false;
+bool ntp_time_valid = false;
+char ntp_status[20] = "disabled";
+char ntp_active_server[kNtpServerMaxLen + 1] = "";
+uint32_t ntp_active_resync_sec = 0;
+uint32_t ntp_started_ms = 0;
+uint32_t ntp_last_maintain_ms = 0;
+uint32_t ntp_last_sync_ms = 0;
+uint32_t ntp_sync_count = 0;
+uint8_t ntp_reachability = 0;
+time_t ntp_last_sync_epoch = 0;
+volatile bool ntp_sync_pending = false;
 
 uint32_t cached_flash_used = 0;
 uint32_t cached_flash_total = 0;
@@ -1328,6 +1355,27 @@ String ipToString(IPAddress ip) {
 
 bool ipAddressSet(const IPAddress &ip) {
   return ip[0] != 0 || ip[1] != 0 || ip[2] != 0 || ip[3] != 0;
+}
+
+bool parseNtpServerIp(const char *value, IPAddress &ip) {
+  if (!value || !value[0]) return false;
+  IPAddress parsed;
+  if (!parsed.fromString(value) || !ipAddressSet(parsed)) return false;
+  ip = parsed;
+  return true;
+}
+
+bool normalizeNtpServerIp(const String &input, char *out, size_t out_size) {
+  if (!out || out_size == 0) return false;
+  String value = input;
+  value.trim();
+  IPAddress ip;
+  if (!parseNtpServerIp(value.c_str(), ip)) {
+    out[0] = '\0';
+    return false;
+  }
+  strlcpy(out, ip.toString().c_str(), out_size);
+  return true;
 }
 
 String pinName(uint8_t pin) {
@@ -2090,8 +2138,11 @@ bool persistLightConfig(bool force = false);
 bool inputConfigDiffers(const StoredConfig &a, const StoredConfig &b);
 bool mqttConfigDiffers(const StoredConfig &a, const StoredConfig &b);
 bool systemConfigDiffers(const StoredConfig &a, const StoredConfig &b);
+bool ntpConfigDiffers(const StoredConfig &a, const StoredConfig &b);
 bool commitStoredConfig(const StoredConfig &source);
 bool parseBoolText(String value, bool &out);
+bool parseUint32Input(const String &input, uint32_t min_value, uint32_t max_value, uint32_t &out);
+void applyNtpRuntime(bool force);
 
 void setDefaultConfig() {
   memset(&config, 0, sizeof(config));
@@ -2160,6 +2211,9 @@ void setDefaultConfig() {
   config.wifi_dynamic_power = kWifiDynamicPowerDefault;
   config.boot_recovery_limit = kBootRecoveryLimitDefault;
   config.boot_recovery_stable_seconds = kBootRecoveryStableDefaultSec;
+  config.ntp_enabled = 0;
+  config.ntp_server[0] = '\0';
+  config.ntp_resync_sec = kNtpResyncDefaultSec;
 }
 
 template <size_t N>
@@ -2315,6 +2369,9 @@ bool loadConfig() {
   uint8_t wifi_dynamic_power = prefs.getUChar("wifi_dyn", kWifiDynamicPowerDefault);
   uint16_t boot_recovery_limit_value = prefs.getUShort("br_limit", kBootRecoveryLimitDefault);
   uint16_t boot_recovery_stable_value = prefs.getUShort("br_stable", kBootRecoveryStableDefaultSec);
+  uint8_t ntp_enabled = prefs.getUChar("ntp_en", 0);
+  String ntp_server = prefs.getString("ntp_srv", "");
+  uint32_t ntp_resync_sec = prefs.getUInt("ntp_resync", kNtpResyncDefaultSec);
   prefs.end();
 
   strlcpy(config.ssid, ssid.c_str(), sizeof(config.ssid));
@@ -2504,6 +2561,14 @@ bool loadConfig() {
   config.wifi_dynamic_power = wifi_dynamic_power ? 1 : 0;
   config.boot_recovery_limit = sanitizeBootRecoveryLimit(boot_recovery_limit_value);
   config.boot_recovery_stable_seconds = sanitizeBootRecoveryStableSeconds(boot_recovery_stable_value);
+  config.ntp_enabled = ntp_enabled ? 1 : 0;
+  if (!normalizeNtpServerIp(ntp_server, config.ntp_server, sizeof(config.ntp_server))) {
+    config.ntp_server[0] = '\0';
+  }
+  if (ntp_resync_sec < kNtpResyncMinSec || ntp_resync_sec > kNtpResyncMaxSec) {
+    ntp_resync_sec = kNtpResyncDefaultSec;
+  }
+  config.ntp_resync_sec = ntp_resync_sec;
   boot_recovery_limit = config.boot_recovery_limit;
   boot_recovery_stable_seconds = config.boot_recovery_stable_seconds;
 
@@ -2602,6 +2667,29 @@ bool saveEnergyConfig(float total_offset_kwh, uint16_t mqtt_interval, uint16_t m
   mqtt_pending_energy_zero_relay_mask = 0;
   mqtt_pending_energy_report_reason = kMqttEnergyReportReasonNone;
   return loadConfig();
+}
+
+bool saveNtpConfig(bool enabled, const char *server, uint32_t resync_sec) {
+  char normalized[kNtpServerMaxLen + 1]{};
+  if (enabled && !normalizeNtpServerIp(String(server ? server : ""), normalized, sizeof(normalized))) {
+    return false;
+  }
+  if (!enabled && server && server[0]) {
+    normalizeNtpServerIp(String(server), normalized, sizeof(normalized));
+  }
+  if (resync_sec < kNtpResyncMinSec || resync_sec > kNtpResyncMaxSec) {
+    resync_sec = kNtpResyncDefaultSec;
+  }
+  DBG_LOG("config", "save ntp enabled=%u server=%s resync=%lu",
+          enabled ? 1 : 0, normalized, static_cast<unsigned long>(resync_sec));
+  if (!prefs.begin("mymota32", false)) return false;
+  prefs.putUChar("ntp_en", enabled ? 1 : 0);
+  prefs.putString("ntp_srv", normalized);
+  prefs.putUInt("ntp_resync", resync_sec);
+  prefs.end();
+  if (!loadConfig()) return false;
+  applyNtpRuntime(true);
+  return true;
 }
 
 bool saveIBeaconConfig(bool enabled, uint16_t filter1_interval, const char *filter1_macs,
@@ -3099,6 +3187,138 @@ void maintainWifi() {
   }
 }
 
+void ntpSetStatus(const char *status) {
+  strlcpy(ntp_status, status ? status : "unknown", sizeof(ntp_status));
+}
+
+void ntpTimeSyncCallback(struct timeval *) {
+  ntp_sync_pending = true;
+}
+
+void stopNtpRuntime(const char *status) {
+  if (ntp_started || esp_sntp_enabled()) {
+    esp_sntp_set_time_sync_notification_cb(nullptr);
+    esp_sntp_stop();
+    DBG_LOG("ntp", "stopped status=%s", status ? status : "");
+  }
+  ntp_started = false;
+  ntp_active_server[0] = '\0';
+  ntp_active_resync_sec = 0;
+  ntp_started_ms = 0;
+  ntp_reachability = 0;
+  ntpSetStatus(status);
+}
+
+bool ntpConfigActiveMatches() {
+  return ntp_started &&
+         ntp_active_resync_sec == config.ntp_resync_sec &&
+         strcmp(ntp_active_server, config.ntp_server) == 0;
+}
+
+void startNtpRuntime() {
+  IPAddress server_ip;
+  if (!parseNtpServerIp(config.ntp_server, server_ip)) {
+    stopNtpRuntime(config.ntp_server[0] ? "invalid_server" : "not_configured");
+    return;
+  }
+  if (!wifiUsable()) {
+    stopNtpRuntime("waiting_wifi");
+    return;
+  }
+  if (ntpConfigActiveMatches()) return;
+  if (ntp_started || esp_sntp_enabled()) {
+    esp_sntp_stop();
+  }
+
+  ip_addr_t addr{};
+  server_ip.to_ip_addr_t(&addr);
+  esp_sntp_set_time_sync_notification_cb(ntpTimeSyncCallback);
+  esp_sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
+  esp_sntp_set_sync_interval(config.ntp_resync_sec * 1000UL);
+  esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+  esp_sntp_setserver(0, &addr);
+  esp_sntp_init();
+
+  ntp_started = true;
+  ntp_started_ms = millis();
+  ntp_last_maintain_ms = 0;
+  ntp_reachability = 0;
+  strlcpy(ntp_active_server, config.ntp_server, sizeof(ntp_active_server));
+  ntp_active_resync_sec = config.ntp_resync_sec;
+  ntpSetStatus("syncing");
+  DBG_LOG("ntp", "started server=%s resync=%lu", ntp_active_server,
+          static_cast<unsigned long>(ntp_active_resync_sec));
+}
+
+void applyNtpRuntime(bool force = false) {
+  if (!config.ntp_enabled) {
+    stopNtpRuntime("disabled");
+    return;
+  }
+  if (force || !ntpConfigActiveMatches()) {
+    startNtpRuntime();
+  }
+}
+
+bool ntpHasValidTime() {
+  time_t now = 0;
+  time(&now);
+  return ntp_time_valid && now >= kNtpValidEpoch;
+}
+
+void appendNtpDateTime(String &out) {
+  time_t now = 0;
+  time(&now);
+  if (!ntp_time_valid || now < kNtpValidEpoch) {
+    out += F("n/a");
+    return;
+  }
+  struct tm tm_info{};
+  gmtime_r(&now, &tm_info);
+  char buf[24];
+  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S UTC", &tm_info);
+  out += buf;
+}
+
+void maintainNtp() {
+  const uint32_t now = millis();
+  if (ntp_sync_pending) {
+    ntp_sync_pending = false;
+    time(&ntp_last_sync_epoch);
+    ntp_last_sync_ms = now;
+    ntp_sync_count++;
+    ntp_time_valid = ntp_last_sync_epoch >= kNtpValidEpoch;
+    ntpSetStatus(ntp_time_valid ? "synced" : "sync_invalid");
+    DBG_LOG("ntp", "sync status=%s epoch=%lu count=%lu", ntp_status,
+            static_cast<unsigned long>(ntp_last_sync_epoch),
+            static_cast<unsigned long>(ntp_sync_count));
+  }
+
+  if (ntp_last_maintain_ms && now - ntp_last_maintain_ms < kNtpMaintainMs) return;
+  ntp_last_maintain_ms = now;
+
+  if (!config.ntp_enabled) {
+    if (ntp_started || strcmp(ntp_status, "disabled") != 0) stopNtpRuntime("disabled");
+    return;
+  }
+  if (!wifiUsable()) {
+    if (ntp_started || strcmp(ntp_status, "waiting_wifi") != 0) stopNtpRuntime("waiting_wifi");
+    return;
+  }
+  if (!ntpConfigActiveMatches()) {
+    startNtpRuntime();
+    return;
+  }
+  ntp_reachability = esp_sntp_getreachability(0);
+  if (ntp_time_valid) {
+    ntpSetStatus("synced");
+  } else if (now - ntp_started_ms >= kNtpNoResponseMs && ntp_reachability == 0) {
+    ntpSetStatus("no_response");
+  } else {
+    ntpSetStatus("syncing");
+  }
+}
+
 void updateDeviceLeds(bool force = false) {
   const uint32_t now = millis();
   if (!force && now - last_led_update < kLedUpdateMs) return;
@@ -3115,6 +3335,7 @@ void scheduleMqttRelayOffEnergyReport(uint8_t relay);
 bool persistEnergyTotal(bool force);
 bool mqttConfigured();
 bool parseUint16Input(const String &input, uint16_t min_value, uint16_t max_value, uint16_t &out);
+bool parseUint32Input(const String &input, uint32_t min_value, uint32_t max_value, uint32_t &out);
 bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size_t arg_len, String &out, String &error);
 
 uint32_t relaySnapshotHashByte(uint32_t hash, uint8_t value) {
@@ -4555,6 +4776,18 @@ bool parseUint16Input(const String &input, uint16_t min_value, uint16_t max_valu
   long parsed = input.toInt();
   if (parsed < min_value || parsed > max_value) return false;
   out = static_cast<uint16_t>(parsed);
+  return true;
+}
+
+bool parseUint32Input(const String &input, uint32_t min_value, uint32_t max_value, uint32_t &out) {
+  if (input.length() == 0) return false;
+  for (size_t i = 0; i < input.length(); i++) {
+    if (input[i] < '0' || input[i] > '9') return false;
+  }
+  char *end = nullptr;
+  const unsigned long parsed = strtoul(input.c_str(), &end, 10);
+  if (!end || *end != '\0' || parsed < min_value || parsed > max_value) return false;
+  out = static_cast<uint32_t>(parsed);
   return true;
 }
 
@@ -8655,6 +8888,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("t('live-uptime',d.uptime+'s');t('live-uptime-2',d.uptime+'s');t('live-configured-phy',nv(d.configured_phy));t('live-active-phy',nv(d.active_phy));");
   page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',Number(d.perf.loop_max_us/1000).toFixed(1)+' ms');}");
   page += F("if(d.power_saving){sv('power_saving',d.power_saving.mode||'off');cv('power_saving_persist',d.power_saving.persist);cv('power_saving_locked',d.power_saving.locked);}");
+  page += F("if(d.ntp){var ns=d.ntp.enabled?(d.ntp.server||'not configured'):'disabled',nc=!d.ntp.enabled?'pill bad':(d.ntp.valid?'pill ok':(d.ntp.running?'pill warn':'pill bad'));t('live-ntp-server',ns);p('live-ntp-status',d.ntp.status||'unknown',nc);p('live-ntp-card-status',d.ntp.enabled?(d.ntp.status||'unknown'):'disabled',(!d.ntp.enabled?'h-meta pill bad':(d.ntp.valid?'h-meta pill ok':'h-meta pill warn')));t('live-ntp-reachability',d.ntp.reachability==null?'n/a':d.ntp.reachability);t('live-ntp-time',d.ntp.valid?(d.ntp.datetime||'n/a'):'n/a');cv('ntp_enabled',d.ntp.enabled);sv('ntp_server',d.ntp.server||'');sv('ntp_resync',d.ntp.resync||86400);}");
   page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);t('live-recovery-stable',d.recovery.stable_seconds+'s');");
   page += F("var wu=d.wifi_usable!=null?d.wifi_usable:d.wifi,ws=!!d.wifi_sdk_connected,wl=ws?'connected':(wu?'usable':'disconnected'),wc=ws?'pill ok':(wu?'pill warn':'pill bad');p('live-wifi',wl,wc);t('live-ssid',d.wifi_ssid||'n/a');t('live-ssid-2',d.wifi_ssid||'n/a');t('live-wifi-sdk',(d.wifi_status_name||'unknown')+' ('+(d.wifi_status==null?'?':d.wifi_status)+')');t('live-ip',d.ip||'n/a');t('live-ip-2',d.ip||'n/a');t('live-gateway',d.gateway_ip||'n/a');t('live-dns',d.dns_ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');t('live-rssi-2',d.rssi==null?'n/a':d.rssi+' dBm');t('live-ap',d.ap?(d.ap_ssid||'active'):'off');t('live-ap-ip',d.ap_ip||'n/a');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
@@ -9114,6 +9348,19 @@ void appendStatusBlock(String &page) {
     page += F(" <span class='pill bad'>factory reset</span>");
   }
   page += F("</div>");
+  page += F("<span>NTP server</span><div><code id='live-ntp-server'>");
+  if (!config.ntp_enabled) page += F("disabled");
+  else if (config.ntp_server[0]) page += htmlEscape(config.ntp_server);
+  else page += F("not configured");
+  page += F("</code> <span id='live-ntp-status' class='pill ");
+  page += !config.ntp_enabled ? F("bad") : (ntp_time_valid ? F("ok") : F("warn"));
+  page += F("'>");
+  page += config.ntp_enabled ? ntp_status : "disabled";
+  page += F("</span> reach <code id='live-ntp-reachability'>");
+  page += String(ntp_reachability);
+  page += F("</code></div><span>Date + time</span><div><code id='live-ntp-time'>");
+  appendNtpDateTime(page);
+  page += F("</code></div>");
 
   const wl_status_t wifi_status = WiFi.status();
   const IPAddress station_ip = WiFi.localIP();
@@ -9846,6 +10093,29 @@ void appendMqttForm(String &page) {
   page += F("'></label></div></div></div></form><div class='panel-foot'><button type='submit' form='form-mqtt'>Save MQTT</button></div></section>");
 }
 
+void appendNtpForm(String &page) {
+  page += F("<section class='panel'><div class='panel-head'><h2>NTP</h2><span id='live-ntp-card-status' class='h-meta pill ");
+  page += !config.ntp_enabled ? F("bad") : (ntp_time_valid ? F("ok") : F("warn"));
+  page += F("'>");
+  page += config.ntp_enabled ? ntp_status : "disabled";
+  page += F("</span></div><form id='form-ntp' data-inline='1' method='post' action='/ntp'><div class='panel-body'>");
+  page += F("<div class='field'><label><input class='enable-toggle' data-details='ntp-details' type='checkbox' name='ntp_enabled' value='1'");
+  if (config.ntp_enabled) page += F(" checked");
+  page += F(">Enable NTP</label></div><div id='ntp-details' class='subblock");
+  if (!config.ntp_enabled) page += F(" hidden");
+  page += F("'><div class='field-row'><div class='field'><label>NTP server IP<input name='ntp_server' maxlength='");
+  page += String(kNtpServerMaxLen);
+  page += F("' value='");
+  page += htmlEscape(config.ntp_server);
+  page += F("' placeholder='192.168.1.1'></label></div><div class='field'><label>Resync seconds<input name='ntp_resync' type='number' min='");
+  page += String(kNtpResyncMinSec);
+  page += F("' max='");
+  page += String(kNtpResyncMaxSec);
+  page += F("' step='1' value='");
+  page += String(config.ntp_resync_sec);
+  page += F("'></label></div></div></div></div></form><div class='panel-foot'><button type='submit' form='form-ntp'>Save NTP</button></div></section>");
+}
+
 void appendTasmotaSafebootForm(String &page) {
   TasmotaSafebootSettings settings = readTasmotaSafebootSettings();
   if (!settings.present) return;
@@ -10395,6 +10665,8 @@ void handleRoot() {
   flushStreamChunk(page);
 
   appendSectionHead(page, F("Maintenance"));
+  flushStreamChunk(page);
+  appendNtpForm(page);
   flushStreamChunk(page);
   page += F("<section class='panel'><div class='panel-head'><h2>System</h2><span class='h-meta'>Firmware / power / recovery / reboot</span></div><div class='panel-body'><div class='subblock'><div class='subblock-head'><div class='title'>Firmware</div></div><form id='form-firmware' class='fu' method='post' action='/update?verify=1' enctype='multipart/form-data' data-target='");
   page += F(MYMOTA32_TARGET);
@@ -11099,6 +11371,17 @@ void appendApiSettingsJson(String &out) {
   out += F(",\"stable_seconds\":");
   out += config.boot_recovery_stable_seconds;
   out += F("}");
+  out += F(",\"ntp\":{\"enabled\":");
+  out += config.ntp_enabled ? F("true") : F("false");
+  out += F(",\"server\":\"");
+  out += jsonEscape(config.ntp_server);
+  out += F("\",\"resync\":");
+  out += config.ntp_resync_sec;
+  out += F(",\"status\":\"");
+  out += ntp_status;
+  out += F("\",\"valid\":");
+  out += ntpHasValidTime() ? F("true") : F("false");
+  out += F("}");
   out += F(",\"hold_ms\":");
   out += config.button_hold_ms;
   out += F(",\"mqtt\":{\"host\":\"");
@@ -11235,6 +11518,11 @@ bool apiSettingsGetHasUpdateArgs() {
       server.hasArg("recovery_stable_seconds") ||
       server.hasArg("boot_recovery_stable_seconds")) return true;
   if (server.hasArg("wifi_dynamic_power") || server.hasArg("wifi_dynamic_tx_power")) return true;
+  if (server.hasArg("ntp_enabled") ||
+      server.hasArg("ntp") ||
+      server.hasArg("ntp_server") ||
+      server.hasArg("ntp_resync") ||
+      server.hasArg("ntp_resync_seconds")) return true;
   if (server.hasArg("hold_ms")) return true;
   if (server.hasArg("mqtt_protocol_keepalive") ||
       server.hasArg("protocol_keepalive") ||
@@ -11336,6 +11624,41 @@ bool applyApiSettingsGetArgs(StoredConfig &target, ApiSettingsStats &stats) {
     }
   }
 
+  String ntp_enabled;
+  if (apiSettingsGetArg(F("ntp_enabled"), F("ntp"), ntp_enabled)) {
+    saw_setting_arg = true;
+    bool enabled = false;
+    if (parseBoolText(ntp_enabled, enabled)) {
+      target.ntp_enabled = enabled ? 1 : 0;
+      recordApiSettingsApplied(stats);
+    } else {
+      recordApiSettingsSkipped(stats);
+    }
+  }
+
+  if (server.hasArg("ntp_server")) {
+    saw_setting_arg = true;
+    char normalized[kNtpServerMaxLen + 1]{};
+    if (normalizeNtpServerIp(server.arg("ntp_server"), normalized, sizeof(normalized))) {
+      strlcpy(target.ntp_server, normalized, sizeof(target.ntp_server));
+      recordApiSettingsApplied(stats);
+    } else {
+      recordApiSettingsSkipped(stats);
+    }
+  }
+
+  String ntp_resync;
+  if (apiSettingsGetArg(F("ntp_resync"), F("ntp_resync_seconds"), ntp_resync)) {
+    saw_setting_arg = true;
+    uint32_t seconds = kNtpResyncDefaultSec;
+    if (parseUint32Input(ntp_resync, kNtpResyncMinSec, kNtpResyncMaxSec, seconds)) {
+      target.ntp_resync_sec = seconds;
+      recordApiSettingsApplied(stats);
+    } else {
+      recordApiSettingsSkipped(stats);
+    }
+  }
+
   if (server.hasArg("hold_ms")) {
     saw_setting_arg = true;
     uint16_t hold_ms = kButtonHoldDefaultMs;
@@ -11424,6 +11747,7 @@ void finishApiSettingsUpdate(const StoredConfig &candidate, const ApiSettingsSta
   const bool mqtt_changed = mqttConfigDiffers(before, candidate);
   const bool wifi_dynamic_power_changed = before.wifi_dynamic_power != candidate.wifi_dynamic_power;
   const bool system_changed = systemConfigDiffers(before, candidate);
+  const bool ntp_changed = ntpConfigDiffers(before, candidate);
 
   if (!commitStoredConfig(candidate)) {
     config = before;
@@ -11440,6 +11764,7 @@ void finishApiSettingsUpdate(const StoredConfig &candidate, const ApiSettingsSta
     boot_recovery_limit = config.boot_recovery_limit;
     boot_recovery_stable_seconds = config.boot_recovery_stable_seconds;
   }
+  if (ntp_changed) applyNtpRuntime(true);
 
   String out;
   out.reserve(2200);
@@ -11517,6 +11842,35 @@ void handleMqttSave() {
     return;
   }
 
+  sendInlineOkOrHome();
+}
+
+void handleNtpSave() {
+  DBG_LOG("http", "POST /ntp");
+  const bool enabled = server.hasArg("ntp_enabled");
+  String server_arg = server.arg("ntp_server");
+  String resync_arg = server.arg("ntp_resync");
+  server_arg.trim();
+  resync_arg.trim();
+
+  uint32_t resync_sec = config.ntp_resync_sec ? config.ntp_resync_sec : kNtpResyncDefaultSec;
+  if (!parseUint32Input(resync_arg, kNtpResyncMinSec, kNtpResyncMaxSec, resync_sec)) {
+    sendPlain(400, F("Invalid NTP resync time"));
+    return;
+  }
+  if (enabled) {
+    char normalized[kNtpServerMaxLen + 1]{};
+    if (!normalizeNtpServerIp(server_arg, normalized, sizeof(normalized))) {
+      sendPlain(400, F("Invalid NTP server IP"));
+      return;
+    }
+    server_arg = normalized;
+  }
+
+  if (!saveNtpConfig(enabled, server_arg.c_str(), resync_sec)) {
+    sendPlain(500, F("Could not save NTP settings"));
+    return;
+  }
   sendInlineOkOrHome();
 }
 
@@ -12097,6 +12451,13 @@ bool settingsReadUint16(const cJSON *value, uint16_t min_value, uint16_t max_val
   return true;
 }
 
+bool settingsReadUint32(const cJSON *value, uint32_t min_value, uint32_t max_value, uint32_t &out) {
+  uint32_t parsed = 0;
+  if (!cjsonUintInRange(value, max_value, parsed) || parsed < min_value) return false;
+  out = parsed;
+  return true;
+}
+
 bool settingsReadFloat(const cJSON *value, float min_value, float max_value, float &out) {
   if (!cjsonIsType(value, cJSON_Number)) return false;
   const float parsed = static_cast<float>(value->valuedouble);
@@ -12419,6 +12780,12 @@ bool systemConfigDiffers(const StoredConfig &a, const StoredConfig &b) {
          a.boot_recovery_stable_seconds != b.boot_recovery_stable_seconds;
 }
 
+bool ntpConfigDiffers(const StoredConfig &a, const StoredConfig &b) {
+  return a.ntp_enabled != b.ntp_enabled ||
+         strcmp(a.ntp_server, b.ntp_server) != 0 ||
+         a.ntp_resync_sec != b.ntp_resync_sec;
+}
+
 bool commitStoredConfig(const StoredConfig &source) {
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putString("ssid", source.ssid);
@@ -12498,6 +12865,9 @@ bool commitStoredConfig(const StoredConfig &source) {
   prefs.putUChar("pwr_locked", power_saving_locked);
   prefs.putUShort("br_limit", sanitizeBootRecoveryLimit(source.boot_recovery_limit));
   prefs.putUShort("br_stable", sanitizeBootRecoveryStableSeconds(source.boot_recovery_stable_seconds));
+  prefs.putUChar("ntp_en", source.ntp_enabled ? 1 : 0);
+  prefs.putString("ntp_srv", source.ntp_server);
+  prefs.putUInt("ntp_resync", source.ntp_resync_sec);
   prefs.end();
   const bool loaded = loadConfig();
   if (loaded) {
@@ -12553,6 +12923,12 @@ void appendSettingsExportJson(String &out) {
   out += config.boot_recovery_stable_seconds;
   out += F("}},\"wifi\":{\"dynamic_power\":");
   out += config.wifi_dynamic_power ? F("true") : F("false");
+  out += F("},\"ntp\":{\"enabled\":");
+  out += config.ntp_enabled ? F("true") : F("false");
+  out += F(",\"server\":\"");
+  out += jsonEscape(config.ntp_server);
+  out += F("\",\"resync\":");
+  out += config.ntp_resync_sec;
   out += F("},\"template\":{\"enabled\":");
   out += config.template_enabled ? F("true") : F("false");
   if (config.template_enabled) {
@@ -12811,6 +13187,51 @@ void importSettingsWifi(const cJSON *root, StoredConfig &target, SettingsImportS
     recordSettingsApplied(stats);
   } else {
     recordSettingsSkipped(stats, F("wifi.dynamic_power"));
+  }
+}
+
+void importSettingsNtp(const cJSON *root, StoredConfig &target, SettingsImportStats &stats) {
+  const cJSON *ntp = cjsonObjectItem(root, "ntp");
+  if (!ntp) return;
+  if (!cjsonIsType(ntp, cJSON_Object)) {
+    recordSettingsSkipped(stats, F("ntp"));
+    return;
+  }
+
+  const cJSON *enabled_value = cjsonObjectItem(ntp, "enabled");
+  if (enabled_value) {
+    bool enabled = false;
+    if (settingsReadBool(enabled_value, enabled)) {
+      target.ntp_enabled = enabled ? 1 : 0;
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("ntp.enabled"));
+    }
+  }
+
+  const cJSON *server_value = cjsonObjectItem(ntp, "server");
+  if (server_value) {
+    String server_text;
+    char normalized[kNtpServerMaxLen + 1]{};
+    if (settingsReadString(server_value, server_text, kNtpServerMaxLen) &&
+        (server_text.length() == 0 || normalizeNtpServerIp(server_text, normalized, sizeof(normalized)))) {
+      strlcpy(target.ntp_server, server_text.length() == 0 ? "" : normalized, sizeof(target.ntp_server));
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("ntp.server"));
+    }
+  }
+
+  const cJSON *resync_value = cjsonObjectItem(ntp, "resync");
+  if (!resync_value) resync_value = cjsonObjectItem(ntp, "resync_seconds");
+  if (resync_value) {
+    uint32_t seconds = kNtpResyncDefaultSec;
+    if (settingsReadUint32(resync_value, kNtpResyncMinSec, kNtpResyncMaxSec, seconds)) {
+      target.ntp_resync_sec = seconds;
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("ntp.resync"));
+    }
   }
 }
 
@@ -13643,6 +14064,7 @@ void handleSettingsImport() {
   SettingsImportStats stats = {0, 0, String()};
   importSettingsSystem(doc, candidate, stats);
   importSettingsWifi(doc, candidate, stats);
+  importSettingsNtp(doc, candidate, stats);
   importSettingsTemplate(doc, candidate, stats);
   RuntimeTemplate candidate_runtime{};
   decodeTemplateConfigInto(candidate, candidate_runtime);
@@ -13683,6 +14105,7 @@ void handleSettingsImport() {
   const bool shelly_blu_button_changed = shellyBluButtonConfigDiffers(before, candidate);
   const bool wifi_dynamic_power_changed = before.wifi_dynamic_power != candidate.wifi_dynamic_power;
   const bool system_changed = systemConfigDiffers(before, candidate);
+  const bool ntp_changed = ntpConfigDiffers(before, candidate);
 
   if (powerSavingConfigChangeLocked(before, candidate)) {
     page += F("<p class='bad'>Power saving is locked.</p>");
@@ -13760,6 +14183,7 @@ void handleSettingsImport() {
     boot_recovery_limit = config.boot_recovery_limit;
     boot_recovery_stable_seconds = config.boot_recovery_stable_seconds;
   }
+  if (ntp_changed) applyNtpRuntime(true);
 
   page += F("<p class='ok'>Settings imported.</p>");
   appendSettingsImportSummary(page, stats);
@@ -13902,6 +14326,44 @@ void handleHealth() {
   out += config.power_saving_persist ? F("true") : F("false");
   out += F(",\"locked\":");
   out += config.power_saving_locked ? F("true") : F("false");
+  out += F("},\"ntp\":{\"enabled\":");
+  out += config.ntp_enabled ? F("true") : F("false");
+  out += F(",\"server\":\"");
+  out += jsonEscape(config.ntp_server);
+  out += F("\",\"resync\":");
+  out += config.ntp_resync_sec;
+  out += F(",\"running\":");
+  out += ntp_started ? F("true") : F("false");
+  out += F(",\"status\":\"");
+  out += ntp_status;
+  out += F("\",\"valid\":");
+  out += ntpHasValidTime() ? F("true") : F("false");
+  out += F(",\"datetime\":");
+  if (ntpHasValidTime()) {
+    out += '"';
+    appendNtpDateTime(out);
+    out += '"';
+  } else {
+    out += F("null");
+  }
+  out += F(",\"epoch\":");
+  if (ntpHasValidTime()) {
+    time_t now_time = 0;
+    time(&now_time);
+    out += static_cast<uint32_t>(now_time);
+  } else {
+    out += F("null");
+  }
+  out += F(",\"last_sync_ms_ago\":");
+  if (ntp_last_sync_ms) out += millis() - ntp_last_sync_ms;
+  else out += F("null");
+  out += F(",\"last_sync_epoch\":");
+  if (ntp_last_sync_epoch >= kNtpValidEpoch) out += static_cast<uint32_t>(ntp_last_sync_epoch);
+  else out += F("null");
+  out += F(",\"sync_count\":");
+  out += ntp_sync_count;
+  out += F(",\"reachability\":");
+  out += ntp_reachability;
   const wl_status_t wifi_status = WiFi.status();
   const IPAddress station_ip = WiFi.localIP();
   const bool station_has_ip = ipAddressSet(station_ip);
@@ -14550,6 +15012,7 @@ void setupRoutes() {
   server.on("/relay-pulsing", HTTP_POST, handleRelayPulseSave);
   server.on("/buttons", HTTP_POST, handleButtonSave);
   server.on("/mqtt", HTTP_POST, handleMqttSave);
+  server.on("/ntp", HTTP_POST, handleNtpSave);
   server.on("/energy", HTTP_POST, handleEnergySave);
   server.on("/ibeacon", HTTP_POST, handleIBeaconSave);
   server.on("/switchbot-lock", HTTP_POST, handleSwitchbotLockSave);
@@ -14703,6 +15166,7 @@ void setup() {
   DBG_SETUP_STEP("setupLightRuntime", setupLightRuntime(););
   DBG_SETUP_STEP("setupEnergyMonitor", setupEnergyMonitor(););
   DBG_SETUP_STEP("connectWifi", connectWifi(););
+  DBG_SETUP_STEP("applyNtpRuntime", applyNtpRuntime(true););
   DBG_SETUP_STEP("makeBootId", boot_id = makeBootId(););
   DBG_SETUP_STEP("refreshStaticSystemInfo", refreshStaticSystemInfo(););
   DBG_SETUP_STEP("setupRoutes", setupRoutes(););
@@ -14718,6 +15182,7 @@ void loop() {
     maintainBootRecovery();
     maintainWifi();
     maintainWifiDynamicPower();
+    maintainNtp();
   });
   DBG_LOOP_STEP(debug_loop_http2_us, { server.handleClient(); });
   DBG_LOOP_STEP(debug_loop_device_us, {
