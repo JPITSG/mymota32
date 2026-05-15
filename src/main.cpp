@@ -8879,7 +8879,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("function fh(){return fetch('/health',{cache:'no-store'}).then(function(r){if(!r.ok)throw Error();return r.json();}).then(function(d){ok();return d;});}");
   page += F("function t(i,v){var e=document.getElementById(i);if(e)e.textContent=v;}");
   page += F("function p(i,v,c){var e=document.getElementById(i);if(e){e.textContent=v;e.className=c;}}");
-  page += F("function sv(n,v){var a=document.getElementsByName(n),e=a&&a[0];if(e&&document.activeElement!==e&&String(e.value)!=String(v))e.value=v;}function cv(n,v){var a=document.getElementsByName(n),e=a&&a[0];if(e&&document.activeElement!==e)e.checked=!!v;}");
+  page += F("function fd(e){return e&&e.form&&e.form.getAttribute('data-dirty')=='1';}function sv(n,v){var a=document.getElementsByName(n),e=a&&a[0];if(e&&!fd(e)&&document.activeElement!==e&&String(e.value)!=String(v))e.value=v;}function cv(n,v){var a=document.getElementsByName(n),e=a&&a[0];if(e&&!fd(e)&&document.activeElement!==e)e.checked=!!v;}");
   page += F("function nv(v){return v==null||v===''?'n/a':v;}function yn(v){return v?'yes':'no';}function ag(v){return v==null?'n/a':Math.floor(v/1000)+'s ago';}function ms(v){return v==null?'n/a':v+' ms ago';}");
   page += F("function sd(e,d){if(!e)return;var q=e.querySelectorAll('input,select,textarea,button');for(var i=0;i<q.length;i++)q[i].disabled=d;}var fbz={};function sdb(k,d){var a=document.querySelectorAll('form[data-busy=\"'+k+'\"]');for(var i=0;i<a.length;i++)sd(a[i],d);}");
   page += F("function live(){if(lp)return;lp=1;fh().then(function(d){");
@@ -8923,8 +8923,9 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
 #else
   page += F("function bi(){var a=document.querySelectorAll('.ba');for(var i=0;i<a.length;i++){a[i].onchange=function(){ba(this)};ba(a[i]);}var m=document.querySelectorAll('.im');for(var j=0;j<m.length;j++){m[j].onchange=function(){im(this)};im(m[j]);}var c=document.querySelectorAll('.rbc');for(var k=0;k<c.length;k++){c[k].onchange=function(){rb(this)};rb(c[k]);}var t=document.getElementById('template-json');if(t){t.oninput=ts;t.onchange=ts;}ti();et();ts();}bi();fw();");
 #endif
+  page += F("function md(e){var t=e.target;if(t&&t.form&&t.form.getAttribute('data-inline')=='1')t.form.setAttribute('data-dirty','1');}document.addEventListener('input',md,true);document.addEventListener('change',md,true);");
   page += F("document.addEventListener('click',function(e){var b=e.target;while(b&&b.tagName!='BUTTON'&&b.tagName!='INPUT')b=b.parentNode;if(!b||!b.form)return;var t=(b.type||'').toLowerCase();if(t=='submit'||t=='image')b.form._s=b;},true);");
-  page += F("document.addEventListener('submit',function(e){var f=e.target;if(!f||f.getAttribute('data-inline')!='1')return;e.preventDefault();var bk=f.getAttribute('data-busy');if(bk&&fbz[bk])return;var fd=new FormData(f),b=e.submitter||f._s;if(b&&b.name)fd.append(b.name,b.value);fd.append('_inline','1');var body=new URLSearchParams();fd.forEach(function(v,k){body.append(k,v);});if(bk){fbz[bk]=1;sdb(bk,true);}var fin=function(){if(bk){fbz[bk]=0;sdb(bk,false);}};fetch(f.getAttribute('action')||location.pathname,{method:(f.method||'POST').toUpperCase(),body:body,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});if(f.getAttribute('data-reload')=='1'){location.reload();return;}live();}).then(fin).catch(function(x){fin();alert(x.message||x);});},true);");
+  page += F("document.addEventListener('submit',function(e){var f=e.target;if(!f||f.getAttribute('data-inline')!='1')return;e.preventDefault();var bk=f.getAttribute('data-busy');if(bk&&fbz[bk])return;var fd=new FormData(f),b=e.submitter||f._s;if(b&&b.name)fd.append(b.name,b.value);fd.append('_inline','1');var body=new URLSearchParams();fd.forEach(function(v,k){body.append(k,v);});if(bk){fbz[bk]=1;sdb(bk,true);}var fin=function(){if(bk){fbz[bk]=0;sdb(bk,false);}};fetch(f.getAttribute('action')||location.pathname,{method:(f.method||'POST').toUpperCase(),body:body,cache:'no-store'}).then(function(r){if(!r.ok)return r.text().then(function(x){throw Error(x||r.statusText)});if(f.getAttribute('data-reload')=='1'){location.reload();return;}f.removeAttribute('data-dirty');live();}).then(fin).catch(function(x){fin();alert(x.message||x);});},true);");
   if (live_poll) page += F("setInterval(live,1000);setInterval(ck,1000);live();");
   if (reboot_wait) {
     page += F("var rb=");
@@ -10101,7 +10102,7 @@ void appendNtpForm(String &page) {
   page += F("</span></div><form id='form-ntp' data-inline='1' method='post' action='/ntp'><div class='panel-body'>");
   page += F("<div class='field'><label><input class='enable-toggle' data-details='ntp-details' type='checkbox' name='ntp_enabled' value='1'");
   if (config.ntp_enabled) page += F(" checked");
-  page += F(">Enable NTP</label></div><div id='ntp-details' class='subblock");
+  page += F(">Enable</label></div><div id='ntp-details' class='subblock");
   if (!config.ntp_enabled) page += F(" hidden");
   page += F("'><div class='field-row'><div class='field'><label>NTP server IP<input name='ntp_server' maxlength='");
   page += String(kNtpServerMaxLen);
