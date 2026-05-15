@@ -207,7 +207,7 @@ constexpr uint32_t kLedUpdateMs = 50;
 constexpr uint8_t kPowerSavingOff = 0;
 constexpr uint8_t kPowerSavingLight = 1;
 constexpr uint8_t kPowerSavingDeep = 2;
-constexpr uint8_t kPowerSavingOffLocked = 3;
+constexpr uint8_t kPowerSavingLegacyOffLocked = 3;
 constexpr uint16_t kRelayEnforcementMinSeconds = 1;
 constexpr uint16_t kRelayEnforcementMaxSeconds = 65535U;
 constexpr uint16_t kRelayPulseMinSeconds = 1;
@@ -690,6 +690,8 @@ struct StoredConfig {
   char shelly_blu_button_macs[kShellyBluButtonMax][kShellyBluButtonMacMaxLen + 1];
 
   uint16_t power_saving_mode;
+  uint8_t power_saving_persist;
+  uint8_t power_saving_locked;
   uint8_t wifi_dynamic_power;
   uint8_t boot_recovery_limit;
   uint16_t boot_recovery_stable_seconds;
@@ -1107,7 +1109,7 @@ const __FlashStringHelper *phyModeName(uint8_t mode) {
 }
 
 uint8_t sanitizePowerSavingMode(uint16_t mode) {
-  return mode <= kPowerSavingOffLocked ? static_cast<uint8_t>(mode) : kPowerSavingOff;
+  return mode <= kPowerSavingDeep ? static_cast<uint8_t>(mode) : kPowerSavingOff;
 }
 
 uint8_t sanitizeBootRecoveryLimit(uint16_t value) {
@@ -1122,14 +1124,10 @@ uint16_t sanitizeBootRecoveryStableSeconds(uint16_t value) {
   return value;
 }
 
-bool powerSavingModePersists(uint16_t mode) {
-  return sanitizePowerSavingMode(mode) == kPowerSavingOffLocked;
-}
-
 bool parsePowerSavingMode(String value, uint8_t &mode) {
   value.trim();
   value.toLowerCase();
-  if (value == F("0") || value == F("off")) {
+  if (value == F("0") || value == F("off") || value == F("none")) {
     mode = kPowerSavingOff;
     return true;
   }
@@ -1141,11 +1139,6 @@ bool parsePowerSavingMode(String value, uint8_t &mode) {
     mode = kPowerSavingDeep;
     return true;
   }
-  if (value == F("3") || value == F("off_locked") || value == F("off-locked") ||
-      value == F("off locked") || value == F("locked")) {
-    mode = kPowerSavingOffLocked;
-    return true;
-  }
   return false;
 }
 
@@ -1153,7 +1146,6 @@ const __FlashStringHelper *powerSavingModeName(uint8_t mode) {
   switch (sanitizePowerSavingMode(mode)) {
     case kPowerSavingLight: return F("light");
     case kPowerSavingDeep: return F("deep");
-    case kPowerSavingOffLocked: return F("off_locked");
     default: return F("off");
   }
 }
@@ -2096,6 +2088,10 @@ bool normalizeSwitchbotLockCallbackTemplate(const String &input, char *out, size
 void scheduleMqttLightPublish(uint8_t mask);
 bool persistLightConfig(bool force = false);
 bool inputConfigDiffers(const StoredConfig &a, const StoredConfig &b);
+bool mqttConfigDiffers(const StoredConfig &a, const StoredConfig &b);
+bool systemConfigDiffers(const StoredConfig &a, const StoredConfig &b);
+bool commitStoredConfig(const StoredConfig &source);
+bool parseBoolText(String value, bool &out);
 
 void setDefaultConfig() {
   memset(&config, 0, sizeof(config));
@@ -2159,6 +2155,8 @@ void setDefaultConfig() {
   config.switchbot_lock_battery_notify_sec = kSwitchbotLockBatteryNotifyDefaultSec;
   config.shelly_blu_button_enabled = 0;
   config.power_saving_mode = kPowerSavingOff;
+  config.power_saving_persist = 0;
+  config.power_saving_locked = 0;
   config.wifi_dynamic_power = kWifiDynamicPowerDefault;
   config.boot_recovery_limit = kBootRecoveryLimitDefault;
   config.boot_recovery_stable_seconds = kBootRecoveryStableDefaultSec;
@@ -2306,7 +2304,14 @@ bool loadConfig() {
   if (prefs.getBytesLength("blu_macs") == sizeof(shelly_blu_button_macs)) {
     prefs.getBytes("blu_macs", shelly_blu_button_macs, sizeof(shelly_blu_button_macs));
   }
-  uint16_t power_saving_mode = prefs.getUShort("pwr_save", kPowerSavingOff);
+  const bool power_saving_mode_present = prefs.isKey("pwr_save");
+  uint16_t raw_power_saving_mode = prefs.getUShort("pwr_save", kPowerSavingOff);
+  const bool legacy_off_locked = raw_power_saving_mode == kPowerSavingLegacyOffLocked;
+  uint8_t power_saving_persist = prefs.getUChar(
+      "pwr_persist",
+      (!legacy_off_locked && power_saving_mode_present &&
+       sanitizePowerSavingMode(raw_power_saving_mode) != kPowerSavingOff) ? 1 : 0);
+  uint8_t power_saving_locked = prefs.getUChar("pwr_locked", legacy_off_locked ? 1 : 0);
   uint8_t wifi_dynamic_power = prefs.getUChar("wifi_dyn", kWifiDynamicPowerDefault);
   uint16_t boot_recovery_limit_value = prefs.getUShort("br_limit", kBootRecoveryLimitDefault);
   uint16_t boot_recovery_stable_value = prefs.getUShort("br_stable", kBootRecoveryStableDefaultSec);
@@ -2488,7 +2493,14 @@ bool loadConfig() {
   if (!shelly_blu_button_enabled_present) {
     config.shelly_blu_button_enabled = shelly_blu_button_paired_count > 0 ? 1 : 0;
   }
-  config.power_saving_mode = powerSavingModePersists(power_saving_mode) ? kPowerSavingOffLocked : kPowerSavingOff;
+  config.power_saving_persist = power_saving_persist ? 1 : 0;
+  config.power_saving_locked = power_saving_locked ? 1 : 0;
+  config.power_saving_mode = config.power_saving_persist ? sanitizePowerSavingMode(raw_power_saving_mode) : kPowerSavingOff;
+  if (legacy_off_locked) {
+    config.power_saving_mode = kPowerSavingOff;
+    config.power_saving_persist = 0;
+    config.power_saving_locked = 1;
+  }
   config.wifi_dynamic_power = wifi_dynamic_power ? 1 : 0;
   config.boot_recovery_limit = sanitizeBootRecoveryLimit(boot_recovery_limit_value);
   config.boot_recovery_stable_seconds = sanitizeBootRecoveryStableSeconds(boot_recovery_stable_value);
@@ -2646,39 +2658,41 @@ bool saveShellyBluButtonConfig(bool enabled,
   return loadConfig();
 }
 
-bool savePowerSavingConfig(uint8_t mode) {
-  mode = sanitizePowerSavingMode(mode);
-  DBG_LOG("config", "save power_saving mode=%u", mode);
-  if (!prefs.begin("mymota32", false)) return false;
-  if (powerSavingModePersists(mode)) prefs.putUShort("pwr_save", mode);
-  else prefs.remove("pwr_save");
-  prefs.end();
-  config.power_saving_mode = mode;
-  return true;
+bool powerSavingConfigChangeLocked(const StoredConfig &before, const StoredConfig &candidate) {
+  if (!before.power_saving_locked) return false;
+  return sanitizePowerSavingMode(before.power_saving_mode) != sanitizePowerSavingMode(candidate.power_saving_mode) ||
+         (before.power_saving_persist ? 1 : 0) != (candidate.power_saving_persist ? 1 : 0);
 }
 
-bool saveSystemConfig(uint8_t power_saving_mode, uint16_t recovery_limit, uint16_t recovery_stable_seconds) {
+bool saveSystemConfig(uint8_t power_saving_mode, uint8_t power_saving_persist, uint8_t power_saving_locked,
+                      uint16_t recovery_limit, uint16_t recovery_stable_seconds) {
   power_saving_mode = sanitizePowerSavingMode(power_saving_mode);
+  power_saving_persist = power_saving_persist ? 1 : 0;
+  power_saving_locked = power_saving_locked ? 1 : 0;
   recovery_limit = sanitizeBootRecoveryLimit(recovery_limit);
   recovery_stable_seconds = sanitizeBootRecoveryStableSeconds(recovery_stable_seconds);
-  DBG_LOG("config", "save system power_saving=%u recovery=%u/%u",
-          power_saving_mode, recovery_limit, recovery_stable_seconds);
+  StoredConfig candidate = config;
+  candidate.power_saving_mode = power_saving_mode;
+  candidate.power_saving_persist = power_saving_persist;
+  candidate.power_saving_locked = power_saving_locked;
+  if (powerSavingConfigChangeLocked(config, candidate)) return false;
+  DBG_LOG("config", "save system power_saving=%u persist=%u locked=%u recovery=%u/%u",
+          power_saving_mode, power_saving_persist, power_saving_locked, recovery_limit, recovery_stable_seconds);
   if (!prefs.begin("mymota32", false)) return false;
-  if (powerSavingModePersists(power_saving_mode)) prefs.putUShort("pwr_save", power_saving_mode);
-  else prefs.remove("pwr_save");
+  prefs.putUShort("pwr_save", power_saving_persist ? power_saving_mode : kPowerSavingOff);
+  prefs.putUChar("pwr_persist", power_saving_persist);
+  prefs.putUChar("pwr_locked", power_saving_locked);
   prefs.putUShort("br_limit", recovery_limit);
   prefs.putUShort("br_stable", recovery_stable_seconds);
   prefs.end();
   config.power_saving_mode = power_saving_mode;
+  config.power_saving_persist = power_saving_persist;
+  config.power_saving_locked = power_saving_locked;
   config.boot_recovery_limit = static_cast<uint8_t>(recovery_limit);
   config.boot_recovery_stable_seconds = recovery_stable_seconds;
   boot_recovery_limit = config.boot_recovery_limit;
   boot_recovery_stable_seconds = config.boot_recovery_stable_seconds;
   return true;
-}
-
-bool powerSavingApiLocked() {
-  return sanitizePowerSavingMode(config.power_saving_mode) == kPowerSavingOffLocked;
 }
 
 bool saveDeviceStateEnforcementConfig(const uint8_t *restore_boot, const uint8_t *on_boot,
@@ -8632,6 +8646,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("function fh(){return fetch('/health',{cache:'no-store'}).then(function(r){if(!r.ok)throw Error();return r.json();}).then(function(d){ok();return d;});}");
   page += F("function t(i,v){var e=document.getElementById(i);if(e)e.textContent=v;}");
   page += F("function p(i,v,c){var e=document.getElementById(i);if(e){e.textContent=v;e.className=c;}}");
+  page += F("function sv(n,v){var a=document.getElementsByName(n),e=a&&a[0];if(e&&document.activeElement!==e&&String(e.value)!=String(v))e.value=v;}function cv(n,v){var a=document.getElementsByName(n),e=a&&a[0];if(e&&document.activeElement!==e)e.checked=!!v;}");
   page += F("function nv(v){return v==null||v===''?'n/a':v;}function yn(v){return v?'yes':'no';}function ag(v){return v==null?'n/a':Math.floor(v/1000)+'s ago';}function ms(v){return v==null?'n/a':v+' ms ago';}");
   page += F("function sd(e,d){if(!e)return;var q=e.querySelectorAll('input,select,textarea,button');for(var i=0;i<q.length;i++)q[i].disabled=d;}var fbz={};function sdb(k,d){var a=document.querySelectorAll('form[data-busy=\"'+k+'\"]');for(var i=0;i<a.length;i++)sd(a[i],d);}");
   page += F("function live(){if(lp)return;lp=1;fh().then(function(d){");
@@ -8639,6 +8654,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("if(d.partitions){var r=d.partitions.running||{},u=d.partitions.next_update||{},f=d.partitions.factory||{};t('live-part-running-label',nv(r.label));t('live-part-running-size',r.size==null?'n/a':r.size+' bytes');t('live-part-update-label',nv(u.label));t('live-part-update-size',u.size==null?'n/a':u.size+' bytes');t('live-part-factory-label',nv(f.label));t('live-part-factory-size',f.size==null?'n/a':f.size+' bytes');t('live-part-ota-slots',nv(d.partitions.ota_slots));}");
   page += F("t('live-uptime',d.uptime+'s');t('live-uptime-2',d.uptime+'s');t('live-configured-phy',nv(d.configured_phy));t('live-active-phy',nv(d.active_phy));");
   page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',Number(d.perf.loop_max_us/1000).toFixed(1)+' ms');}");
+  page += F("if(d.power_saving){sv('power_saving',d.power_saving.mode||'off');cv('power_saving_persist',d.power_saving.persist);cv('power_saving_locked',d.power_saving.locked);}");
   page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);t('live-recovery-stable',d.recovery.stable_seconds+'s');");
   page += F("var wu=d.wifi_usable!=null?d.wifi_usable:d.wifi,ws=!!d.wifi_sdk_connected,wl=ws?'connected':(wu?'usable':'disconnected'),wc=ws?'pill ok':(wu?'pill warn':'pill bad');p('live-wifi',wl,wc);t('live-ssid',d.wifi_ssid||'n/a');t('live-ssid-2',d.wifi_ssid||'n/a');t('live-wifi-sdk',(d.wifi_status_name||'unknown')+' ('+(d.wifi_status==null?'?':d.wifi_status)+')');t('live-ip',d.ip||'n/a');t('live-ip-2',d.ip||'n/a');t('live-gateway',d.gateway_ip||'n/a');t('live-dns',d.dns_ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');t('live-rssi-2',d.rssi==null?'n/a':d.rssi+' dBm');t('live-ap',d.ap?(d.ap_ssid||'active'):'off');t('live-ap-ip',d.ap_ip||'n/a');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
@@ -10212,7 +10228,7 @@ void appendShellyBluButtonForm(String &page) {
 
 void appendPowerSavingOption(String &page, uint8_t mode, const __FlashStringHelper *label) {
   page += F("<option value='");
-  page += mode;
+  page += powerSavingModeName(mode);
   page += F("'");
   if (sanitizePowerSavingMode(config.power_saving_mode) == mode) page += F(" selected");
   page += F(">");
@@ -10221,12 +10237,15 @@ void appendPowerSavingOption(String &page, uint8_t mode, const __FlashStringHelp
 }
 
 void appendPowerSavingSelect(String &page) {
-  page += F("<div class='field'><select name='power_saving'>");
+  page += F("<div class='field'><label>Mode</label><select id='power-saving-mode' name='power_saving'>");
   appendPowerSavingOption(page, kPowerSavingOff, F("Off"));
-  appendPowerSavingOption(page, kPowerSavingOffLocked, F("Off - Locked"));
   appendPowerSavingOption(page, kPowerSavingLight, F("Light"));
   appendPowerSavingOption(page, kPowerSavingDeep, F("Deep"));
-  page += F("</select></div>");
+  page += F("</select></div><div class='field-row'><div class='field'><label><input type='checkbox' name='power_saving_persist' value='1'");
+  if (config.power_saving_persist) page += F(" checked");
+  page += F(">Persist</label></div><div class='field'><label><input type='checkbox' name='power_saving_locked' value='1'");
+  if (config.power_saving_locked) page += F(" checked");
+  page += F(">Locked</label></div></div>");
 }
 
 void appendPhyModeSelect(String &page) {
@@ -10377,13 +10396,13 @@ void handleRoot() {
 
   appendSectionHead(page, F("Maintenance"));
   flushStreamChunk(page);
-  page += F("<section class='panel'><div class='panel-head'><h2>System</h2><span class='h-meta'>Firmware / power / reboot</span></div><div class='panel-body'><div class='subblock'><div class='subblock-head'><div class='title'>Firmware</div></div><form id='form-firmware' class='fu' method='post' action='/update?verify=1' enctype='multipart/form-data' data-target='");
+  page += F("<section class='panel'><div class='panel-head'><h2>System</h2><span class='h-meta'>Firmware / power / recovery / reboot</span></div><div class='panel-body'><div class='subblock'><div class='subblock-head'><div class='title'>Firmware</div></div><form id='form-firmware' class='fu' method='post' action='/update?verify=1' enctype='multipart/form-data' data-target='");
   page += F(MYMOTA32_TARGET);
   page += F("'>");
   page += F("<div class='field'><label>Firmware binary<input type='file' name='firmware' accept='.bin' required></label></div>");
   page += F("<div class='field'><label><input class='fv' type='checkbox' checked>Verify target</label></div>");
   page += F("</form></div>");
-  page += F("<form id='form-system' method='post' action='/system'><div class='subblock'><div class='subblock-head'><div class='title'>Power Saving</div></div>");
+  page += F("<form id='form-system' data-inline='1' method='post' action='/system'><div class='subblock'><div class='subblock-head'><div class='title'>Power Saving</div></div>");
   appendPowerSavingSelect(page);
   page += F("</div><div class='subblock'><div class='subblock-head'><div class='title'>Recovery Guard</div></div><div class='field-row'><div class='field'><label>Boot limit<input name='recovery_limit' type='number' min='");
   page += String(kBootRecoveryLimitMin);
@@ -11067,6 +11086,19 @@ bool apiSettingsButtonAvailable(uint8_t input) {
 void appendApiSettingsJson(String &out) {
   out += F("{\"format\":\"mymota-api-settings\",\"api_version\":");
   out += kApiSettingsVersion;
+  out += F(",\"power_saving\":{\"mode\":\"");
+  out += powerSavingModeName(config.power_saving_mode);
+  out += F("\",\"delay_ms\":");
+  out += powerSavingDelayMs(config.power_saving_mode);
+  out += F(",\"persist\":");
+  out += config.power_saving_persist ? F("true") : F("false");
+  out += F(",\"locked\":");
+  out += config.power_saving_locked ? F("true") : F("false");
+  out += F("},\"recovery_guard\":{\"limit\":");
+  out += config.boot_recovery_limit;
+  out += F(",\"stable_seconds\":");
+  out += config.boot_recovery_stable_seconds;
+  out += F("}");
   out += F(",\"hold_ms\":");
   out += config.button_hold_ms;
   out += F(",\"mqtt\":{\"host\":\"");
@@ -11192,6 +11224,17 @@ bool apiSettingsIndexedArgPresent(uint8_t input_number, const char *primary_suff
 }
 
 bool apiSettingsGetHasUpdateArgs() {
+  if (server.hasArg("power_saving") ||
+      server.hasArg("power_saving_mode") ||
+      server.hasArg("power_saving_persist") ||
+      server.hasArg("power_saving_locked")) return true;
+  if (server.hasArg("recovery_guard_limit") ||
+      server.hasArg("recovery_limit") ||
+      server.hasArg("boot_recovery_limit") ||
+      server.hasArg("recovery_guard_stable_seconds") ||
+      server.hasArg("recovery_stable_seconds") ||
+      server.hasArg("boot_recovery_stable_seconds")) return true;
+  if (server.hasArg("wifi_dynamic_power") || server.hasArg("wifi_dynamic_tx_power")) return true;
   if (server.hasArg("hold_ms")) return true;
   if (server.hasArg("mqtt_protocol_keepalive") ||
       server.hasArg("protocol_keepalive") ||
@@ -11208,6 +11251,90 @@ bool apiSettingsGetHasUpdateArgs() {
 
 bool applyApiSettingsGetArgs(StoredConfig &target, ApiSettingsStats &stats) {
   bool saw_setting_arg = false;
+
+  String power_saving;
+  if (apiSettingsGetArg(F("power_saving"), F("power_saving_mode"), power_saving)) {
+    saw_setting_arg = true;
+    uint8_t mode = kPowerSavingOff;
+    if (parsePowerSavingMode(power_saving, mode)) {
+      target.power_saving_mode = mode;
+      recordApiSettingsApplied(stats);
+    } else {
+      recordApiSettingsSkipped(stats);
+    }
+  }
+
+  String power_saving_persist;
+  if (apiSettingsGetArg(F("power_saving_persist"), F(""), power_saving_persist)) {
+    saw_setting_arg = true;
+    bool enabled = false;
+    if (parseBoolText(power_saving_persist, enabled)) {
+      target.power_saving_persist = enabled ? 1 : 0;
+      recordApiSettingsApplied(stats);
+    } else {
+      recordApiSettingsSkipped(stats);
+    }
+  }
+
+  String power_saving_locked;
+  if (apiSettingsGetArg(F("power_saving_locked"), F(""), power_saving_locked)) {
+    saw_setting_arg = true;
+    bool enabled = false;
+    if (parseBoolText(power_saving_locked, enabled)) {
+      target.power_saving_locked = enabled ? 1 : 0;
+      recordApiSettingsApplied(stats);
+    } else {
+      recordApiSettingsSkipped(stats);
+    }
+  }
+
+  String recovery_limit;
+  bool has_recovery_limit = apiSettingsGetArg(F("recovery_guard_limit"), F("boot_recovery_limit"), recovery_limit);
+  if (!has_recovery_limit && server.hasArg(F("recovery_limit"))) {
+    recovery_limit = server.arg(F("recovery_limit"));
+    has_recovery_limit = true;
+  }
+  if (has_recovery_limit) {
+    saw_setting_arg = true;
+    uint16_t limit = 0;
+    if (parseUint16Input(recovery_limit, kBootRecoveryLimitMin, kBootRecoveryLimitMax, limit)) {
+      target.boot_recovery_limit = sanitizeBootRecoveryLimit(limit);
+      recordApiSettingsApplied(stats);
+    } else {
+      recordApiSettingsSkipped(stats);
+    }
+  }
+
+  String recovery_stable_seconds;
+  bool has_recovery_stable_seconds = apiSettingsGetArg(F("recovery_guard_stable_seconds"),
+                                                       F("boot_recovery_stable_seconds"),
+                                                       recovery_stable_seconds);
+  if (!has_recovery_stable_seconds && server.hasArg(F("recovery_stable_seconds"))) {
+    recovery_stable_seconds = server.arg(F("recovery_stable_seconds"));
+    has_recovery_stable_seconds = true;
+  }
+  if (has_recovery_stable_seconds) {
+    saw_setting_arg = true;
+    uint16_t seconds = 0;
+    if (parseUint16Input(recovery_stable_seconds, kBootRecoveryStableMinSec, kBootRecoveryStableMaxSec, seconds)) {
+      target.boot_recovery_stable_seconds = sanitizeBootRecoveryStableSeconds(seconds);
+      recordApiSettingsApplied(stats);
+    } else {
+      recordApiSettingsSkipped(stats);
+    }
+  }
+
+  String wifi_dynamic_power;
+  if (apiSettingsGetArg(F("wifi_dynamic_power"), F("wifi_dynamic_tx_power"), wifi_dynamic_power)) {
+    saw_setting_arg = true;
+    bool enabled = false;
+    if (parseBoolText(wifi_dynamic_power, enabled)) {
+      target.wifi_dynamic_power = enabled ? 1 : 0;
+      recordApiSettingsApplied(stats);
+    } else {
+      recordApiSettingsSkipped(stats);
+    }
+  }
 
   if (server.hasArg("hold_ms")) {
     saw_setting_arg = true;
@@ -11288,11 +11415,31 @@ void finishApiSettingsUpdate(const StoredConfig &candidate, const ApiSettingsSta
     return;
   }
 
-  if (!saveInputConfig(candidate)) {
+  const StoredConfig before = config;
+  if (powerSavingConfigChangeLocked(before, candidate)) {
+    sendApiSettingsError(423, F("Power saving is locked"));
+    return;
+  }
+  const bool input_changed = inputConfigDiffers(before, candidate);
+  const bool mqtt_changed = mqttConfigDiffers(before, candidate);
+  const bool wifi_dynamic_power_changed = before.wifi_dynamic_power != candidate.wifi_dynamic_power;
+  const bool system_changed = systemConfigDiffers(before, candidate);
+
+  if (!commitStoredConfig(candidate)) {
+    config = before;
     sendApiSettingsError(500, F("Could not save settings"));
     return;
   }
-  updateDeviceLeds(true);
+  config.power_saving_mode = sanitizePowerSavingMode(candidate.power_saving_mode);
+  config.power_saving_persist = candidate.power_saving_persist ? 1 : 0;
+  config.power_saving_locked = candidate.power_saving_locked ? 1 : 0;
+  if (mqtt_changed) resetMqttRuntimeState();
+  if (input_changed) updateDeviceLeds(true);
+  if (wifi_dynamic_power_changed) resetWifiDynamicPowerRuntime(true);
+  if (system_changed) {
+    boot_recovery_limit = config.boot_recovery_limit;
+    boot_recovery_stable_seconds = config.boot_recovery_stable_seconds;
+  }
 
   String out;
   out.reserve(2200);
@@ -11309,24 +11456,6 @@ void finishApiSettingsUpdate(const StoredConfig &candidate, const ApiSettingsSta
 
 void handleApiSettingsGet() {
   DBG_LOG("http", "GET /api/settings args=%u", server.args());
-  if (server.hasArg("power_saving")) {
-    uint8_t mode = kPowerSavingOff;
-    if (!parsePowerSavingMode(server.arg("power_saving"), mode)) {
-      sendApiSettingsError(400, F("Invalid power saving"));
-      return;
-    }
-    if (powerSavingApiLocked()) {
-      server.send(200, F("application/json"), F("{\"ok\":true,\"power_saving\":\"off_locked\",\"locked\":true}"));
-      return;
-    }
-    if (!savePowerSavingConfig(mode)) {
-      sendApiSettingsError(500, F("Could not save settings"));
-      return;
-    }
-    server.send(200, F("application/json"), F("{\"ok\":true}"));
-    return;
-  }
-
   if (!apiSettingsGetHasUpdateArgs()) {
     String out;
     out.reserve(1800);
@@ -11894,25 +12023,42 @@ void handleSwitchbotLockCompatCommandStatus(const String &id_text) {
 
 void handleSystemSave() {
   DBG_LOG("http", "POST /system");
+  String mode_arg = server.hasArg("power_saving") ? server.arg("power_saving") : server.arg("power_saving_mode");
   uint8_t mode = kPowerSavingOff;
-  if (!parsePowerSavingMode(server.arg("power_saving"), mode)) {
+  if (!parsePowerSavingMode(mode_arg, mode)) {
     sendPlain(400, F("Invalid power saving"));
     return;
   }
+  const uint8_t persist = server.hasArg("power_saving_persist") ? 1 : 0;
+  const uint8_t locked = server.hasArg("power_saving_locked") ? 1 : 0;
   uint16_t recovery_limit = config.boot_recovery_limit;
   uint16_t recovery_stable_seconds = config.boot_recovery_stable_seconds;
-  if (!parseUint16Input(server.arg("recovery_limit"), kBootRecoveryLimitMin,
-                        kBootRecoveryLimitMax, recovery_limit)) {
-    sendPlain(400, F("Invalid recovery guard boot limit"));
-    return;
+  if (server.hasArg("recovery_limit") || server.hasArg("boot_recovery_limit")) {
+    const String limit_arg = server.hasArg("recovery_limit") ? server.arg("recovery_limit") : server.arg("boot_recovery_limit");
+    if (!parseUint16Input(limit_arg, kBootRecoveryLimitMin, kBootRecoveryLimitMax, recovery_limit)) {
+      sendPlain(400, F("Invalid recovery guard boot limit"));
+      return;
+    }
   }
-  if (!parseUint16Input(server.arg("recovery_stable_seconds"), kBootRecoveryStableMinSec,
-                        kBootRecoveryStableMaxSec, recovery_stable_seconds)) {
-    sendPlain(400, F("Invalid recovery guard stable seconds"));
-    return;
+  if (server.hasArg("recovery_stable_seconds") || server.hasArg("boot_recovery_stable_seconds")) {
+    const String stable_arg = server.hasArg("recovery_stable_seconds") ?
+        server.arg("recovery_stable_seconds") : server.arg("boot_recovery_stable_seconds");
+    if (!parseUint16Input(stable_arg, kBootRecoveryStableMinSec, kBootRecoveryStableMaxSec,
+                          recovery_stable_seconds)) {
+      sendPlain(400, F("Invalid recovery guard stable seconds"));
+      return;
+    }
   }
 
-  if (!saveSystemConfig(mode, recovery_limit, recovery_stable_seconds)) {
+  StoredConfig candidate = config;
+  candidate.power_saving_mode = sanitizePowerSavingMode(mode);
+  candidate.power_saving_persist = persist;
+  candidate.power_saving_locked = locked;
+  if (powerSavingConfigChangeLocked(config, candidate)) {
+    sendPlain(423, F("Power saving is locked"));
+    return;
+  }
+  if (!saveSystemConfig(mode, persist, locked, recovery_limit, recovery_stable_seconds)) {
     sendPlain(500, F("Save failed"));
     return;
   }
@@ -11995,9 +12141,17 @@ bool settingsReadPowerSavingMode(const cJSON *value, uint8_t &mode) {
   String text;
   if (settingsReadString(value, text, 12)) return parsePowerSavingMode(text, mode);
   uint16_t raw = 0;
-  if (!settingsReadUint16(value, kPowerSavingOff, kPowerSavingOffLocked, raw)) return false;
+  if (!settingsReadUint16(value, kPowerSavingOff, kPowerSavingDeep, raw)) return false;
   mode = sanitizePowerSavingMode(raw);
   return true;
+}
+
+bool settingsReadLegacyPowerSavingLocked(const cJSON *value) {
+  String text;
+  if (!settingsReadString(value, text, 16)) return false;
+  text.trim();
+  text.toLowerCase();
+  return text == F("off_locked") || text == F("off-locked") || text == F("off locked") || text == F("locked");
 }
 
 const __FlashStringHelper *settingsActionName(uint8_t action) {
@@ -12259,6 +12413,8 @@ bool shellyBluButtonConfigDiffers(const StoredConfig &a, const StoredConfig &b) 
 
 bool systemConfigDiffers(const StoredConfig &a, const StoredConfig &b) {
   return a.power_saving_mode != b.power_saving_mode ||
+         a.power_saving_persist != b.power_saving_persist ||
+         a.power_saving_locked != b.power_saving_locked ||
          a.boot_recovery_limit != b.boot_recovery_limit ||
          a.boot_recovery_stable_seconds != b.boot_recovery_stable_seconds;
 }
@@ -12335,12 +12491,21 @@ bool commitStoredConfig(const StoredConfig &source) {
   prefs.putUChar("blu_en", source.shelly_blu_button_enabled ? 1 : 0);
   prefs.putBytes("blu_macs", source.shelly_blu_button_macs, sizeof(source.shelly_blu_button_macs));
   const uint8_t power_saving_mode = sanitizePowerSavingMode(source.power_saving_mode);
-  if (powerSavingModePersists(power_saving_mode)) prefs.putUShort("pwr_save", power_saving_mode);
-  else prefs.remove("pwr_save");
+  const uint8_t power_saving_persist = source.power_saving_persist ? 1 : 0;
+  const uint8_t power_saving_locked = source.power_saving_locked ? 1 : 0;
+  prefs.putUShort("pwr_save", power_saving_persist ? power_saving_mode : kPowerSavingOff);
+  prefs.putUChar("pwr_persist", power_saving_persist);
+  prefs.putUChar("pwr_locked", power_saving_locked);
   prefs.putUShort("br_limit", sanitizeBootRecoveryLimit(source.boot_recovery_limit));
   prefs.putUShort("br_stable", sanitizeBootRecoveryStableSeconds(source.boot_recovery_stable_seconds));
   prefs.end();
-  return loadConfig();
+  const bool loaded = loadConfig();
+  if (loaded) {
+    config.power_saving_mode = power_saving_mode;
+    config.power_saving_persist = power_saving_persist;
+    config.power_saving_locked = power_saving_locked;
+  }
+  return loaded;
 }
 
 void appendSettingsActionJson(String &out, uint8_t button, bool hold) {
@@ -12377,8 +12542,12 @@ void appendSettingsExportJson(String &out) {
   out += F("\",\"chip\":\"");
   out += chipIdHex();
   out += F("\"},\"system\":{\"power_saving\":\"");
-  out += powerSavingModeName(powerSavingModePersists(config.power_saving_mode) ? kPowerSavingOffLocked : kPowerSavingOff);
-  out += F("\",\"recovery_guard\":{\"limit\":");
+  out += powerSavingModeName(config.power_saving_mode);
+  out += F("\",\"power_saving_persist\":");
+  out += config.power_saving_persist ? F("true") : F("false");
+  out += F(",\"power_saving_locked\":");
+  out += config.power_saving_locked ? F("true") : F("false");
+  out += F(",\"recovery_guard\":{\"limit\":");
   out += config.boot_recovery_limit;
   out += F(",\"stable_seconds\":");
   out += config.boot_recovery_stable_seconds;
@@ -12536,11 +12705,66 @@ void importSettingsSystem(const cJSON *root, StoredConfig &target, SettingsImpor
   if (!power_value) power_value = cjsonObjectItem(system, "power_saving_mode");
   if (power_value) {
     uint8_t mode = kPowerSavingOff;
-    if (settingsReadPowerSavingMode(power_value, mode)) {
-      target.power_saving_mode = powerSavingModePersists(mode) ? kPowerSavingOffLocked : kPowerSavingOff;
+    if (settingsReadLegacyPowerSavingLocked(power_value)) {
+      target.power_saving_mode = kPowerSavingOff;
+      target.power_saving_persist = 0;
+      target.power_saving_locked = 1;
+      recordSettingsApplied(stats);
+    } else if (cjsonIsType(power_value, cJSON_Object)) {
+      const cJSON *mode_value = cjsonObjectItem(power_value, "mode");
+      if (mode_value) {
+        if (settingsReadPowerSavingMode(mode_value, mode)) {
+          target.power_saving_mode = mode;
+          recordSettingsApplied(stats);
+        } else {
+          recordSettingsSkipped(stats, F("system.power_saving.mode"));
+        }
+      }
+      const cJSON *persist_value = cjsonObjectItem(power_value, "persist");
+      if (persist_value) {
+        bool enabled = false;
+        if (settingsReadBool(persist_value, enabled)) {
+          target.power_saving_persist = enabled ? 1 : 0;
+          recordSettingsApplied(stats);
+        } else {
+          recordSettingsSkipped(stats, F("system.power_saving.persist"));
+        }
+      }
+      const cJSON *locked_value = cjsonObjectItem(power_value, "locked");
+      if (locked_value) {
+        bool enabled = false;
+        if (settingsReadBool(locked_value, enabled)) {
+          target.power_saving_locked = enabled ? 1 : 0;
+          recordSettingsApplied(stats);
+        } else {
+          recordSettingsSkipped(stats, F("system.power_saving.locked"));
+        }
+      }
+    } else if (settingsReadPowerSavingMode(power_value, mode)) {
+      target.power_saving_mode = mode;
       recordSettingsApplied(stats);
     } else {
       recordSettingsSkipped(stats, F("system.power_saving"));
+    }
+  }
+  const cJSON *persist_value = cjsonObjectItem(system, "power_saving_persist");
+  if (persist_value) {
+    bool enabled = false;
+    if (settingsReadBool(persist_value, enabled)) {
+      target.power_saving_persist = enabled ? 1 : 0;
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("system.power_saving_persist"));
+    }
+  }
+  const cJSON *locked_value = cjsonObjectItem(system, "power_saving_locked");
+  if (locked_value) {
+    bool enabled = false;
+    if (settingsReadBool(locked_value, enabled)) {
+      target.power_saving_locked = enabled ? 1 : 0;
+      recordSettingsApplied(stats);
+    } else {
+      recordSettingsSkipped(stats, F("system.power_saving_locked"));
     }
   }
   const cJSON *recovery = cjsonObjectItem(system, "recovery_guard");
@@ -13460,6 +13684,15 @@ void handleSettingsImport() {
   const bool wifi_dynamic_power_changed = before.wifi_dynamic_power != candidate.wifi_dynamic_power;
   const bool system_changed = systemConfigDiffers(before, candidate);
 
+  if (powerSavingConfigChangeLocked(before, candidate)) {
+    page += F("<p class='bad'>Power saving is locked.</p>");
+    appendSettingsImportSummary(page, stats);
+    page += F("<p><a href='/'>Back</a></p>");
+    appendFooter(page);
+    sendHtml(page);
+    return;
+  }
+
   if (!commitStoredConfig(candidate)) {
     config = before;
     sendPlain(500, F("Could not save imported settings"));
@@ -13661,6 +13894,14 @@ void handleHealth() {
   out += perf_last_loop_load;
   out += F(",\"loop_max_us\":");
   out += perf_last_loop_max_us;
+  out += F("},\"power_saving\":{\"mode\":\"");
+  out += powerSavingModeName(config.power_saving_mode);
+  out += F("\",\"delay_ms\":");
+  out += powerSavingDelayMs(config.power_saving_mode);
+  out += F(",\"persist\":");
+  out += config.power_saving_persist ? F("true") : F("false");
+  out += F(",\"locked\":");
+  out += config.power_saving_locked ? F("true") : F("false");
   const wl_status_t wifi_status = WiFi.status();
   const IPAddress station_ip = WiFi.localIP();
   const bool station_has_ip = ipAddressSet(station_ip);

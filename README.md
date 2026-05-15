@@ -328,9 +328,9 @@ Useful endpoints:
 - `/shelly-blu-button/beep?mac=<mac>` - trigger a paired Shelly BLU Button beep.
 
 The `/health` document includes firmware version, target, chip model, chip ID,
-partition layout, flash usage, Wi-Fi state, MQTT state, template summary, relay
-state, button state, LED state, energy state, iBeacon state, Switchbot Lock Ultra
-state, and Shelly BLU Button state.
+partition layout, flash usage, power saving mode, Wi-Fi state, MQTT state,
+template summary, relay state, button state, LED state, energy state, iBeacon
+state, Switchbot Lock Ultra state, and Shelly BLU Button state.
 
 ## iBeacon Capture
 
@@ -402,10 +402,13 @@ when needed. Power saving modes are:
 - Off
 - Light
 - Deep
-- Off - Locked
 
-Only Off - Locked persists across reboot. Other power saving choices reset to
-Off at boot.
+Power saving matches the myMota model: Light adds a 1 ms idle delay after loop
+work, Deep adds a 10 ms idle delay, and Off only yields. The Persist checkbox
+controls whether the selected mode survives reboot. When Persist is clear, the
+current mode is runtime-only and the device boots back to Off. The Locked
+checkbox prevents API and web UI requests from changing the mode or Persist flag
+until the lock is cleared.
 
 The Maintenance card separates reboot actions:
 
