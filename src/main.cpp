@@ -841,6 +841,8 @@ struct EnergyState {
 };
 
 StoredConfig config{};
+StoredConfig config_scratch_a{};
+StoredConfig config_scratch_b{};
 RuntimeTemplate runtime_template{};
 EnergyState energy{};
 LightState light{};
@@ -2752,6 +2754,12 @@ bool powerSavingConfigChangeLocked(const StoredConfig &before, const StoredConfi
          (before.power_saving_persist ? 1 : 0) != (candidate.power_saving_persist ? 1 : 0);
 }
 
+bool powerSavingValueChangeLocked(uint8_t power_saving_mode, uint8_t power_saving_persist) {
+  if (!config.power_saving_locked) return false;
+  return sanitizePowerSavingMode(config.power_saving_mode) != sanitizePowerSavingMode(power_saving_mode) ||
+         (config.power_saving_persist ? 1 : 0) != (power_saving_persist ? 1 : 0);
+}
+
 bool saveSystemConfig(uint8_t power_saving_mode, uint8_t power_saving_persist, uint8_t power_saving_locked,
                       uint16_t recovery_limit, uint16_t recovery_stable_seconds) {
   power_saving_mode = sanitizePowerSavingMode(power_saving_mode);
@@ -2759,11 +2767,7 @@ bool saveSystemConfig(uint8_t power_saving_mode, uint8_t power_saving_persist, u
   power_saving_locked = power_saving_locked ? 1 : 0;
   recovery_limit = sanitizeBootRecoveryLimit(recovery_limit);
   recovery_stable_seconds = sanitizeBootRecoveryStableSeconds(recovery_stable_seconds);
-  StoredConfig candidate = config;
-  candidate.power_saving_mode = power_saving_mode;
-  candidate.power_saving_persist = power_saving_persist;
-  candidate.power_saving_locked = power_saving_locked;
-  if (powerSavingConfigChangeLocked(config, candidate)) return false;
+  if (powerSavingValueChangeLocked(power_saving_mode, power_saving_persist)) return false;
   DBG_LOG("config", "save system power_saving=%u persist=%u locked=%u recovery=%u/%u",
           power_saving_mode, power_saving_persist, power_saving_locked, recovery_limit, recovery_stable_seconds);
   if (!prefs.begin("mymota32", false)) return false;
@@ -5858,27 +5862,29 @@ bool shellyBluButtonDeleteBond(const char *mac) {
 
 bool shellyBluButtonRememberMac(const char *mac) {
   if (!mac || !mac[0]) return false;
-  StoredConfig candidate = config;
+  char macs[kShellyBluButtonMax][kShellyBluButtonMacMaxLen + 1]{};
+  memcpy(macs, config.shelly_blu_button_macs, sizeof(macs));
   int8_t slot = shellyBluButtonSlotForMac(mac);
   if (slot < 0) slot = shellyBluButtonFirstFreeSlot();
   if (slot < 0) return false;
-  strlcpy(candidate.shelly_blu_button_macs[slot], mac, sizeof(candidate.shelly_blu_button_macs[slot]));
-  return saveShellyBluButtonConfig(config.shelly_blu_button_enabled, candidate.shelly_blu_button_macs);
+  strlcpy(macs[slot], mac, sizeof(macs[slot]));
+  return saveShellyBluButtonConfig(config.shelly_blu_button_enabled, macs);
 }
 
 bool shellyBluButtonForgetMac(const char *mac) {
   if (!mac || !mac[0]) return false;
-  StoredConfig candidate = config;
+  char macs[kShellyBluButtonMax][kShellyBluButtonMacMaxLen + 1]{};
+  memcpy(macs, config.shelly_blu_button_macs, sizeof(macs));
   bool found = false;
   for (uint8_t i = 0; i < kShellyBluButtonMax; i++) {
-    if (strcmp(candidate.shelly_blu_button_macs[i], mac) == 0) {
-      candidate.shelly_blu_button_macs[i][0] = '\0';
+    if (strcmp(macs[i], mac) == 0) {
+      macs[i][0] = '\0';
       found = true;
     }
   }
   if (!found) return false;
   shellyBluButtonDeleteBond(mac);
-  return saveShellyBluButtonConfig(config.shelly_blu_button_enabled, candidate.shelly_blu_button_macs);
+  return saveShellyBluButtonConfig(config.shelly_blu_button_enabled, macs);
 }
 
 void shellyBluButtonBackgroundDelay(uint32_t duration_ms) {
@@ -10822,8 +10828,9 @@ void handleTasmotaSafebootSave() {
 
 void handleTemplateSave() {
   DBG_LOG("http", "POST /template clear=%u", server.hasArg("clear") ? 1 : 0);
+  StoredConfig &candidate = config_scratch_a;
+  candidate = config;
   if (server.hasArg("clear")) {
-    StoredConfig candidate = config;
     clearTemplateConfig(candidate);
     if (!saveTemplateConfig(candidate)) {
       sendPlain(500, F("Could not clear template"));
@@ -10847,7 +10854,6 @@ void handleTemplateSave() {
     sendPlain(400, F("Template JSON is empty"));
     return;
   }
-  StoredConfig candidate = config;
   String error;
   if (!parseTemplateJson(template_json, candidate, error)) {
     String msg = F("Invalid template: ");
@@ -11219,7 +11225,8 @@ void handleButtonSave() {
     return;
   }
 
-  StoredConfig candidate = config;
+  StoredConfig &candidate = config_scratch_a;
+  candidate = config;
   candidate.button_hold_ms = hold_ms;
   candidate.button_debounce_ms = debounce_ms;
 
@@ -11739,19 +11746,19 @@ void finishApiSettingsUpdate(const StoredConfig &candidate, const ApiSettingsSta
     return;
   }
 
-  const StoredConfig before = config;
-  if (powerSavingConfigChangeLocked(before, candidate)) {
+  if (powerSavingConfigChangeLocked(config, candidate)) {
     sendApiSettingsError(423, F("Power saving is locked"));
     return;
   }
-  const bool input_changed = inputConfigDiffers(before, candidate);
-  const bool mqtt_changed = mqttConfigDiffers(before, candidate);
-  const bool wifi_dynamic_power_changed = before.wifi_dynamic_power != candidate.wifi_dynamic_power;
-  const bool system_changed = systemConfigDiffers(before, candidate);
-  const bool ntp_changed = ntpConfigDiffers(before, candidate);
+  const bool input_changed = inputConfigDiffers(config, candidate);
+  const bool mqtt_changed = mqttConfigDiffers(config, candidate);
+  const bool wifi_dynamic_power_changed = config.wifi_dynamic_power != candidate.wifi_dynamic_power;
+  const bool system_changed = systemConfigDiffers(config, candidate);
+  const bool ntp_changed = ntpConfigDiffers(config, candidate);
 
+  config_scratch_b = config;
   if (!commitStoredConfig(candidate)) {
-    config = before;
+    config = config_scratch_b;
     sendApiSettingsError(500, F("Could not save settings"));
     return;
   }
@@ -11791,7 +11798,8 @@ void handleApiSettingsGet() {
     return;
   }
 
-  StoredConfig candidate = config;
+  StoredConfig &candidate = config_scratch_a;
+  candidate = config;
   ApiSettingsStats stats = {0, 0};
   if (applyApiSettingsGetArgs(candidate, stats)) {
     finishApiSettingsUpdate(candidate, stats);
@@ -12405,11 +12413,7 @@ void handleSystemSave() {
     }
   }
 
-  StoredConfig candidate = config;
-  candidate.power_saving_mode = sanitizePowerSavingMode(mode);
-  candidate.power_saving_persist = persist;
-  candidate.power_saving_locked = locked;
-  if (powerSavingConfigChangeLocked(config, candidate)) {
+  if (powerSavingValueChangeLocked(mode, persist)) {
     sendPlain(423, F("Power saving is locked"));
     return;
   }
@@ -13259,7 +13263,8 @@ bool importSettingsTemplate(const cJSON *root, StoredConfig &target, SettingsImp
     recordSettingsSkipped(stats, F("template.json"));
     return false;
   }
-  StoredConfig candidate = target;
+  StoredConfig &candidate = config_scratch_b;
+  candidate = target;
   String error;
   if (!parseTemplateJson(template_json, candidate, error)) {
     recordSettingsSkipped(stats, F("template.json"));
@@ -14060,8 +14065,8 @@ void handleSettingsImport() {
     return;
   }
 
-  StoredConfig before = config;
-  StoredConfig candidate = config;
+  StoredConfig &candidate = config_scratch_a;
+  candidate = config;
   SettingsImportStats stats = {0, 0, String()};
   importSettingsSystem(doc, candidate, stats);
   importSettingsWifi(doc, candidate, stats);
@@ -14093,22 +14098,22 @@ void handleSettingsImport() {
     return;
   }
 
-  const bool template_changed = templatesDiffer(before, candidate);
-  const bool mqtt_changed = mqttConfigDiffers(before, candidate);
-  const bool energy_changed = energyConfigDiffers(before, candidate);
-  const bool light_changed = lightConfigDiffers(before, candidate);
-  const bool led_changed = ledConfigDiffers(before, candidate);
-  const bool relay_enforcement_changed = relayEnforcementConfigDiffers(before, candidate);
-  const bool relay_pulse_changed = relayPulseConfigDiffers(before, candidate);
-  const bool input_changed = inputConfigDiffers(before, candidate);
-  const bool ibeacon_changed = iBeaconConfigDiffers(before, candidate);
-  const bool switchbot_lock_changed = switchbotLockConfigDiffers(before, candidate);
-  const bool shelly_blu_button_changed = shellyBluButtonConfigDiffers(before, candidate);
-  const bool wifi_dynamic_power_changed = before.wifi_dynamic_power != candidate.wifi_dynamic_power;
-  const bool system_changed = systemConfigDiffers(before, candidate);
-  const bool ntp_changed = ntpConfigDiffers(before, candidate);
+  const bool template_changed = templatesDiffer(config, candidate);
+  const bool mqtt_changed = mqttConfigDiffers(config, candidate);
+  const bool energy_changed = energyConfigDiffers(config, candidate);
+  const bool light_changed = lightConfigDiffers(config, candidate);
+  const bool led_changed = ledConfigDiffers(config, candidate);
+  const bool relay_enforcement_changed = relayEnforcementConfigDiffers(config, candidate);
+  const bool relay_pulse_changed = relayPulseConfigDiffers(config, candidate);
+  const bool input_changed = inputConfigDiffers(config, candidate);
+  const bool ibeacon_changed = iBeaconConfigDiffers(config, candidate);
+  const bool switchbot_lock_changed = switchbotLockConfigDiffers(config, candidate);
+  const bool shelly_blu_button_changed = shellyBluButtonConfigDiffers(config, candidate);
+  const bool wifi_dynamic_power_changed = config.wifi_dynamic_power != candidate.wifi_dynamic_power;
+  const bool system_changed = systemConfigDiffers(config, candidate);
+  const bool ntp_changed = ntpConfigDiffers(config, candidate);
 
-  if (powerSavingConfigChangeLocked(before, candidate)) {
+  if (powerSavingConfigChangeLocked(config, candidate)) {
     page += F("<p class='bad'>Power saving is locked.</p>");
     appendSettingsImportSummary(page, stats);
     page += F("<p><a href='/'>Back</a></p>");
@@ -14117,8 +14122,9 @@ void handleSettingsImport() {
     return;
   }
 
+  config_scratch_b = config;
   if (!commitStoredConfig(candidate)) {
-    config = before;
+    config = config_scratch_b;
     sendPlain(500, F("Could not save imported settings"));
     return;
   }
