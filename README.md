@@ -325,6 +325,8 @@ Useful endpoints:
 - `/settings/export` - export JSON settings, excluding Wi-Fi credentials.
 - `/settings/import` - import exported settings.
 - `/update` - firmware upload endpoint.
+- `/reboot-safeboot` - reboot into the detected Tasmota32 safeboot partition
+  when one is present.
 - `/switchbotlockultra/lock` and `/switchbotlockultra/unlock` - compatibility
   endpoints for Switchbot Lock Ultra control.
 - `/shelly-blu-button/beep?mac=<mac>` - trigger a paired Shelly BLU Button beep.
@@ -418,6 +420,9 @@ The Maintenance card separates reboot actions:
   relay restore flows can treat it as a planned reboot.
 - Reboot Cold restarts without preserving the graceful relay snapshot, while
   still flushing normal persisted light and energy state.
+- Reboot Safeboot appears only when a Tasmota32 safeboot partition is detected;
+  it marks that partition as the next boot target and restarts so firmware can
+  be uploaded through safeboot.
 - Force Reset skips normal shutdown handling and performs a low-level software
   reset for recovery cases where a normal restart path is undesirable.
 
@@ -447,6 +452,11 @@ and UTC date/time once the clock has been set.
 When a Tasmota32 safeboot partition is detected, myMota32 shows a Tasmota
 Safeboot card. The card can read and update safeboot Wi-Fi SSID and password so
 future OTA upgrade flows can still use the safeboot network path.
+
+Devices with a detected safeboot partition also show a Reboot Safeboot action
+in the System card. This provides a direct handoff into Tasmota32 safeboot for
+manual or scripted upgrades without first starting a dummy firmware upload from
+myMota32.
 
 If no safeboot partition is present, the card is hidden.
 
