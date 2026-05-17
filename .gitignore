@@ -1,11 +1,12 @@
 .cache/
 .pio/
 .dummy/
+__pycache__/
 managed_components/
 sdkconfig.defaults
 sdkconfig.mymota32-*
 firmware.map
 mymotaUpgrade.sh
-mymota32Upgrade.sh
+mymota32Upgrade.py
 AGENTS.md
 [Cc][Ll][Aa][Uu][Dd][Ee].md
