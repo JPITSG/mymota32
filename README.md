@@ -335,6 +335,8 @@ The `/health` document includes firmware version, target, chip model, chip ID,
 partition layout, flash usage, power saving mode, Wi-Fi state, MQTT state,
 template summary, relay state, button state, LED state, energy state, iBeacon
 state, NTP state, Switchbot Lock Ultra state, and Shelly BLU Button state.
+The web UI formats timing fields as milliseconds for short intervals and
+switches to seconds once values grow beyond 10 seconds.
 
 ## iBeacon Capture
 

@@ -8886,25 +8886,25 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("function t(i,v){var e=document.getElementById(i);if(e)e.textContent=v;}");
   page += F("function p(i,v,c){var e=document.getElementById(i);if(e){e.textContent=v;e.className=c;}}");
   page += F("function fd(e){return e&&e.form&&e.form.getAttribute('data-dirty')=='1';}function sv(n,v){var a=document.getElementsByName(n),e=a&&a[0];if(e&&!fd(e)&&document.activeElement!==e&&String(e.value)!=String(v))e.value=v;}function cv(n,v){var a=document.getElementsByName(n),e=a&&a[0];if(e&&!fd(e)&&document.activeElement!==e)e.checked=!!v;}");
-  page += F("function nv(v){return v==null||v===''?'n/a':v;}function yn(v){return v?'yes':'no';}function ag(v){return v==null?'n/a':Math.floor(v/1000)+'s ago';}function ms(v){return v==null?'n/a':v+' ms ago';}");
+  page += F("function nv(v){return v==null||v===''?'n/a':v;}function yn(v){return v?'yes':'no';}function mt(v){return v==null?'n/a':(v>10000?Math.floor(v/1000)+'s':v+' ms');}function ma(v){var x=mt(v);return x=='n/a'?x:x+' ago';}function ag(v){return ma(v);}function ms(v){return ma(v);}function mu(v){return v==null?'n/a':(v>10000000?Math.floor(v/1000000)+'s':Number(v/1000).toFixed(1)+' ms');}");
   page += F("function sd(e,d){if(!e)return;var q=e.querySelectorAll('input,select,textarea,button');for(var i=0;i<q.length;i++)q[i].disabled=d;}var fbz={};function sdb(k,d){var a=document.querySelectorAll('form[data-busy=\"'+k+'\"]');for(var i=0;i<a.length;i++)sd(a[i],d);}");
   page += F("function live(){if(lp)return;lp=1;fh().then(function(d){");
   page += F("t('live-version',nv(d.version));t('live-target',nv(d.target));t('live-chip',(d.chip_model?d.chip_model:'Chip')+(d.chip_id?' ('+d.chip_id+')':''));t('live-hostname',nv(d.hostname));t('live-heap',d.heap+' bytes');t('live-heap-2',d.heap+' bytes');if(d.flash){t('live-flash-used',d.flash.used+' bytes');t('live-flash-total',d.flash.total+' bytes');t('live-flash-free',d.flash.free+' bytes');t('live-flash-chip',d.flash.chip_size+' bytes');}");
   page += F("if(d.partitions){var r=d.partitions.running||{},u=d.partitions.next_update||{},f=d.partitions.factory||{};t('live-part-running-label',nv(r.label));t('live-part-running-size',r.size==null?'n/a':r.size+' bytes');t('live-part-update-label',nv(u.label));t('live-part-update-size',u.size==null?'n/a':u.size+' bytes');t('live-part-factory-label',nv(f.label));t('live-part-factory-size',f.size==null?'n/a':f.size+' bytes');t('live-part-ota-slots',nv(d.partitions.ota_slots));}");
   page += F("t('live-uptime',d.uptime+'s');t('live-uptime-2',d.uptime+'s');t('live-configured-phy',nv(d.configured_phy));t('live-active-phy',nv(d.active_phy));");
-  page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',Number(d.perf.loop_max_us/1000).toFixed(1)+' ms');}");
+  page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',mu(d.perf.loop_max_us));}");
   page += F("if(d.power_saving){sv('power_saving',d.power_saving.mode||'off');cv('power_saving_persist',d.power_saving.persist);cv('power_saving_locked',d.power_saving.locked);}");
   page += F("if(d.ntp){var ns=d.ntp.enabled?(d.ntp.server||'not configured'):'disabled',nc=!d.ntp.enabled?'pill bad':(d.ntp.valid?'pill ok':(d.ntp.running?'pill warn':'pill bad'));t('live-ntp-server',ns);p('live-ntp-status',d.ntp.status||'unknown',nc);p('live-ntp-card-status',d.ntp.enabled?(d.ntp.status||'unknown'):'disabled',(!d.ntp.enabled?'h-meta pill bad':(d.ntp.valid?'h-meta pill ok':'h-meta pill warn')));t('live-ntp-reachability',d.ntp.reachability==null?'n/a':d.ntp.reachability);t('live-ntp-time',d.ntp.valid?(d.ntp.datetime||'n/a'):'n/a');cv('ntp_enabled',d.ntp.enabled);sv('ntp_server',d.ntp.server||'');sv('ntp_resync',d.ntp.resync||86400);}");
   page += F("t('live-recovery',d.recovery.fast_boot_count+'/'+d.recovery.limit);t('live-recovery-stable',d.recovery.stable_seconds+'s');");
   page += F("var wu=d.wifi_usable!=null?d.wifi_usable:d.wifi,ws=!!d.wifi_sdk_connected,wl=ws?'connected':(wu?'usable':'disconnected'),wc=ws?'pill ok':(wu?'pill warn':'pill bad');p('live-wifi',wl,wc);t('live-ssid',d.wifi_ssid||'n/a');t('live-ssid-2',d.wifi_ssid||'n/a');t('live-wifi-sdk',(d.wifi_status_name||'unknown')+' ('+(d.wifi_status==null?'?':d.wifi_status)+')');t('live-ip',d.ip||'n/a');t('live-ip-2',d.ip||'n/a');t('live-gateway',d.gateway_ip||'n/a');t('live-dns',d.dns_ip||'n/a');t('live-rssi',d.rssi==null?'n/a':d.rssi+' dBm');t('live-rssi-2',d.rssi==null?'n/a':d.rssi+' dBm');t('live-ap',d.ap?(d.ap_ssid||'active'):'off');t('live-ap-ip',d.ap_ip||'n/a');if(d.wifi_tx_power){var wp=d.wifi_tx_power,tx=(wp.dbm==null?'n/a':Number(wp.dbm).toFixed(1)+' dBm')+' '+(wp.status||'');if(wp.sample_rssi!=null)tx+=' @ '+wp.sample_rssi+' dBm';t('live-wifi-tx-power',tx);}");
   page += F("p('live-mqtt',d.mqtt.enabled?(d.mqtt.connected?'connected':'disconnected'):'not configured',d.mqtt.enabled?(d.mqtt.connected?'pill ok':'pill bad'):'pill');");
-  page += F("if(d.mqtt){var mb=d.mqtt.enabled?(d.mqtt.host+':'+d.mqtt.port):'not configured';t('live-mqtt-broker',mb);t('live-mqtt-broker-2',mb);p('live-mqtt-broker-3',mb,d.mqtt.enabled?(d.mqtt.connected?'h-meta pill ok':'h-meta pill warn'):'h-meta pill bad');t('live-mqtt-topic',nv(d.mqtt.topic));t('live-mqtt-protocol-keepalive',d.mqtt.protocol_keepalive+'s');t('live-mqtt-state-keepalive',d.mqtt.state_keepalive?d.mqtt.state_keepalive+'s':'disabled');t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-pending-2',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',d.mqtt.last_connect_ms+' ms');t('live-mqtt-attempt',ms(d.mqtt.last_attempt_ms_ago));}");
+  page += F("if(d.mqtt){var mb=d.mqtt.enabled?(d.mqtt.host+':'+d.mqtt.port):'not configured';t('live-mqtt-broker',mb);t('live-mqtt-broker-2',mb);p('live-mqtt-broker-3',mb,d.mqtt.enabled?(d.mqtt.connected?'h-meta pill ok':'h-meta pill warn'):'h-meta pill bad');t('live-mqtt-topic',nv(d.mqtt.topic));t('live-mqtt-protocol-keepalive',d.mqtt.protocol_keepalive+'s');t('live-mqtt-state-keepalive',d.mqtt.state_keepalive?d.mqtt.state_keepalive+'s':'disabled');t('live-mqtt-pending',d.mqtt.pending);t('live-mqtt-pending-2',d.mqtt.pending);t('live-mqtt-result',d.mqtt.last_connect_result);t('live-mqtt-connect-ms',mt(d.mqtt.last_connect_ms));t('live-mqtt-attempt',ms(d.mqtt.last_attempt_ms_ago));}");
 #if MYMOTA32_LIGHT_SUPPORTED
   page += F("if(d.light){p('live-light-power',d.light.power?'on':'off',d.light.power?'pill ok':'pill bad');t('live-light-dimmer',d.light.dimmer+'%');t('live-light-ct',d.light.ct+' mired');t('live-light-color',d.light.color||'000000');t('live-light-on-dimmer',d.light.on_dimmer+'%');t('live-light-fade',d.light.fade?'on':'off');t('live-light-speed',d.light.speed);t('live-light-fading',d.light.fading?'yes':'no');t('live-light-driver',nv(d.light.driver));}");
 #endif
   page += F("if(d.ibeacon){var ib=d.ibeacon,ic=!ib.enabled?'pill bad':(ib.scanning?'pill ok':'pill bad');p('live-ibeacon',ib.enabled?(ib.status||'enabled'):'disabled',ic);t('live-ibeacon-mqtt-rpm',ib.mqtt_reports_per_minute+'/min');}");
-  page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,st=sl.status||'',bad=st.indexOf('failed')>=0||st=='unsupported'||st=='missing_key'||st=='bad_key'||st.indexOf('connect_e')==0||st.indexOf('timeout')>=0,good=st=='ok'||st=='connected'||st=='advertisement'||st=='lock_sent'||st=='unlock_sent'||st.indexOf('confirmed')>=0,sc=!sl.enabled?'pill bad':(bad?'pill bad':(good?'pill ok':'pill warn'));p('live-switchbot-lock-status',sl.enabled?(st||'unknown'):'disabled',sc);t('live-switchbot-lock-ble',sl.connected?'connected':'disconnected');t('live-switchbot-lock-connected-age',sl.connected_ms_ago==null?'n/a':Math.floor(sl.connected_ms_ago/1000)+'s');t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-door',sl.door_open==null?'n/a':(sl.door_open?'open':'closed'));t('live-switchbot-lock-device',sl.device_health||'n/a');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-battery-quality',sl.battery_quality||'n/a');t('live-switchbot-lock-updated',ag(sl.last_update_ms_ago));t('live-switchbot-lock-status-cb',ag(sl.last_status_callback_ms_ago));t('live-switchbot-lock-battery-cb',ag(sl.last_battery_callback_ms_ago));t('live-switchbot-lock-device-cb',ag(sl.last_device_callback_ms_ago));t('live-switchbot-lock-mac',sl.mac||'n/a');t('live-switchbot-lock-address-type',nv(sl.address_type));t('live-switchbot-lock-error',nv(sl.error_code));t('live-switchbot-lock-disconnect',nv(sl.disconnect_reason));t('live-switchbot-lock-command',sl.command?(sl.command.id+' '+sl.command.status):'n/a');if(sl.callbacks){t('live-switchbot-lock-cb-enabled',yn(sl.callbacks.status_configured)+' / '+yn(sl.callbacks.battery_configured)+' / '+yn(sl.callbacks.device_configured));t('live-switchbot-lock-cb-times',sl.callbacks.offline_delay+'s / '+sl.callbacks.online_heal+'s / '+sl.callbacks.battery_notify+'s');}}");
-  page += F("if(d.shelly_blu_button){var sb=d.shelly_blu_button,st=sb.status||'',busy=!!(sb.busy||sb.beeping||sb.resetting),bad=st=='unsupported'||st.indexOf('failed')>=0||st.indexOf('timeout')>=0||st.indexOf('connect_e')==0||st.indexOf('secure_e')==0||st=='svc_missing'||st=='bond_missing'||st=='slot_full'||st=='passkey_required'||st=='char_missing'||st=='beep_invalid'||st=='reset_invalid'||st.indexOf('write_failed')>=0,good=st=='paired'||st=='beep_ok'||st=='reset_ok'||(!sb.pairing&&sb.paired_count>0),sc=!sb.enabled?'pill bad':(bad?'pill bad':(sb.pairing||busy||st=='beeping'||st=='resetting'||st.indexOf('_queued')>0?'pill warn':(good?'pill ok':'pill'))),dt=!sb.enabled?'disabled':((st=='idle'&&sb.paired_count>0)?'paired':(st||'idle'));p('live-shelly-blu-status',dt,sc);t('live-shelly-blu-count',sb.paired_count+'/'+sb.max);t('live-shelly-blu-error',nv(sb.last_error));t('live-shelly-blu-action',nv(sb.action));t('live-shelly-blu-stage',nv(sb.stage));t('live-shelly-blu-duration',sb.last_duration_ms?sb.last_duration_ms+' ms':'n/a');for(var x=0;x<sb.max;x++){var bt=sb.buttons&&sb.buttons[x]?sb.buttons[x]:null,has=!!(bt&&bt.mac),mac=has?bt.mac:'empty';t('live-shelly-blu-mac-'+x,mac);var ac=document.getElementById('shelly-blu-actions-'+x),bi=document.getElementById('shelly-blu-beep-mac-'+x),bb=document.getElementById('shelly-blu-beep-btn-'+x),fi=document.getElementById('shelly-blu-forget-mac-'+x),fb=document.getElementById('shelly-blu-forget-btn-'+x),ri=document.getElementById('shelly-blu-reset-mac-'+x),rb=document.getElementById('shelly-blu-reset-btn-'+x);if(ac)ac.classList.toggle('hidden',!has);if(bi)bi.value=has?bt.mac:'';if(bb)bb.disabled=!has||busy||!sb.enabled;if(fi)fi.value=has?bt.mac:'';if(fb)fb.disabled=!has||busy||!sb.enabled;if(ri)ri.value=has?bt.mac:'';if(rb)rb.disabled=!has||busy||!sb.enabled;}}");
+  page += F("if(d.switchbot_lock){var sl=d.switchbot_lock,st=sl.status||'',bad=st.indexOf('failed')>=0||st=='unsupported'||st=='missing_key'||st=='bad_key'||st.indexOf('connect_e')==0||st.indexOf('timeout')>=0,good=st=='ok'||st=='connected'||st=='advertisement'||st=='lock_sent'||st=='unlock_sent'||st.indexOf('confirmed')>=0,sc=!sl.enabled?'pill bad':(bad?'pill bad':(good?'pill ok':'pill warn'));p('live-switchbot-lock-status',sl.enabled?(st||'unknown'):'disabled',sc);t('live-switchbot-lock-ble',sl.connected?'connected':'disconnected');t('live-switchbot-lock-connected-age',mt(sl.connected_ms_ago));t('live-switchbot-lock-state',sl.state||'UNKNOWN');t('live-switchbot-lock-door',sl.door_open==null?'n/a':(sl.door_open?'open':'closed'));t('live-switchbot-lock-device',sl.device_health||'n/a');t('live-switchbot-lock-battery',sl.battery==null?'n/a':sl.battery+'%');t('live-switchbot-lock-battery-quality',sl.battery_quality||'n/a');t('live-switchbot-lock-updated',ag(sl.last_update_ms_ago));t('live-switchbot-lock-status-cb',ag(sl.last_status_callback_ms_ago));t('live-switchbot-lock-battery-cb',ag(sl.last_battery_callback_ms_ago));t('live-switchbot-lock-device-cb',ag(sl.last_device_callback_ms_ago));t('live-switchbot-lock-mac',sl.mac||'n/a');t('live-switchbot-lock-address-type',nv(sl.address_type));t('live-switchbot-lock-error',nv(sl.error_code));t('live-switchbot-lock-disconnect',nv(sl.disconnect_reason));t('live-switchbot-lock-command',sl.command?(sl.command.id+' '+sl.command.status):'n/a');if(sl.callbacks){t('live-switchbot-lock-cb-enabled',yn(sl.callbacks.status_configured)+' / '+yn(sl.callbacks.battery_configured)+' / '+yn(sl.callbacks.device_configured));t('live-switchbot-lock-cb-times',sl.callbacks.offline_delay+'s / '+sl.callbacks.online_heal+'s / '+sl.callbacks.battery_notify+'s');}}");
+  page += F("if(d.shelly_blu_button){var sb=d.shelly_blu_button,st=sb.status||'',busy=!!(sb.busy||sb.beeping||sb.resetting),bad=st=='unsupported'||st.indexOf('failed')>=0||st.indexOf('timeout')>=0||st.indexOf('connect_e')==0||st.indexOf('secure_e')==0||st=='svc_missing'||st=='bond_missing'||st=='slot_full'||st=='passkey_required'||st=='char_missing'||st=='beep_invalid'||st=='reset_invalid'||st.indexOf('write_failed')>=0,good=st=='paired'||st=='beep_ok'||st=='reset_ok'||(!sb.pairing&&sb.paired_count>0),sc=!sb.enabled?'pill bad':(bad?'pill bad':(sb.pairing||busy||st=='beeping'||st=='resetting'||st.indexOf('_queued')>0?'pill warn':(good?'pill ok':'pill'))),dt=!sb.enabled?'disabled':((st=='idle'&&sb.paired_count>0)?'paired':(st||'idle'));p('live-shelly-blu-status',dt,sc);t('live-shelly-blu-count',sb.paired_count+'/'+sb.max);t('live-shelly-blu-error',nv(sb.last_error));t('live-shelly-blu-action',nv(sb.action));t('live-shelly-blu-stage',nv(sb.stage));t('live-shelly-blu-duration',sb.last_duration_ms?mt(sb.last_duration_ms):'n/a');for(var x=0;x<sb.max;x++){var bt=sb.buttons&&sb.buttons[x]?sb.buttons[x]:null,has=!!(bt&&bt.mac),mac=has?bt.mac:'empty';t('live-shelly-blu-mac-'+x,mac);var ac=document.getElementById('shelly-blu-actions-'+x),bi=document.getElementById('shelly-blu-beep-mac-'+x),bb=document.getElementById('shelly-blu-beep-btn-'+x),fi=document.getElementById('shelly-blu-forget-mac-'+x),fb=document.getElementById('shelly-blu-forget-btn-'+x),ri=document.getElementById('shelly-blu-reset-mac-'+x),rb=document.getElementById('shelly-blu-reset-btn-'+x);if(ac)ac.classList.toggle('hidden',!has);if(bi)bi.value=has?bt.mac:'';if(bb)bb.disabled=!has||busy||!sb.enabled;if(fi)fi.value=has?bt.mac:'';if(fb)fb.disabled=!has||busy||!sb.enabled;if(ri)ri.value=has?bt.mac:'';if(rb)rb.disabled=!has||busy||!sb.enabled;}}");
   page += F("if(d.power){for(var i=0;i<d.power.length;i++){if(d.power[i]!==null)p('live-relay-'+i,d.power[i]?'on':'off',d.power[i]?'pill ok':'pill bad');}}");
   page += F("if(d.buttons){for(var b=0;b<d.buttons.length;b++){if(d.buttons[b])p('live-button-'+b,d.buttons[b].state||(d.buttons[b].pressed?'pressed':'released'),d.buttons[b].pressed?'pill ok':'pill bad');}}");
   page += F("if(d.leds){for(var l=0;l<d.leds.length;l++){if(d.leds[l])p('live-led-'+l,d.leds[l].on?'on':'off',d.leds[l].on?'pill ok':'pill bad');}}");
@@ -8985,6 +8985,31 @@ void appendMillisTenthsFromMicros(String &out, uint32_t micros_value) {
   out += String(tenths / 10);
   out += '.';
   out += static_cast<char>('0' + (tenths % 10));
+}
+
+void appendDurationMs(String &out, uint32_t ms_value) {
+  if (ms_value > 10000UL) {
+    out += String(ms_value / 1000UL);
+    out += 's';
+    return;
+  }
+  out += String(ms_value);
+  out += F(" ms");
+}
+
+void appendAgeMs(String &out, uint32_t ms_value) {
+  appendDurationMs(out, ms_value);
+  out += F(" ago");
+}
+
+void appendDurationFromMicros(String &out, uint32_t micros_value) {
+  if (micros_value > 10000000UL) {
+    out += String(micros_value / 1000000UL);
+    out += 's';
+    return;
+  }
+  appendMillisTenthsFromMicros(out, micros_value);
+  out += F(" ms");
 }
 
 uint32_t flashUsedBytes() {
@@ -9339,8 +9364,8 @@ void appendStatusBlock(String &page) {
   page += F("%</code> app busy</div><span>Loop rate</span><div><code id='live-loop-hz'>");
   page += String(perf_last_loop_hz);
   page += F("/s</code></div><span>Slowest loop</span><div><code id='live-loop-max'>");
-  appendMillisTenthsFromMicros(page, perf_last_loop_max_us);
-  page += F(" ms</code></div><span>PHY mode</span><div><code id='live-configured-phy'>");
+  appendDurationFromMicros(page, perf_last_loop_max_us);
+  page += F("</code></div><span>PHY mode</span><div><code id='live-configured-phy'>");
   page += phyModeName(config.phy_mode);
   page += F("</code> configured <code id='live-active-phy'>");
   page += phyModeName(activePhyMode());
@@ -9445,13 +9470,12 @@ void appendStatusBlock(String &page) {
   page += F("</code></div><span>MQTT last connect</span><div><code id='live-mqtt-result'>");
   page += mqttConnectResultName(last_mqtt_connect_result);
   page += F("</code> in <code id='live-mqtt-connect-ms'>");
-  page += String(last_mqtt_connect_duration);
-  page += F(" ms</code></div><span>MQTT last attempt</span><div><code id='live-mqtt-attempt'>");
+  appendDurationMs(page, last_mqtt_connect_duration);
+  page += F("</code></div><span>MQTT last attempt</span><div><code id='live-mqtt-attempt'>");
   if (last_mqtt_connect_attempt == 0) {
     page += F("n/a");
   } else {
-    page += String(millis() - last_mqtt_connect_attempt);
-    page += F(" ms ago");
+    appendAgeMs(page, millis() - last_mqtt_connect_attempt);
   }
   page += F("</code></div>");
   page += F("</div></div></section>");
@@ -9637,8 +9661,7 @@ void appendDeviceControls(String &page) {
     if (last_mqtt_energy_publish == 0) {
       page += F("n/a");
     } else {
-      page += String(millis() - last_mqtt_energy_publish);
-      page += F(" ms ago");
+      appendAgeMs(page, millis() - last_mqtt_energy_publish);
     }
     page += F("</code></div><span>MQTT report reason</span><div><code id='live-energy-mqtt-reason'>");
     page += mqttEnergyReportReasonName(last_mqtt_energy_report_reason);
@@ -9646,8 +9669,7 @@ void appendDeviceControls(String &page) {
     if (energy.last_success_ms == 0) {
       page += F("n/a");
     } else {
-      page += String(millis() - energy.last_success_ms);
-      page += F(" ms ago");
+      appendAgeMs(page, millis() - energy.last_success_ms);
     }
     page += F("</code></div><span>Raw voltage</span><div><code id='live-energy-debug-raw'>");
     page += String(energy.voltage_raw);
@@ -10271,8 +10293,7 @@ void appendSwitchbotLockForm(String &page) {
   if (switchbot_lock_connected_since_ms == 0 || !switchbotLockClientConnected()) {
     page += F("n/a");
   } else {
-    page += String((millis() - switchbot_lock_connected_since_ms) / 1000);
-    page += F("s");
+    appendDurationMs(page, millis() - switchbot_lock_connected_since_ms);
   }
   page += F("</code></div><span>Lock</span><div><code id='live-switchbot-lock-state'>");
   page += switchbotLockStateName(switchbot_lock_state);
@@ -10296,29 +10317,25 @@ void appendSwitchbotLockForm(String &page) {
   if (switchbot_lock_last_update_ms == 0) {
     page += F("n/a");
   } else {
-    page += String((millis() - switchbot_lock_last_update_ms) / 1000);
-    page += F("s ago");
+    appendAgeMs(page, millis() - switchbot_lock_last_update_ms);
   }
   page += F("</code></div><span>Last status callback</span><div><code id='live-switchbot-lock-status-cb'>");
   if (switchbot_lock_last_status_notify_ms == 0) {
     page += F("n/a");
   } else {
-    page += String((millis() - switchbot_lock_last_status_notify_ms) / 1000);
-    page += F("s ago");
+    appendAgeMs(page, millis() - switchbot_lock_last_status_notify_ms);
   }
   page += F("</code></div><span>Last battery callback</span><div><code id='live-switchbot-lock-battery-cb'>");
   if (switchbot_lock_last_battery_notify_ms == 0) {
     page += F("n/a");
   } else {
-    page += String((millis() - switchbot_lock_last_battery_notify_ms) / 1000);
-    page += F("s ago");
+    appendAgeMs(page, millis() - switchbot_lock_last_battery_notify_ms);
   }
   page += F("</code></div><span>Last device callback</span><div><code id='live-switchbot-lock-device-cb'>");
   if (switchbot_lock_last_device_notify_ms == 0) {
     page += F("n/a");
   } else {
-    page += String((millis() - switchbot_lock_last_device_notify_ms) / 1000);
-    page += F("s ago");
+    appendAgeMs(page, millis() - switchbot_lock_last_device_notify_ms);
   }
   page += F("</code></div><span>MAC</span><div><code id='live-switchbot-lock-mac'>");
   page += switchbot_lock_discovered_mac[0] ? htmlEscape(switchbot_lock_discovered_mac) : String(F("n/a"));
@@ -10441,7 +10458,7 @@ void appendShellyBluButtonForm(String &page) {
   page += htmlEscape(shelly_blu_button_stage);
   page += F("</code></div><span>Last duration</span><div><code id='live-shelly-blu-duration'>");
   if (shelly_blu_button_last_duration_ms == 0) page += F("n/a");
-  else page += String(shelly_blu_button_last_duration_ms) + F(" ms");
+  else appendDurationMs(page, shelly_blu_button_last_duration_ms);
   page += F("</code></div></div>");
 
   page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Pair</div></div><form data-inline='1' method='post' action='/shelly-blu-button'><input type='hidden' name='enabled' value='1'>");
