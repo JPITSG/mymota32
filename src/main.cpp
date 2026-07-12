@@ -223,8 +223,8 @@ constexpr uint16_t kRelayEnforcementMinSeconds = 1;
 constexpr uint16_t kRelayEnforcementMaxSeconds = 65535U;
 constexpr uint16_t kRelayPulseMinSeconds = 1;
 constexpr uint16_t kRelayPulseMaxSeconds = 65535U;
-constexpr uint16_t kRelayBlinkIntervalMs = 250;
-constexpr uint8_t kRelayBlinkTransitionCount = 3;
+constexpr uint16_t kBlinkIntervalMs = 250;
+constexpr uint8_t kBlinkTransitionCount = 3;
 constexpr uint32_t kGracefulRelaySnapshotMagic = 0x4d523252UL;  // MR2R
 constexpr uint16_t kGracefulRelaySnapshotVersion = 1;
 constexpr const char *kGracefulRelayPrefsNamespace = "mymota32-rl";
@@ -588,6 +588,15 @@ struct LightState {
   uint32_t config_save_at;
 };
 
+struct LightBlinkState {
+  bool active;
+  bool restore_on;
+  uint8_t transitions;
+  uint32_t due;
+  uint16_t restore_channels[kLightChannelCount];
+  uint16_t alternate_channels[kLightChannelCount];
+};
+
 struct RuntimeTemplate {
   bool enabled;
   char name[kTemplateNameMaxLen + 1];
@@ -855,6 +864,7 @@ StoredConfig config_scratch_b{};
 RuntimeTemplate runtime_template{};
 EnergyState energy{};
 LightState light{};
+LightBlinkState light_blink{};
 bool relay_state[kMaxRelays] = {false};
 bool graceful_relay_restore_valid = false;
 uint16_t graceful_relay_restore_mask = 0;
@@ -3601,7 +3611,7 @@ bool startRelayBlink(uint8_t relay) {
   blink.active = true;
   blink.restore_on = relay_state[relay];
   blink.transitions = 0;
-  blink.due = millis() + kRelayBlinkIntervalMs;
+  blink.due = millis() + kBlinkIntervalMs;
   writeAssignedPin(runtime_template.relays[relay], !blink.restore_on);
   DBG_LOG("relay", "blink started relay=%u restore_state=%s", relay + 1,
           blink.restore_on ? "ON" : "OFF");
@@ -4375,14 +4385,14 @@ void maintainRelayBlinking() {
     if (!blink.active || static_cast<int32_t>(now - blink.due) < 0) continue;
 
     blink.transitions++;
-    const bool final_transition = blink.transitions >= kRelayBlinkTransitionCount;
+    const bool final_transition = blink.transitions >= kBlinkTransitionCount;
     const bool on = (blink.transitions & 1U) ? blink.restore_on : !blink.restore_on;
     writeAssignedPin(runtime_template.relays[i], on);
     if (final_transition) {
       DBG_LOG("relay", "blink complete relay=%u state=%s", i + 1, on ? "ON" : "OFF");
       blink = {};
     } else {
-      blink.due = now + kRelayBlinkIntervalMs;
+      blink.due = now + kBlinkIntervalMs;
     }
   }
 }
@@ -5022,15 +5032,15 @@ void sm2335WriteChannels(const uint16_t channels[5]) {
   sm2335Stop();
 }
 
-void lightSm2335Channels(uint16_t out[5]) {
+void lightSm2335ChannelsForState(bool power, uint8_t dimmer, uint16_t out[5]) {
   uint16_t original[5] = {0, 0, 0, 0, 0};  // R,G,B,C,W before Tasmota SetOption37 25 remap.
-  if (light.present && light.power && light.dimmer > 0) {
+  if (light.present && power && dimmer > 0) {
     if (light.mode == kLightModeRgb) {
-      original[0] = scaleRgbTo10(light.rgb[0], light.dimmer);
-      original[1] = scaleRgbTo10(light.rgb[1], light.dimmer);
-      original[2] = scaleRgbTo10(light.rgb[2], light.dimmer);
+      original[0] = scaleRgbTo10(light.rgb[0], dimmer);
+      original[1] = scaleRgbTo10(light.rgb[1], dimmer);
+      original[2] = scaleRgbTo10(light.rgb[2], dimmer);
     } else {
-      const uint16_t brightness = scalePercentTo10(light.dimmer);
+      const uint16_t brightness = scalePercentTo10(dimmer);
       const uint16_t ct = sanitizeLightCtValue(light.ct);
       const uint16_t range = kLightCtMax - kLightCtMin;
       const uint16_t warm = static_cast<uint16_t>(((static_cast<uint32_t>(ct - kLightCtMin) * brightness) + (range / 2U)) / range);
@@ -5043,6 +5053,10 @@ void lightSm2335Channels(uint16_t out[5]) {
   out[2] = original[2];
   out[3] = original[4];
   out[4] = original[3];
+}
+
+void lightSm2335Channels(uint16_t out[5]) {
+  lightSm2335ChannelsForState(light.power, light.dimmer, out);
 }
 
 bool lightChannelsAny(const uint16_t channels[kLightChannelCount]) {
@@ -5099,8 +5113,57 @@ void cancelLightFade() {
   light.fade_next_ms = 0;
 }
 
+void cancelLightBlink() {
+  if (!light_blink.active) return;
+  writeLightChannelsImmediate(light_blink.restore_channels);
+  light_blink = {};
+  DBG_LOG("light", "blink canceled");
+}
+
+bool startLightBlink() {
+  if (!light.present) return false;
+  cancelLightBlink();
+  cancelLightFade();
+
+  light_blink.active = true;
+  light_blink.restore_on = light.power;
+  light_blink.transitions = 0;
+  light_blink.due = millis() + kBlinkIntervalMs;
+  lightSm2335Channels(light_blink.restore_channels);
+  if (light_blink.restore_on) {
+    memset(light_blink.alternate_channels, 0, sizeof(light_blink.alternate_channels));
+  } else {
+    lightSm2335ChannelsForState(true, sanitizeLightDimmerValue(config.light_on_dimmer),
+                                light_blink.alternate_channels);
+  }
+  writeLightChannelsImmediate(light_blink.alternate_channels);
+  DBG_LOG("light", "blink started restore_state=%s dimmer=%u ct=%u",
+          light_blink.restore_on ? "ON" : "OFF", light.dimmer, light.ct);
+  return true;
+}
+
+void maintainLightBlinking() {
+  if (!light_blink.active) return;
+  const uint32_t now = millis();
+  if (static_cast<int32_t>(now - light_blink.due) < 0) return;
+
+  light_blink.transitions++;
+  const bool final_transition = light_blink.transitions >= kBlinkTransitionCount;
+  const uint16_t *channels = (light_blink.transitions & 1U)
+                               ? light_blink.restore_channels
+                               : light_blink.alternate_channels;
+  writeLightChannelsImmediate(channels);
+  if (final_transition) {
+    DBG_LOG("light", "blink complete state=%s", light_blink.restore_on ? "ON" : "OFF");
+    light_blink = {};
+  } else {
+    light_blink.due = now + kBlinkIntervalMs;
+  }
+}
+
 void updateLightOutputs() {
   if (!light.present) return;
+  cancelLightBlink();
   uint16_t target[kLightChannelCount];
   lightSm2335Channels(target);
   if (light.fade_running) advanceLightFade(true);
@@ -5365,6 +5428,7 @@ void setLightSpeed(uint16_t speed, bool persist = true) {
 }
 
 void setupLightRuntime() {
+  light_blink = {};
   memset(&light, 0, sizeof(light));
   light.present = lightAvailable();
   loadLightStateFromConfig();
@@ -5382,6 +5446,7 @@ void setupLightRuntime() {
 }
 
 void maintainLight() {
+  maintainLightBlinking();
   advanceLightFade(false);
   persistLightConfig(false);
 }
@@ -5495,7 +5560,7 @@ bool parsePowerState(const char *p, size_t len, uint8_t &state) {
   return false;
 }
 
-bool isRelayBlinkState(const char *p, size_t len) {
+bool isBlinkState(const char *p, size_t len) {
   return len == 5 &&
          (p[0] | 0x20) == 'b' &&
          (p[1] | 0x20) == 'l' &&
@@ -8497,7 +8562,7 @@ bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size
       bool on = relay_state[relay];
       bool blinking = false;
       if (arg_len > 0) {
-        if (isRelayBlinkState(arg, arg_len)) {
+        if (isBlinkState(arg, arg_len)) {
           blinking = startRelayBlink(relay);
         } else {
           uint8_t state = kPowerStateOff;
@@ -8524,20 +8589,25 @@ bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size
       return false;
     }
     bool on = light.power;
+    bool blinking = false;
     if (arg_len > 0) {
-      uint8_t state = kPowerStateOff;
-      if (!parsePowerState(arg, arg_len, state)) {
-        error = F("Invalid power state");
-        return false;
+      if (isBlinkState(arg, arg_len)) {
+        blinking = startLightBlink();
+      } else {
+        uint8_t state = kPowerStateOff;
+        if (!parsePowerState(arg, arg_len, state)) {
+          error = F("Invalid power state");
+          return false;
+        }
+        on = state == kPowerStateToggle ? !light.power : state == kPowerStateOn;
+        setLightPower(on);
       }
-      on = state == kPowerStateToggle ? !light.power : state == kPowerStateOn;
-      setLightPower(on);
     }
     out.reserve(24);
     out += F("{\"");
     out += response_key;
     out += F("\":\"");
-    out += (on ? F("ON") : F("OFF"));
+    out += blinking ? F("BLINK") : (on ? F("ON") : F("OFF"));
     out += F("\"}");
     return true;
 #else
@@ -9659,7 +9729,7 @@ void appendDeviceControls(String &page) {
     page += F("</code></div><span>Fading</span><div><code id='live-light-fading'>");
     page += light.fade_running ? F("yes") : F("no");
     page += F("</code></div><span>Driver</span><div><code id='live-light-driver'>SM2335</code></div></div>");
-    page += F("<form class='inline light-actions' data-inline='1' method='post' action='/light'><span class='actions'><button name='power' value='toggle'>Toggle</button><button name='power' value='on'>On</button><button class='secondary' name='power' value='off'>Off</button></span></form>");
+    page += F("<form class='inline light-actions' data-inline='1' method='post' action='/light'><span class='actions'><button name='power' value='toggle'>Toggle</button><button name='power' value='on'>On</button><button class='secondary' name='power' value='off'>Off</button><button class='secondary' name='power' value='blink'>Blink</button></span></form>");
     page += F("<div class='field'><label>Dimmer<input class='la' data-live='live-light-dimmer' data-suffix='%' name='dimmer' type='range' min='0' max='100' step='1' value='");
     page += String(light.dimmer);
     page += F("'></label></div><div class='field'><label>Color temperature<input name='ct' type='range' min='");
@@ -11007,6 +11077,7 @@ void handleLightSave() {
     if (state == "on") setLightPower(true);
     else if (state == "off") setLightPower(false);
     else if (state == "toggle") toggleLightPower();
+    else if (state == "blink") startLightBlink();
     else { sendPlain(400, F("Invalid light power state")); return; }
   }
   if (server.hasArg("dimmer")) {

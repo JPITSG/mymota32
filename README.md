@@ -261,6 +261,7 @@ The ESP32-C3 Switchbot W1401400 template uses an SM2335-style light output. The
 firmware supports:
 
 - Power on/off through `POWER`.
+- Blink through `POWER BLINK`.
 - Brightness through `DIMMER`.
 - Color temperature through `CT` or `ColorTemperature`.
 - RGB color through `Color`.
@@ -269,7 +270,13 @@ firmware supports:
 - Fade speed through `Speed`.
 
 Light settings are exposed in the web UI when a light-capable template is active
-and are published through MQTT when state changes.
+and are published through MQTT when state changes. The light Blink action uses
+the same non-blocking `alternate -> original -> alternate -> original` sequence
+and 250 ms intervals as relay blinking. An ON light alternates with fully OFF;
+an OFF light alternates with its configured ON brightness and current color
+settings. Blink transitions bypass fading, restore the original output exactly,
+and do not change saved or MQTT state. A later power, brightness, color
+temperature, or color command cancels the blink and takes precedence.
 
 ## Energy Monitoring
 
@@ -326,9 +333,10 @@ Useful endpoints:
 - `/` - web UI.
 - `/health` - JSON status document.
 - `/cm?cmnd=POWER%20TOGGLE` - Tasmota-style command execution.
-- `GET /cm?cmnd=POWER%20BLINK` - blink relay 1 and restore its current state; use
-  `POWER2`, `POWER3`, or `POWER4` for another configured relay. A successful
-  request returns `{"POWER":"BLINK"}` (or the indexed power key).
+- `GET /cm?cmnd=POWER%20BLINK` - blink relay 1 or the configured light output and
+  restore its current state; use `POWER2`, `POWER3`, or `POWER4` for another
+  configured relay. A successful request returns `{"POWER":"BLINK"}` (or the
+  indexed power key).
 - `/api/settings?...` - simple GET settings compatibility endpoint.
 - `/settings/export` - export JSON settings, excluding Wi-Fi credentials.
 - `/settings/import` - import exported settings.
