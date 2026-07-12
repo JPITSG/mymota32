@@ -223,6 +223,8 @@ constexpr uint16_t kRelayEnforcementMinSeconds = 1;
 constexpr uint16_t kRelayEnforcementMaxSeconds = 65535U;
 constexpr uint16_t kRelayPulseMinSeconds = 1;
 constexpr uint16_t kRelayPulseMaxSeconds = 65535U;
+constexpr uint16_t kRelayBlinkIntervalMs = 250;
+constexpr uint8_t kRelayBlinkTransitionCount = 3;
 constexpr uint32_t kGracefulRelaySnapshotMagic = 0x4d523252UL;  // MR2R
 constexpr uint16_t kGracefulRelaySnapshotVersion = 1;
 constexpr const char *kGracefulRelayPrefsNamespace = "mymota32-rl";
@@ -542,6 +544,13 @@ struct ButtonState {
   uint32_t pressed_at;
 };
 
+struct RelayBlinkState {
+  bool active;
+  bool restore_on;
+  uint8_t transitions;
+  uint32_t due;
+};
+
 struct MqttButtonPending {
   char topic[kMqttButtonTopicMaxLen + 1];
   char payload[kMqttButtonPayloadMaxLen + 1];
@@ -855,6 +864,7 @@ bool relay_enforcement_pending[kMaxRelays] = {false};
 uint32_t relay_enforcement_due[kMaxRelays] = {0};
 bool relay_pulse_pending[kMaxRelays] = {false};
 uint32_t relay_pulse_due[kMaxRelays] = {0};
+RelayBlinkState relay_blink[kMaxRelays] = {};
 ButtonState button_state[kMaxButtons] = {};
 uint32_t last_led_update = 0;
 
@@ -3577,8 +3587,30 @@ void refreshRelayPulseRuntime(bool schedule_on_relays) {
   }
 }
 
+void cancelRelayBlink(uint8_t relay) {
+  if (relay >= kMaxRelays || !relay_blink[relay].active) return;
+  writeAssignedPin(runtime_template.relays[relay], relay_state[relay]);
+  relay_blink[relay] = {};
+  DBG_LOG("relay", "blink canceled relay=%u", relay + 1);
+}
+
+bool startRelayBlink(uint8_t relay) {
+  if (!relayAvailable(relay)) return false;
+  cancelRelayBlink(relay);
+  RelayBlinkState &blink = relay_blink[relay];
+  blink.active = true;
+  blink.restore_on = relay_state[relay];
+  blink.transitions = 0;
+  blink.due = millis() + kRelayBlinkIntervalMs;
+  writeAssignedPin(runtime_template.relays[relay], !blink.restore_on);
+  DBG_LOG("relay", "blink started relay=%u restore_state=%s", relay + 1,
+          blink.restore_on ? "ON" : "OFF");
+  return true;
+}
+
 void setRelay(uint8_t relay, bool on, bool suppress_off_enforcement = false) {
   if (relay >= kMaxRelays || !hasPin(runtime_template.relays[relay])) return;
+  cancelRelayBlink(relay);
   const bool changed = relay_state[relay] != on;
   const bool was_on = relay_state[relay];
   relay_state[relay] = on;
@@ -3621,6 +3653,7 @@ void setupDevicePins() {
   memset(relay_enforcement_due, 0, sizeof(relay_enforcement_due));
   memset(relay_pulse_pending, 0, sizeof(relay_pulse_pending));
   memset(relay_pulse_due, 0, sizeof(relay_pulse_due));
+  memset(relay_blink, 0, sizeof(relay_blink));
 
   for (uint8_t i = 0; i < kMaxRelays; i++) {
     relay_state[i] = relayBootState(i);
@@ -4307,6 +4340,7 @@ void maintainRelayEnforcement() {
   const uint32_t now = millis();
   for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
     if (!relay_enforcement_pending[i]) continue;
+    if (relay_blink[i].active) continue;
     if (!relayTimeEnforcementActive(i) || relay_state[i]) {
       cancelRelayEnforcement(i);
       continue;
@@ -4322,6 +4356,7 @@ void maintainRelayPulsing() {
   const uint32_t now = millis();
   for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
     if (!relay_pulse_pending[i]) continue;
+    if (relay_blink[i].active) continue;
     if (!relayPulseActive(i) || !relay_state[i]) {
       cancelRelayPulse(i);
       continue;
@@ -4333,8 +4368,28 @@ void maintainRelayPulsing() {
   }
 }
 
+void maintainRelayBlinking() {
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
+    RelayBlinkState &blink = relay_blink[i];
+    if (!blink.active || static_cast<int32_t>(now - blink.due) < 0) continue;
+
+    blink.transitions++;
+    const bool final_transition = blink.transitions >= kRelayBlinkTransitionCount;
+    const bool on = (blink.transitions & 1U) ? blink.restore_on : !blink.restore_on;
+    writeAssignedPin(runtime_template.relays[i], on);
+    if (final_transition) {
+      DBG_LOG("relay", "blink complete relay=%u state=%s", i + 1, on ? "ON" : "OFF");
+      blink = {};
+    } else {
+      blink.due = now + kRelayBlinkIntervalMs;
+    }
+  }
+}
+
 void maintainDevice() {
   maintainButtons();
+  maintainRelayBlinking();
   maintainRelayEnforcement();
   maintainRelayPulsing();
   updateDeviceLeds();
@@ -5438,6 +5493,15 @@ bool parsePowerState(const char *p, size_t len, uint8_t &state) {
     return true;
   }
   return false;
+}
+
+bool isRelayBlinkState(const char *p, size_t len) {
+  return len == 5 &&
+         (p[0] | 0x20) == 'b' &&
+         (p[1] | 0x20) == 'l' &&
+         (p[2] | 0x20) == 'i' &&
+         (p[3] | 0x20) == 'n' &&
+         (p[4] | 0x20) == 'k';
 }
 
 void recordMqttConnectResult(uint8_t result, uint32_t started) {
@@ -8431,21 +8495,26 @@ bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size
   if (parsePowerCommand(raw, cmd_len, relay, response_key, sizeof(response_key))) {
     if (relay < kMaxRelays && hasPin(runtime_template.relays[relay])) {
       bool on = relay_state[relay];
+      bool blinking = false;
       if (arg_len > 0) {
-        uint8_t state = kPowerStateOff;
-        if (!parsePowerState(arg, arg_len, state)) {
-          error = F("Invalid power state");
-          return false;
+        if (isRelayBlinkState(arg, arg_len)) {
+          blinking = startRelayBlink(relay);
+        } else {
+          uint8_t state = kPowerStateOff;
+          if (!parsePowerState(arg, arg_len, state)) {
+            error = F("Invalid power state");
+            return false;
+          }
+          on = state == kPowerStateToggle ? !relay_state[relay] : state == kPowerStateOn;
+          setRelay(relay, on);
+          updateDeviceLeds(true);
         }
-        on = state == kPowerStateToggle ? !relay_state[relay] : state == kPowerStateOn;
-        setRelay(relay, on);
-        updateDeviceLeds(true);
       }
       out.reserve(24);
       out += F("{\"");
       out += response_key;
       out += F("\":\"");
-      out += (on ? F("ON") : F("OFF"));
+      out += blinking ? F("BLINK") : (on ? F("ON") : F("OFF"));
       out += F("\"}");
       return true;
     }
@@ -9628,7 +9697,7 @@ void appendDeviceControls(String &page) {
     page += F("</span>");
     page += F("<form class='inline' data-inline='1' method='post' action='/power'><input type='hidden' name='relay' value='");
     page += String(i + 1);
-    page += F("'><span class='actions'><button name='state' value='toggle'>Toggle</button><button name='state' value='on'>On</button><button class='secondary' name='state' value='off'>Off</button></span></form></div>");
+    page += F("'><span class='actions'><button name='state' value='toggle'>Toggle</button><button name='state' value='on'>On</button><button class='secondary' name='state' value='off'>Off</button><button class='secondary' name='state' value='blink'>Blink</button></span></form></div>");
   }
   if (energy.present) {
     page += F("<div class='subblock'><div class='subblock-head'><div class='title'>Energy</div><code id='live-energy-driver'>");
@@ -10919,6 +10988,7 @@ void handlePowerSave() {
   if (state == "on") setRelay(relay - 1, true);
   else if (state == "off") setRelay(relay - 1, false);
   else if (state == "toggle") toggleRelay(relay - 1);
+  else if (state == "blink") startRelayBlink(relay - 1);
   else { sendPlain(400, F("Invalid relay state")); return; }
   updateDeviceLeds(true);
   sendInlineOkOrHome();

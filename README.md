@@ -204,7 +204,11 @@ drivers currently present in the firmware.
 
 Relays can be controlled from the web UI, MQTT, `/cm`, button actions, switch
 inputs, and webhook actions. `POWER` and `POWER1` both map to relay 1 when only
-one relay is available.
+one relay is available. Each relay's Blink action runs `alternate -> original ->
+alternate -> original`, waiting 250 ms between transitions and restoring the
+state captured when the action started. The sequence is non-blocking and does
+not change the relay's saved state or publish transient relay states. A later
+ON, OFF, or TOGGLE command cancels an in-progress blink and takes precedence.
 
 Inputs can operate as:
 
@@ -302,6 +306,7 @@ Common commands:
 cmnd/<topic>/POWER ON
 cmnd/<topic>/POWER OFF
 cmnd/<topic>/POWER TOGGLE
+cmnd/<topic>/POWER BLINK
 cmnd/<topic>/POWER1 TOGGLE
 cmnd/<topic>/DIMMER 50
 cmnd/<topic>/CT 350
@@ -321,6 +326,9 @@ Useful endpoints:
 - `/` - web UI.
 - `/health` - JSON status document.
 - `/cm?cmnd=POWER%20TOGGLE` - Tasmota-style command execution.
+- `GET /cm?cmnd=POWER%20BLINK` - blink relay 1 and restore its current state; use
+  `POWER2`, `POWER3`, or `POWER4` for another configured relay. A successful
+  request returns `{"POWER":"BLINK"}` (or the indexed power key).
 - `/api/settings?...` - simple GET settings compatibility endpoint.
 - `/settings/export` - export JSON settings, excluding Wi-Fi credentials.
 - `/settings/import` - import exported settings.
