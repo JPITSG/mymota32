@@ -695,6 +695,7 @@ struct StoredConfig {
 
   uint8_t relay_restore_boot[kMaxRelays];
   uint8_t relay_on_boot[kMaxRelays];
+  uint8_t relay_http_store_first[kMaxRelays];
   uint8_t relay_time_enabled[kMaxRelays];
   uint16_t relay_time_seconds[kMaxRelays];
   uint8_t relay_pulse_enabled[kMaxRelays];
@@ -2235,6 +2236,7 @@ void setDefaultConfig() {
   config.energy_mqtt_change_watts = 0;
   memset(config.relay_restore_boot, 1, sizeof(config.relay_restore_boot));
   memset(config.relay_on_boot, 0, sizeof(config.relay_on_boot));
+  memset(config.relay_http_store_first, 0, sizeof(config.relay_http_store_first));
   memset(config.relay_time_enabled, 0, sizeof(config.relay_time_enabled));
   memset(config.relay_time_seconds, 0, sizeof(config.relay_time_seconds));
   memset(config.relay_pulse_enabled, 0, sizeof(config.relay_pulse_enabled));
@@ -2374,12 +2376,14 @@ bool loadConfig() {
 
   uint8_t relay_restore_boot[kMaxRelays];
   uint8_t relay_on_boot[kMaxRelays];
+  uint8_t relay_http_store_first[kMaxRelays];
   uint8_t relay_time_enabled[kMaxRelays];
   uint16_t relay_time_seconds[kMaxRelays];
   uint8_t relay_pulse_enabled[kMaxRelays];
   uint16_t relay_pulse_seconds[kMaxRelays];
   readByteArray(prefs, "rel_restore", relay_restore_boot, 1);
   readByteArray(prefs, "rel_on_boot", relay_on_boot, 0);
+  readByteArray(prefs, "rel_http_sf", relay_http_store_first, 0);
   readByteArray(prefs, "rel_time_en", relay_time_enabled, 0);
   readUShortArray(prefs, "rel_time_s", relay_time_seconds, 0);
   readByteArray(prefs, "rel_pulse_en", relay_pulse_enabled, 0);
@@ -2509,6 +2513,7 @@ bool loadConfig() {
   for (uint8_t i = 0; i < kMaxRelays; i++) {
     config.relay_restore_boot[i] = relay_restore_boot[i] ? 1 : 0;
     config.relay_on_boot[i] = relay_on_boot[i] ? 1 : 0;
+    config.relay_http_store_first[i] = relay_http_store_first[i] ? 1 : 0;
     if (config.relay_restore_boot[i]) config.relay_on_boot[i] = 0;
     config.relay_time_enabled[i] = relay_time_enabled[i] ? 1 : 0;
     config.relay_time_seconds[i] = relay_time_seconds[i];
@@ -2845,12 +2850,14 @@ bool saveSystemConfig(uint8_t power_saving_mode, uint8_t power_saving_persist, u
 }
 
 bool saveDeviceStateEnforcementConfig(const uint8_t *restore_boot, const uint8_t *on_boot,
+                                      const uint8_t *http_store_first,
                                       const uint8_t *time_enabled, const uint16_t *time_seconds,
                                       uint8_t light_restore_boot) {
   DBG_LOG("config", "save state enforcement light_restore=%u", light_restore_boot ? 1 : 0);
   if (!prefs.begin("mymota32", false)) return false;
   prefs.putBytes("rel_restore", restore_boot, sizeof(config.relay_restore_boot));
   prefs.putBytes("rel_on_boot", on_boot, sizeof(config.relay_on_boot));
+  prefs.putBytes("rel_http_sf", http_store_first, sizeof(config.relay_http_store_first));
   prefs.putBytes("rel_time_en", time_enabled, sizeof(config.relay_time_enabled));
   prefs.putBytes("rel_time_s", time_seconds, sizeof(config.relay_time_seconds));
   prefs.putUChar("lt_restore", light_restore_boot ? 1 : 0);
@@ -3603,7 +3610,9 @@ bool queueDeferredHttpRelay(uint8_t relay, bool on) {
 
 bool requestHttpRelayState(uint8_t relay, bool on) {
   if (relay >= kMaxRelays || !relayAvailable(relay)) return false;
-  if (config.relay_restore_boot[relay]) return queueDeferredHttpRelay(relay, on);
+  if (config.relay_restore_boot[relay] && config.relay_http_store_first[relay]) {
+    return queueDeferredHttpRelay(relay, on);
+  }
   setRelay(relay, on);
   updateDeviceLeds(true);
   return true;
@@ -10112,7 +10121,11 @@ void appendDeviceStateEnforcementSettings(String &page) {
     if (config.relay_time_seconds[i] >= kRelayEnforcementMinSeconds) {
       page += String(config.relay_time_seconds[i]);
     }
-    page += F("'></div></div>");
+    page += F("'></div><div class='field'><label><input type='checkbox' name='relay_http_store_first");
+    page += String(i);
+    page += F("' value='1'");
+    if (config.relay_http_store_first[i]) page += F(" checked");
+    page += F(">Store &rarr; reply &rarr; act for HTTP</label><span class='hint'>Requires Restore last state at boot</span></div></div>");
   }
 #if MYMOTA32_LIGHT_SUPPORTED
   if (light.present) {
@@ -11358,11 +11371,13 @@ void handleDeviceStateEnforcementSave() {
 
   uint8_t restore_boot[kMaxRelays];
   uint8_t on_boot[kMaxRelays];
+  uint8_t http_store_first[kMaxRelays];
   uint8_t time_enabled[kMaxRelays];
   uint16_t time_seconds[kMaxRelays];
   uint8_t light_restore_boot = config.light_restore_boot;
   memcpy(restore_boot, config.relay_restore_boot, sizeof(restore_boot));
   memcpy(on_boot, config.relay_on_boot, sizeof(on_boot));
+  memcpy(http_store_first, config.relay_http_store_first, sizeof(http_store_first));
   memcpy(time_enabled, config.relay_time_enabled, sizeof(time_enabled));
   memcpy(time_seconds, config.relay_time_seconds, sizeof(time_seconds));
 
@@ -11373,6 +11388,8 @@ void handleDeviceStateEnforcementSave() {
     restore_boot_arg += String(i);
     String on_boot_arg = F("relay_on_boot");
     on_boot_arg += String(i);
+    String http_store_first_arg = F("relay_http_store_first");
+    http_store_first_arg += String(i);
     String time_enabled_arg = F("relay_time_enabled");
     time_enabled_arg += String(i);
     String seconds_arg = F("relay_time_seconds");
@@ -11382,6 +11399,7 @@ void handleDeviceStateEnforcementSave() {
     on_boot[i] = server.hasArg(on_boot_arg) ? 1 : 0;
     if (on_boot[i]) restore_boot[i] = 0;
     else if (restore_boot[i]) on_boot[i] = 0;
+    http_store_first[i] = server.hasArg(http_store_first_arg) ? 1 : 0;
     time_enabled[i] = server.hasArg(time_enabled_arg) ? 1 : 0;
 
     String seconds_text = server.hasArg(seconds_arg) ? server.arg(seconds_arg) : String();
@@ -11409,7 +11427,8 @@ void handleDeviceStateEnforcementSave() {
   }
 #endif
 
-  if (!saveDeviceStateEnforcementConfig(restore_boot, on_boot, time_enabled, time_seconds, light_restore_boot)) {
+  if (!saveDeviceStateEnforcementConfig(restore_boot, on_boot, http_store_first,
+                                        time_enabled, time_seconds, light_restore_boot)) {
     sendPlain(500, F("Could not save device state enforcement settings"));
     return;
   }
@@ -13060,6 +13079,8 @@ bool ledConfigDiffers(const StoredConfig &a, const StoredConfig &b) {
 bool relayEnforcementConfigDiffers(const StoredConfig &a, const StoredConfig &b) {
   return memcmp(a.relay_restore_boot, b.relay_restore_boot, sizeof(a.relay_restore_boot)) != 0 ||
          memcmp(a.relay_on_boot, b.relay_on_boot, sizeof(a.relay_on_boot)) != 0 ||
+         memcmp(a.relay_http_store_first, b.relay_http_store_first,
+                sizeof(a.relay_http_store_first)) != 0 ||
          memcmp(a.relay_time_enabled, b.relay_time_enabled, sizeof(a.relay_time_enabled)) != 0 ||
          memcmp(a.relay_time_seconds, b.relay_time_seconds, sizeof(a.relay_time_seconds)) != 0 ||
          a.light_restore_boot != b.light_restore_boot;
@@ -13165,6 +13186,7 @@ bool commitStoredConfig(const StoredConfig &source) {
   prefs.putUShort("en_watts", source.energy_mqtt_change_watts);
   prefs.putBytes("rel_restore", source.relay_restore_boot, sizeof(source.relay_restore_boot));
   prefs.putBytes("rel_on_boot", source.relay_on_boot, sizeof(source.relay_on_boot));
+  prefs.putBytes("rel_http_sf", source.relay_http_store_first, sizeof(source.relay_http_store_first));
   prefs.putBytes("rel_time_en", source.relay_time_enabled, sizeof(source.relay_time_enabled));
   prefs.putBytes("rel_time_s", source.relay_time_seconds, sizeof(source.relay_time_seconds));
   prefs.putBytes("rel_pulse_en", source.relay_pulse_enabled, sizeof(source.relay_pulse_enabled));
@@ -13328,6 +13350,8 @@ void appendSettingsExportJson(String &out) {
     out += config.relay_restore_boot[i] ? F("true") : F("false");
     out += F(",\"on_boot\":");
     out += config.relay_on_boot[i] ? F("true") : F("false");
+    out += F(",\"http_store_first\":");
+    out += config.relay_http_store_first[i] ? F("true") : F("false");
     out += F(",\"time_based\":");
     out += config.relay_time_enabled[i] ? F("true") : F("false");
     out += F(",\"seconds\":");
@@ -13874,6 +13898,15 @@ void importSettingsRelayEnforcement(const cJSON *root, StoredConfig &target, con
         recordSettingsApplied(stats);
       } else {
         recordSettingsSkipped(stats, String(F("relay_enforcement[")) + String(i) + F("].on_boot"));
+      }
+    }
+    if (const cJSON *value = cjsonObjectItem(relay, "http_store_first")) {
+      bool enabled = false;
+      if (settingsReadBool(value, enabled)) {
+        target.relay_http_store_first[i] = enabled ? 1 : 0;
+        recordSettingsApplied(stats);
+      } else {
+        recordSettingsSkipped(stats, String(F("relay_enforcement[")) + String(i) + F("].http_store_first"));
       }
     }
     if (const cJSON *value = cjsonObjectItem(relay, "time_based")) {

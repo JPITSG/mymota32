@@ -240,14 +240,18 @@ For relays:
 - Turn on at boot can force relays on unless restore-last-state is selected.
 - Restore after OFF can turn a relay back on after it has been off for a
   configured number of seconds.
+- Store -> reply -> act for HTTP opts a relay into persisting an accepted HTTP
+  state before replying and physically switching the relay. It is disabled by
+  default and only applies when restore-last-state is also enabled.
 
-When restore-last-state is enabled for a relay, HTTP ON, OFF, and TOGGLE
-commands from `/cm` or the web UI commit the requested state to the relay
-snapshot before returning a successful response. The physical relay change is
-then applied 250 ms after the response is written. This keeps the accepted
-state durable if relay switching immediately resets the device; a snapshot
-write failure returns an HTTP error and leaves the relay unchanged. Other relay
-command sources retain their immediate behavior.
+When both restore-last-state and Store -> reply -> act for HTTP are enabled for
+a relay, HTTP ON, OFF, and TOGGLE commands from `/cm` or the web UI commit the
+requested state to the relay snapshot before returning a successful response.
+The physical relay change is then applied 250 ms after the response is written.
+This keeps the accepted state durable if relay switching immediately resets the
+device; a snapshot write failure returns an HTTP error and leaves the relay
+unchanged. With the option disabled, HTTP relay commands use the original
+immediate actuation path. Other relay command sources always remain immediate.
 
 For lights, restore-last-state covers power, dimmer, color temperature, RGB
 color, fade, and speed.
