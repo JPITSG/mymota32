@@ -882,6 +882,7 @@ bool config_ok = false;
 bool ap_started = false;
 bool sta_connected_once = false;
 uint32_t boot_id = 0;
+esp_reset_reason_t boot_reset_reason = ESP_RST_UNKNOWN;
 uint32_t last_ap_attempt = 0;
 uint32_t last_wifi_begin_attempt = 0;
 uint32_t disconnected_since = 0;
@@ -1322,6 +1323,27 @@ String defaultHostname() {
 
 uint32_t makeBootId() {
   return static_cast<uint32_t>(esp_random());
+}
+
+const __FlashStringHelper *resetReasonName(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON: return F("power_on");
+    case ESP_RST_EXT: return F("external");
+    case ESP_RST_SW: return F("software");
+    case ESP_RST_PANIC: return F("panic");
+    case ESP_RST_INT_WDT: return F("interrupt_watchdog");
+    case ESP_RST_TASK_WDT: return F("task_watchdog");
+    case ESP_RST_WDT: return F("watchdog");
+    case ESP_RST_DEEPSLEEP: return F("deep_sleep");
+    case ESP_RST_BROWNOUT: return F("brownout");
+    case ESP_RST_SDIO: return F("sdio");
+    case ESP_RST_USB: return F("usb");
+    case ESP_RST_JTAG: return F("jtag");
+    case ESP_RST_EFUSE: return F("efuse");
+    case ESP_RST_PWR_GLITCH: return F("power_glitch");
+    case ESP_RST_CPU_LOCKUP: return F("cpu_lockup");
+    default: return F("unknown");
+  }
 }
 
 String htmlEscape(const String &input) {
@@ -3443,7 +3465,7 @@ void loadGracefulRelaySnapshot() {
   graceful_relay_restore_mask = 0;
 
   GracefulRelaySnapshot snapshot{};
-  if (esp_reset_reason() == ESP_RST_SW &&
+  if (boot_reset_reason == ESP_RST_SW &&
       readRelaySnapshot(kGracefulRelayPrefsKey, snapshot) &&
       relaySnapshotValid(snapshot)) {
     graceful_relay_restore_mask = snapshot.relay_mask;
@@ -9030,7 +9052,7 @@ void appendFooter(String &page, bool live_poll = true, bool reboot_wait = false)
   page += F("function live(){if(lp)return;lp=1;fh().then(function(d){");
   page += F("t('live-version',nv(d.version));t('live-target',nv(d.target));t('live-chip',(d.chip_model?d.chip_model:'Chip')+(d.chip_id?' ('+d.chip_id+')':''));t('live-hostname',nv(d.hostname));t('live-heap',d.heap+' bytes');t('live-heap-2',d.heap+' bytes');if(d.flash){t('live-flash-used',d.flash.used+' bytes');t('live-flash-total',d.flash.total+' bytes');t('live-flash-free',d.flash.free+' bytes');t('live-flash-chip',d.flash.chip_size+' bytes');}");
   page += F("if(d.partitions){var r=d.partitions.running||{},u=d.partitions.next_update||{},f=d.partitions.factory||{};t('live-part-running-label',nv(r.label));t('live-part-running-size',r.size==null?'n/a':r.size+' bytes');t('live-part-update-label',nv(u.label));t('live-part-update-size',u.size==null?'n/a':u.size+' bytes');t('live-part-factory-label',nv(f.label));t('live-part-factory-size',f.size==null?'n/a':f.size+' bytes');t('live-part-ota-slots',nv(d.partitions.ota_slots));}");
-  page += F("t('live-uptime',d.uptime+'s');t('live-uptime-2',d.uptime+'s');t('live-configured-phy',nv(d.configured_phy));t('live-active-phy',nv(d.active_phy));");
+  page += F("t('live-uptime',d.uptime+'s');t('live-uptime-2',d.uptime+'s');t('live-reset-reason',nv(d.reset_reason)+(d.reset_reason_code==null?'':' ('+d.reset_reason_code+')'));t('live-configured-phy',nv(d.configured_phy));t('live-active-phy',nv(d.active_phy));");
   page += F("if(d.perf){t('live-loop-load',d.perf.loop_load+'%');t('live-loop-hz',d.perf.loop_hz+'/s');t('live-loop-max',mu(d.perf.loop_max_us));}");
   page += F("if(d.power_saving){sv('power_saving',d.power_saving.mode||'off');cv('power_saving_persist',d.power_saving.persist);cv('power_saving_locked',d.power_saving.locked);}");
   page += F("if(d.ntp){var ns=d.ntp.enabled?(d.ntp.server||'not configured'):'disabled',nc=!d.ntp.enabled?'pill bad':(d.ntp.valid?'pill ok':(d.ntp.running?'pill warn':'pill bad'));t('live-ntp-server',ns);p('live-ntp-status',d.ntp.status||'unknown',nc);p('live-ntp-card-status',d.ntp.enabled?(d.ntp.status||'unknown'):'disabled',(!d.ntp.enabled?'h-meta pill bad':(d.ntp.valid?'h-meta pill ok':'h-meta pill warn')));t('live-ntp-reachability',d.ntp.reachability==null?'n/a':d.ntp.reachability);t('live-ntp-time',d.ntp.valid?(d.ntp.datetime||'n/a'):'n/a');cv('ntp_enabled',d.ntp.enabled);sv('ntp_server',d.ntp.server||'');sv('ntp_resync',d.ntp.resync||86400);}");
@@ -9498,7 +9520,11 @@ void appendStatusBlock(String &page) {
   page += String(cached_ota_slots);
   page += F("</code></div><span>Uptime</span><div><code id='live-uptime'>");
   page += String(millis() / 1000);
-  page += F("s</code></div><span>Loop load</span><div><code id='live-loop-load'>");
+  page += F("s</code></div><span>Reset reason</span><div><code id='live-reset-reason'>");
+  page += resetReasonName(boot_reset_reason);
+  page += F(" (");
+  page += String(static_cast<int>(boot_reset_reason));
+  page += F(")</code></div><span>Loop load</span><div><code id='live-loop-load'>");
   page += String(perf_last_loop_load);
   page += F("%</code> app busy</div><span>Loop rate</span><div><code id='live-loop-hz'>");
   page += String(perf_last_loop_hz);
@@ -14483,6 +14509,10 @@ void handleHealth() {
   out += jsonEscape(config.hostname);
   out += F("\",\"boot_id\":");
   out += boot_id;
+  out += F(",\"reset_reason\":\"");
+  out += resetReasonName(boot_reset_reason);
+  out += F("\",\"reset_reason_code\":");
+  out += static_cast<int>(boot_reset_reason);
   out += F(",\"debug_log\":");
   out += MYMOTA32_DEBUG_LOG ? F("true") : F("false");
   out += F(",\"heap\":");
@@ -15341,8 +15371,10 @@ void idleAfterLoopWork() {
 }
 
 void setup() {
+  boot_reset_reason = esp_reset_reason();
   debugSerialBegin();
-  DBG_LOG("boot", "setup entry reset_reason=%d", static_cast<int>(esp_reset_reason()));
+  DBG_LOG("boot", "setup entry reset_reason=%s(%d)",
+          String(resetReasonName(boot_reset_reason)).c_str(), static_cast<int>(boot_reset_reason));
   delay(20);
   boot_started_ms = millis();
   DBG_SETUP_STEP("loadBootRecoveryState", loadBootRecoveryState(););

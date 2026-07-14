@@ -159,10 +159,10 @@ The root web UI is the primary configuration surface. It is organized into
 status, template, device, Bluetooth, network, and maintenance areas.
 
 - Overview tiles show Wi-Fi RSSI, MQTT queue depth, heap, and uptime.
-- System Status shows hostname, chip model, chip ID, firmware target, loop
-  performance, flash and partition information, Wi-Fi SDK state, gateway, DNS,
-  MQTT state, NTP sync state, iBeacon report rate, and whether debug serial
-  logging is compiled into the running build.
+- System Status shows hostname, chip model, chip ID, firmware target, the
+  previous reset reason, loop performance, flash and partition information,
+  Wi-Fi SDK state, gateway, DNS, MQTT state, NTP sync state, iBeacon report
+  rate, and whether debug serial logging is compiled into the running build.
 - Template shows the decoded hardware profile: relays, inputs, LEDs, energy
   driver, light driver, and unsupported template functions.
 - Settings export/import allows moving device settings between devices without
@@ -348,9 +348,10 @@ Useful endpoints:
 - `/shelly-blu-button/beep?mac=<mac>` - trigger a paired Shelly BLU Button beep.
 
 The `/health` document includes firmware version, target, chip model, chip ID,
-partition layout, flash usage, power saving mode, Wi-Fi state, MQTT state,
-template summary, relay state, button state, LED state, energy state, iBeacon
-state, NTP state, Switchbot Lock Ultra state, and Shelly BLU Button state.
+the previous reset reason and numeric reason code, partition layout, flash
+usage, power saving mode, Wi-Fi state, MQTT state, template summary, relay
+state, button state, LED state, energy state, iBeacon state, NTP state,
+Switchbot Lock Ultra state, and Shelly BLU Button state.
 The web UI formats timing fields as milliseconds for short intervals and
 switches to seconds once values grow beyond 10 seconds.
 
