@@ -241,6 +241,14 @@ For relays:
 - Restore after OFF can turn a relay back on after it has been off for a
   configured number of seconds.
 
+When restore-last-state is enabled for a relay, HTTP ON, OFF, and TOGGLE
+commands from `/cm` or the web UI commit the requested state to the relay
+snapshot before returning a successful response. The physical relay change is
+then applied 250 ms after the response is written. This keeps the accepted
+state durable if relay switching immediately resets the device; a snapshot
+write failure returns an HTTP error and leaves the relay unchanged. Other relay
+command sources retain their immediate behavior.
+
 For lights, restore-last-state covers power, dimmer, color temperature, RGB
 color, fade, and speed.
 

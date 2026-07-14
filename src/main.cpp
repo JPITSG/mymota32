@@ -223,6 +223,7 @@ constexpr uint16_t kRelayEnforcementMinSeconds = 1;
 constexpr uint16_t kRelayEnforcementMaxSeconds = 65535U;
 constexpr uint16_t kRelayPulseMinSeconds = 1;
 constexpr uint16_t kRelayPulseMaxSeconds = 65535U;
+constexpr uint16_t kHttpRelayApplyDelayMs = 250;
 constexpr uint16_t kBlinkIntervalMs = 250;
 constexpr uint8_t kBlinkTransitionCount = 3;
 constexpr uint32_t kGracefulRelaySnapshotMagic = 0x4d523252UL;  // MR2R
@@ -551,6 +552,17 @@ struct RelayBlinkState {
   uint32_t due;
 };
 
+struct DeferredHttpRelayState {
+  bool pending;
+  bool on;
+  uint32_t due;
+};
+
+enum CommandOrigin : uint8_t {
+  kCommandOriginInternal = 0,
+  kCommandOriginHttp = 1,
+};
+
 struct MqttButtonPending {
   char topic[kMqttButtonTopicMaxLen + 1];
   char payload[kMqttButtonPayloadMaxLen + 1];
@@ -875,6 +887,7 @@ uint32_t relay_enforcement_due[kMaxRelays] = {0};
 bool relay_pulse_pending[kMaxRelays] = {false};
 uint32_t relay_pulse_due[kMaxRelays] = {0};
 RelayBlinkState relay_blink[kMaxRelays] = {};
+DeferredHttpRelayState deferred_http_relay[kMaxRelays] = {};
 ButtonState button_state[kMaxButtons] = {};
 uint32_t last_led_update = 0;
 
@@ -2165,6 +2178,8 @@ bool clearGracefulRelaySnapshot();
 bool clearLastRelaySnapshot();
 void loadLastRelaySnapshot();
 bool saveLastRelaySnapshotIfNeeded();
+void setRelay(uint8_t relay, bool on, bool suppress_off_enforcement = false,
+              bool snapshot_already_saved = false);
 void refreshRelayEnforcementRuntime(bool schedule_off_relays);
 void refreshRelayPulseRuntime(bool schedule_on_relays);
 void setupLightRuntime();
@@ -3382,7 +3397,9 @@ bool persistEnergyTotal(bool force);
 bool mqttConfigured();
 bool parseUint16Input(const String &input, uint16_t min_value, uint16_t max_value, uint16_t &out);
 bool parseUint32Input(const String &input, uint32_t min_value, uint32_t max_value, uint32_t &out);
-bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size_t arg_len, String &out, String &error);
+bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size_t arg_len,
+                          String &out, String &error, CommandOrigin origin,
+                          uint16_t *error_status);
 
 uint32_t relaySnapshotHashByte(uint32_t hash, uint8_t value) {
   hash ^= value;
@@ -3407,6 +3424,21 @@ uint16_t relayStateMask() {
   for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
     if (!relayAvailable(i) || !relay_state[i]) continue;
     mask |= (1U << i);
+  }
+  return mask;
+}
+
+bool effectiveRelayState(uint8_t relay) {
+  if (relay >= kMaxRelays) return false;
+  return deferred_http_relay[relay].pending ? deferred_http_relay[relay].on : relay_state[relay];
+}
+
+uint16_t desiredRelayStateMask() {
+  uint16_t mask = relayStateMask();
+  for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
+    if (!relayAvailable(i) || !deferred_http_relay[i].pending) continue;
+    if (deferred_http_relay[i].on) mask |= (1U << i);
+    else mask &= ~(1U << i);
   }
   return mask;
 }
@@ -3486,7 +3518,7 @@ void loadLastRelaySnapshot() {
   }
 }
 
-bool saveRelaySnapshot(const char *key) {
+bool saveRelaySnapshotMask(const char *key, uint16_t relay_mask) {
   if (runtime_template.relay_count == 0) return clearRelaySnapshot(key);
 
   GracefulRelaySnapshot snapshot{};
@@ -3494,7 +3526,7 @@ bool saveRelaySnapshot(const char *key) {
   snapshot.version = kGracefulRelaySnapshotVersion;
   snapshot.size = sizeof(GracefulRelaySnapshot);
   snapshot.chip_id = chipIdValue();
-  snapshot.relay_mask = relayStateMask();
+  snapshot.relay_mask = relay_mask;
   snapshot.relay_count = runtime_template.relay_count;
   snapshot.relay_signature = relayTemplateSignature();
   snapshot.crc = gracefulRelaySnapshotCrc(snapshot);
@@ -3506,15 +3538,87 @@ bool saveRelaySnapshot(const char *key) {
   return written == sizeof(snapshot);
 }
 
+bool saveRelaySnapshot(const char *key) {
+  return saveRelaySnapshotMask(key, desiredRelayStateMask());
+}
+
 bool saveGracefulRelaySnapshot() {
   return saveRelaySnapshot(kGracefulRelayPrefsKey);
 }
 
-bool saveLastRelaySnapshot() {
-  if (!saveRelaySnapshot(kLastRelayPrefsKey)) return false;
-  last_relay_restore_mask = relayStateMask();
+bool saveLastRelaySnapshotMask(uint16_t relay_mask) {
+  if (!saveRelaySnapshotMask(kLastRelayPrefsKey, relay_mask)) return false;
+  last_relay_restore_mask = relay_mask;
   last_relay_restore_valid = runtime_template.relay_count > 0;
   return true;
+}
+
+bool saveLastRelaySnapshot() {
+  return saveLastRelaySnapshotMask(desiredRelayStateMask());
+}
+
+bool clearDeferredHttpRelay(uint8_t relay) {
+  if (relay >= kMaxRelays || !deferred_http_relay[relay].pending) return false;
+  DBG_LOG("relay", "deferred HTTP change canceled relay=%u state=%s",
+          relay + 1, deferred_http_relay[relay].on ? "ON" : "OFF");
+  deferred_http_relay[relay] = {};
+  return true;
+}
+
+bool cancelDeferredHttpRelayAndPersist(uint8_t relay) {
+  if (relay >= kMaxRelays || !deferred_http_relay[relay].pending) return true;
+  const DeferredHttpRelayState previous = deferred_http_relay[relay];
+  deferred_http_relay[relay] = {};
+  if (saveLastRelaySnapshotIfNeeded()) {
+    DBG_LOG("relay", "deferred HTTP change canceled relay=%u state=%s",
+            relay + 1, previous.on ? "ON" : "OFF");
+    return true;
+  }
+  deferred_http_relay[relay] = previous;
+  return false;
+}
+
+bool queueDeferredHttpRelay(uint8_t relay, bool on) {
+  if (relay >= kMaxRelays || !relayAvailable(relay)) return false;
+  if (effectiveRelayState(relay) == on) return true;
+
+  uint16_t desired_mask = desiredRelayStateMask();
+  if (on) desired_mask |= (1U << relay);
+  else desired_mask &= ~(1U << relay);
+  if (!saveLastRelaySnapshotMask(desired_mask)) return false;
+
+  if (relay_state[relay] == on) {
+    clearDeferredHttpRelay(relay);
+    return true;
+  }
+
+  DeferredHttpRelayState &pending = deferred_http_relay[relay];
+  pending.pending = true;
+  pending.on = on;
+  pending.due = 0;
+  DBG_LOG("relay", "deferred HTTP change queued relay=%u state=%s",
+          relay + 1, on ? "ON" : "OFF");
+  return true;
+}
+
+bool requestHttpRelayState(uint8_t relay, bool on) {
+  if (relay >= kMaxRelays || !relayAvailable(relay)) return false;
+  if (config.relay_restore_boot[relay]) return queueDeferredHttpRelay(relay, on);
+  setRelay(relay, on);
+  updateDeviceLeds(true);
+  return true;
+}
+
+void armDeferredHttpRelays() {
+  uint32_t due = millis() + kHttpRelayApplyDelayMs;
+  if (due == 0) due = 1;
+  for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
+    DeferredHttpRelayState &pending = deferred_http_relay[i];
+    if (!pending.pending || pending.due != 0) continue;
+    pending.due = due;
+    DBG_LOG("relay", "deferred HTTP change armed relay=%u state=%s delay=%u",
+            i + 1, pending.on ? "ON" : "OFF", kHttpRelayApplyDelayMs);
+  }
 }
 
 bool gracefulRelayRestoreState(uint8_t relay) {
@@ -3628,6 +3732,7 @@ void cancelRelayBlink(uint8_t relay) {
 
 bool startRelayBlink(uint8_t relay) {
   if (!relayAvailable(relay)) return false;
+  if (!cancelDeferredHttpRelayAndPersist(relay)) return false;
   cancelRelayBlink(relay);
   RelayBlinkState &blink = relay_blink[relay];
   blink.active = true;
@@ -3640,8 +3745,10 @@ bool startRelayBlink(uint8_t relay) {
   return true;
 }
 
-void setRelay(uint8_t relay, bool on, bool suppress_off_enforcement = false) {
+void setRelay(uint8_t relay, bool on, bool suppress_off_enforcement,
+              bool snapshot_already_saved) {
   if (relay >= kMaxRelays || !hasPin(runtime_template.relays[relay])) return;
+  const bool canceled_deferred = clearDeferredHttpRelay(relay);
   cancelRelayBlink(relay);
   const bool changed = relay_state[relay] != on;
   const bool was_on = relay_state[relay];
@@ -3663,19 +3770,21 @@ void setRelay(uint8_t relay, bool on, bool suppress_off_enforcement = false) {
   }
   if (changed) {
     updateDeviceLeds(true);
-    saveLastRelaySnapshotIfNeeded();
+    if (!snapshot_already_saved) saveLastRelaySnapshotIfNeeded();
     scheduleMqttRelayPublish(relay);
     if (was_on && !on) {
       energy_persist_requested = true;
       scheduleMqttRelayOffEnergyReport(relay);
     }
+  } else if (canceled_deferred && !snapshot_already_saved) {
+    saveLastRelaySnapshotIfNeeded();
   }
 }
 
 void toggleRelay(uint8_t relay) {
   if (relay >= kMaxRelays) return;
   DBG_LOG("relay", "toggle relay=%u", relay + 1);
-  setRelay(relay, !relay_state[relay]);
+  setRelay(relay, !effectiveRelayState(relay));
 }
 
 void setupDevicePins() {
@@ -3686,6 +3795,7 @@ void setupDevicePins() {
   memset(relay_pulse_pending, 0, sizeof(relay_pulse_pending));
   memset(relay_pulse_due, 0, sizeof(relay_pulse_due));
   memset(relay_blink, 0, sizeof(relay_blink));
+  memset(deferred_http_relay, 0, sizeof(deferred_http_relay));
 
   for (uint8_t i = 0; i < kMaxRelays; i++) {
     relay_state[i] = relayBootState(i);
@@ -3958,7 +4068,9 @@ bool urlDecodeComponent(const String &input, String &out) {
   return true;
 }
 
-bool executeCmndString(const String &cmnd_str, String &out, String &error) {
+bool executeCmndString(const String &cmnd_str, String &out, String &error,
+                       CommandOrigin origin = kCommandOriginInternal,
+                       uint16_t *error_status = nullptr) {
   const char *raw = cmnd_str.c_str();
   size_t total_len = cmnd_str.length();
 
@@ -3993,7 +4105,8 @@ bool executeCmndString(const String &cmnd_str, String &out, String &error) {
   }
 
   const size_t arg_len = arg_start < total_len ? total_len - arg_start : 0;
-  return executeDeviceCommand(raw, cmd_len, raw + arg_start, arg_len, out, error);
+  return executeDeviceCommand(raw, cmd_len, raw + arg_start, arg_len, out, error,
+                              origin, error_status);
 }
 
 bool webhookHostIsLocal(const String &host) {
@@ -4419,8 +4532,21 @@ void maintainRelayBlinking() {
   }
 }
 
+void maintainDeferredHttpRelays() {
+  const uint32_t now = millis();
+  for (uint8_t i = 0; i < runtime_template.relay_count && i < kMaxRelays; i++) {
+    DeferredHttpRelayState &pending = deferred_http_relay[i];
+    if (!pending.pending || pending.due == 0 || static_cast<int32_t>(now - pending.due) < 0) continue;
+    const bool on = pending.on;
+    pending = {};
+    DBG_LOG("relay", "deferred HTTP change applying relay=%u state=%s", i + 1, on ? "ON" : "OFF");
+    setRelay(i, on, false, true);
+  }
+}
+
 void maintainDevice() {
   maintainButtons();
+  maintainDeferredHttpRelays();
   maintainRelayBlinking();
   maintainRelayEnforcement();
   maintainRelayPulsing();
@@ -8493,7 +8619,8 @@ void stripLeadingBacklogTokens(const char *&p, size_t &len) {
   }
 }
 
-bool executeBacklogCommands(const char *arg, size_t arg_len, String &out, String &error) {
+bool executeBacklogCommands(const char *arg, size_t arg_len, String &out, String &error,
+                            CommandOrigin origin, uint16_t *error_status) {
   const char *p = arg;
   size_t len = arg_len;
   stripLeadingBacklogTokens(p, len);
@@ -8509,7 +8636,7 @@ bool executeBacklogCommands(const char *arg, size_t arg_len, String &out, String
       command.reserve(command_len);
       for (size_t i = 0; i < command_len; i++) command += segment[i];
       String response;
-      if (!executeCmndString(command, response, error)) return false;
+      if (!executeCmndString(command, response, error, origin, error_status)) return false;
       out = response;
       ran = true;
     }
@@ -8549,7 +8676,9 @@ bool parseLightDimmerCommand(const char *p, size_t len, uint8_t &index, char *re
 }
 #endif
 
-bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size_t arg_len, String &out, String &error) {
+bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size_t arg_len,
+                          String &out, String &error, CommandOrigin origin,
+                          uint16_t *error_status) {
   if (!raw || !arg || cmd_len == 0) {
     error = F("Invalid cmnd");
     return false;
@@ -8574,14 +8703,14 @@ bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size
   }
 
   if (parseBacklogCommand(raw, cmd_len)) {
-    return executeBacklogCommands(arg, arg_len, out, error);
+    return executeBacklogCommands(arg, arg_len, out, error, origin, error_status);
   }
 
   uint8_t relay = 0;
   char response_key[12];
   if (parsePowerCommand(raw, cmd_len, relay, response_key, sizeof(response_key))) {
     if (relay < kMaxRelays && hasPin(runtime_template.relays[relay])) {
-      bool on = relay_state[relay];
+      bool on = effectiveRelayState(relay);
       bool blinking = false;
       if (arg_len > 0) {
         if (isBlinkState(arg, arg_len)) {
@@ -8592,9 +8721,17 @@ bool executeDeviceCommand(const char *raw, size_t cmd_len, const char *arg, size
             error = F("Invalid power state");
             return false;
           }
-          on = state == kPowerStateToggle ? !relay_state[relay] : state == kPowerStateOn;
-          setRelay(relay, on);
-          updateDeviceLeds(true);
+          on = state == kPowerStateToggle ? !effectiveRelayState(relay) : state == kPowerStateOn;
+          if (origin == kCommandOriginHttp) {
+            if (!requestHttpRelayState(relay, on)) {
+              error = F("Could not persist relay state");
+              if (error_status) *error_status = 500;
+              return false;
+            }
+          } else {
+            setRelay(relay, on);
+            updateDeviceLeds(true);
+          }
         }
       }
       out.reserve(24);
@@ -8837,7 +8974,8 @@ bool mqttProcessPublish(uint8_t packet_type, uint32_t remaining, uint32_t deadli
 
   String response;
   String error;
-  if (!executeDeviceCommand(command, command_len, payload, remaining, response, error)) {
+  if (!executeDeviceCommand(command, command_len, payload, remaining, response, error,
+                            kCommandOriginInternal, nullptr)) {
     DBG_LOG("mqtt", "command failed error=%s", error.c_str());
     return true;
   }
@@ -11081,13 +11219,21 @@ void handlePowerSave() {
     sendPlain(400, F("Invalid relay"));
     return;
   }
-  if (state == "on") setRelay(relay - 1, true);
-  else if (state == "off") setRelay(relay - 1, false);
-  else if (state == "toggle") toggleRelay(relay - 1);
-  else if (state == "blink") startRelayBlink(relay - 1);
+  server.client().setNoDelay(true);
+  const uint8_t relay_index = static_cast<uint8_t>(relay - 1);
+  bool ok = true;
+  if (state == "on") ok = requestHttpRelayState(relay_index, true);
+  else if (state == "off") ok = requestHttpRelayState(relay_index, false);
+  else if (state == "toggle") ok = requestHttpRelayState(relay_index, !effectiveRelayState(relay_index));
+  else if (state == "blink") ok = startRelayBlink(relay_index);
   else { sendPlain(400, F("Invalid relay state")); return; }
-  updateDeviceLeds(true);
+  if (!ok) {
+    sendPlain(500, F("Could not persist relay state"));
+    armDeferredHttpRelays();
+    return;
+  }
   sendInlineOkOrHome();
+  armDeferredHttpRelays();
 }
 
 #if MYMOTA32_LIGHT_SUPPORTED
@@ -14985,15 +15131,19 @@ void handleCmnd() {
     return;
   }
 
+  server.client().setNoDelay(true);
   String out;
   String error;
-  if (!executeCmndString(server.arg("cmnd"), out, error)) {
-    sendPlain(400, error);
+  uint16_t error_status = 400;
+  if (!executeCmndString(server.arg("cmnd"), out, error, kCommandOriginHttp, &error_status)) {
+    sendPlain(error_status, error);
+    armDeferredHttpRelays();
     return;
   }
 
   server.sendHeader(F("Cache-Control"), F("no-store"));
   server.send(200, F("application/json"), out);
+  armDeferredHttpRelays();
 }
 
 void clearUpdateRuntime() {
