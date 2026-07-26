@@ -383,6 +383,12 @@ MQTT reports retain the existing `MAC`, `RSSI`, and raw `PACKET` fields. When an
 advertisement contains valid Apple iBeacon manufacturer data, its UUID is also
 included as a canonical, uppercase `UUID` field.
 
+iBeacon settings are stored as one compact, verified NVS record. Firmware
+upgrades continue to read the earlier individual settings keys and migrate them
+on the next iBeacon save. If NVS is too crowded for an atomic update, the save
+reclaims only the earlier iBeacon keys and retries; unrelated device settings
+are not cleared.
+
 The duplicate suppression rules are tuned for two common beacon classes:
 
 - Keyfob-style beacons use RSSI as part of uniqueness.

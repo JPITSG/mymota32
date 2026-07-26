@@ -377,6 +377,11 @@ constexpr size_t kIBeaconFilterInputMaxLen = 384;
 constexpr uint8_t kIBeaconUuidBytes = 16;
 constexpr uint8_t kIBeaconUuidCompactLen = kIBeaconUuidBytes * 2;
 constexpr uint8_t kIBeaconUuidTextLen = 36;
+constexpr const char *kIBeaconPackedPrefsKey = "ib_cfg";
+constexpr uint8_t kIBeaconPackedPrefsVersion = 1;
+constexpr size_t kIBeaconPackedPrefsHeaderLen = 12;
+constexpr size_t kIBeaconPackedPrefsMaxLen =
+  kIBeaconPackedPrefsHeaderLen + (kIBeaconFilterListMaxLen * 2);
 constexpr uint32_t kIBeaconPruneIntervalMs = 60000;
 constexpr uint32_t kIBeaconKeyfobCacheTtlMs = 1800000;
 constexpr uint32_t kIBeaconClimateCacheTtlMs = 21600000;
@@ -2078,6 +2083,13 @@ char uppercaseHexChar(char c) {
   return c;
 }
 
+uint8_t hexNibbleValue(char c) {
+  if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+  if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
+  if (c >= 'A' && c <= 'F') return static_cast<uint8_t>(c - 'A' + 10);
+  return 0xff;
+}
+
 bool appendNormalizedIBeaconFilterToken(const char *token, size_t token_len, char *out, size_t out_size, size_t &out_len) {
   char hex[kIBeaconUuidCompactLen]{};
   uint8_t count = 0;
@@ -2120,6 +2132,213 @@ bool normalizeIBeaconFilterList(const String &input, char *out, size_t out_size)
     }
   }
   return true;
+}
+
+bool appendPackedIBeaconFilter(const char *list, uint8_t *out, size_t out_size,
+                               size_t &pos, uint8_t &count) {
+  count = 0;
+  if (!list || !list[0]) return true;
+
+  const char *token = list;
+  while (*token) {
+    const char *end = token;
+    while (*end && *end != ',') end++;
+    const size_t token_len = static_cast<size_t>(end - token);
+    if (token_len != 12 && token_len != kIBeaconUuidCompactLen) return false;
+
+    const uint8_t byte_len = static_cast<uint8_t>(token_len / 2);
+    if (count == 0xff || pos + 1 + byte_len > out_size) return false;
+    out[pos++] = byte_len;
+    for (uint8_t i = 0; i < byte_len; i++) {
+      const uint8_t high = hexNibbleValue(token[i * 2]);
+      const uint8_t low = hexNibbleValue(token[i * 2 + 1]);
+      if (high > 0x0f || low > 0x0f) return false;
+      out[pos++] = static_cast<uint8_t>((high << 4) | low);
+    }
+    count++;
+    token = *end ? end + 1 : end;
+  }
+  return true;
+}
+
+bool encodePackedIBeaconConfig(bool enabled, uint16_t filter1_interval, const char *filter1_macs,
+                               uint16_t filter2_interval, const char *filter2_macs,
+                               uint8_t *out, size_t out_size, size_t &out_len) {
+  if (!out || out_size < kIBeaconPackedPrefsHeaderLen) return false;
+  const uint16_t interval1 =
+    sanitizeIBeaconFilterInterval(filter1_interval, kIBeaconFilter1DefaultSec);
+  const uint16_t interval2 =
+    sanitizeIBeaconFilterInterval(filter2_interval, kIBeaconFilter2DefaultSec);
+
+  out[0] = 'I';
+  out[1] = 'B';
+  out[2] = 'C';
+  out[3] = 'F';
+  out[4] = kIBeaconPackedPrefsVersion;
+  out[5] = enabled ? 1 : 0;
+  out[6] = static_cast<uint8_t>(interval1 & 0xff);
+  out[7] = static_cast<uint8_t>(interval1 >> 8);
+  out[8] = static_cast<uint8_t>(interval2 & 0xff);
+  out[9] = static_cast<uint8_t>(interval2 >> 8);
+  out[10] = 0;
+  out[11] = 0;
+
+  size_t pos = kIBeaconPackedPrefsHeaderLen;
+  if (!appendPackedIBeaconFilter(filter1_macs, out, out_size, pos, out[10]) ||
+      !appendPackedIBeaconFilter(filter2_macs, out, out_size, pos, out[11])) {
+    return false;
+  }
+  out_len = pos;
+  return true;
+}
+
+bool appendDecodedIBeaconFilter(const uint8_t *data, size_t data_len, size_t &pos,
+                                uint8_t count, String &out) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  out = "";
+  if (!out.reserve(kIBeaconFilterListMaxLen + 1)) return false;
+
+  for (uint8_t item = 0; item < count; item++) {
+    if (pos >= data_len) return false;
+    const uint8_t byte_len = data[pos++];
+    if (byte_len != 6 && byte_len != kIBeaconUuidBytes) return false;
+    if (pos + byte_len > data_len) return false;
+    const size_t needed = out.length() + (out.length() ? 1 : 0) +
+                          (static_cast<size_t>(byte_len) * 2);
+    if (needed > kIBeaconFilterListMaxLen) return false;
+    if (out.length()) out += ',';
+    for (uint8_t i = 0; i < byte_len; i++) {
+      out += kHex[(data[pos + i] >> 4) & 0x0f];
+      out += kHex[data[pos + i] & 0x0f];
+    }
+    pos += byte_len;
+  }
+  return true;
+}
+
+bool decodePackedIBeaconConfig(const uint8_t *data, size_t data_len,
+                               uint8_t &enabled, uint16_t &filter1_interval,
+                               String &filter1_macs, uint16_t &filter2_interval,
+                               String &filter2_macs) {
+  if (!data || data_len < kIBeaconPackedPrefsHeaderLen ||
+      data[0] != 'I' || data[1] != 'B' || data[2] != 'C' || data[3] != 'F' ||
+      data[4] != kIBeaconPackedPrefsVersion || data[5] > 1) {
+    return false;
+  }
+
+  const uint16_t interval1 =
+    static_cast<uint16_t>(data[6]) | (static_cast<uint16_t>(data[7]) << 8);
+  const uint16_t interval2 =
+    static_cast<uint16_t>(data[8]) | (static_cast<uint16_t>(data[9]) << 8);
+  if (!isIBeaconFilterInterval(interval1) || !isIBeaconFilterInterval(interval2)) {
+    return false;
+  }
+
+  String decoded_filter1;
+  String decoded_filter2;
+  size_t pos = kIBeaconPackedPrefsHeaderLen;
+  if (!appendDecodedIBeaconFilter(data, data_len, pos, data[10], decoded_filter1) ||
+      !appendDecodedIBeaconFilter(data, data_len, pos, data[11], decoded_filter2) ||
+      pos != data_len) {
+    return false;
+  }
+
+  enabled = data[5];
+  filter1_interval = interval1;
+  filter2_interval = interval2;
+  filter1_macs = decoded_filter1;
+  filter2_macs = decoded_filter2;
+  return true;
+}
+
+bool loadPackedIBeaconConfig(Preferences &preferences, uint8_t &enabled,
+                             uint16_t &filter1_interval, String &filter1_macs,
+                             uint16_t &filter2_interval, String &filter2_macs) {
+  const size_t data_len = preferences.getBytesLength(kIBeaconPackedPrefsKey);
+  if (data_len < kIBeaconPackedPrefsHeaderLen || data_len > kIBeaconPackedPrefsMaxLen) {
+    return false;
+  }
+
+  uint8_t *data = static_cast<uint8_t *>(malloc(data_len));
+  if (!data) return false;
+  const bool loaded =
+    preferences.getBytes(kIBeaconPackedPrefsKey, data, data_len) == data_len &&
+    decodePackedIBeaconConfig(data, data_len, enabled, filter1_interval, filter1_macs,
+                              filter2_interval, filter2_macs);
+  free(data);
+  return loaded;
+}
+
+bool putPackedIBeaconConfig(Preferences &preferences, const uint8_t *data, size_t data_len) {
+  if (!data || data_len < kIBeaconPackedPrefsHeaderLen ||
+      preferences.putBytes(kIBeaconPackedPrefsKey, data, data_len) != data_len ||
+      preferences.getBytesLength(kIBeaconPackedPrefsKey) != data_len) {
+    return false;
+  }
+
+  uint8_t *verify = static_cast<uint8_t *>(malloc(data_len));
+  if (!verify) return false;
+  const bool stored =
+    preferences.getBytes(kIBeaconPackedPrefsKey, verify, data_len) == data_len &&
+    memcmp(data, verify, data_len) == 0;
+  free(verify);
+  return stored;
+}
+
+bool removeIBeaconPreferenceIfPresent(Preferences &preferences, const char *key) {
+  return !preferences.isKey(key) || preferences.remove(key);
+}
+
+bool removeLegacyIBeaconPreferences(Preferences &preferences) {
+  bool removed = true;
+  removed = removeIBeaconPreferenceIfPresent(preferences, "ibeacon") && removed;
+  removed = removeIBeaconPreferenceIfPresent(preferences, "ib_f1_int") && removed;
+  removed = removeIBeaconPreferenceIfPresent(preferences, "ib_f1_mac") && removed;
+  removed = removeIBeaconPreferenceIfPresent(preferences, "ib_f2_int") && removed;
+  removed = removeIBeaconPreferenceIfPresent(preferences, "ib_f2_mac") && removed;
+  return removed;
+}
+
+bool persistPackedIBeaconConfig(Preferences &preferences, bool enabled,
+                                uint16_t filter1_interval, const char *filter1_macs,
+                                uint16_t filter2_interval, const char *filter2_macs) {
+  uint8_t desired[kIBeaconPackedPrefsMaxLen]{};
+  uint8_t recovery[kIBeaconPackedPrefsMaxLen]{};
+  size_t desired_len = 0;
+  size_t recovery_len = 0;
+  if (!encodePackedIBeaconConfig(enabled, filter1_interval, filter1_macs,
+                                 filter2_interval, filter2_macs,
+                                 desired, sizeof(desired), desired_len) ||
+      !encodePackedIBeaconConfig(config.ibeacon_enabled,
+                                 config.ibeacon_filter1_interval_sec,
+                                 config.ibeacon_filter1_macs,
+                                 config.ibeacon_filter2_interval_sec,
+                                 config.ibeacon_filter2_macs,
+                                 recovery, sizeof(recovery), recovery_len)) {
+    return false;
+  }
+
+  if (putPackedIBeaconConfig(preferences, desired, desired_len)) {
+    if (!removeLegacyIBeaconPreferences(preferences)) {
+      DBG_LOG("config", "could not remove all legacy ibeacon preferences");
+    }
+    return true;
+  }
+
+  DBG_LOG("config", "packed ibeacon write failed; reclaiming ibeacon preferences");
+  bool reclaimed = removeIBeaconPreferenceIfPresent(preferences, kIBeaconPackedPrefsKey);
+  reclaimed = removeLegacyIBeaconPreferences(preferences) && reclaimed;
+  if (!reclaimed) {
+    DBG_LOG("config", "could not reclaim all ibeacon preferences");
+  }
+  if (putPackedIBeaconConfig(preferences, desired, desired_len)) {
+    return true;
+  }
+
+  const bool restored = putPackedIBeaconConfig(preferences, recovery, recovery_len);
+  DBG_LOG("config", "packed ibeacon retry failed; previous settings restored=%u",
+          restored ? 1 : 0);
+  return false;
 }
 
 bool normalizeSwitchbotMac(const String &input, char *out, size_t out_size, bool allow_empty = true) {
@@ -2414,6 +2633,9 @@ bool loadConfig() {
   uint16_t ibeacon_filter2_interval = prefs.getUShort("ib_f2_int", kIBeaconFilter2DefaultSec);
   String ibeacon_filter1_macs = prefs.getString("ib_f1_mac", "");
   String ibeacon_filter2_macs = prefs.getString("ib_f2_mac", "");
+  loadPackedIBeaconConfig(prefs, ibeacon_enabled,
+                          ibeacon_filter1_interval, ibeacon_filter1_macs,
+                          ibeacon_filter2_interval, ibeacon_filter2_macs);
   uint8_t switchbot_lock_enabled = prefs.getUChar("sb_lock", 0);
   String switchbot_lock_mac = prefs.getString("sb_mac", "");
   String switchbot_lock_key_id = prefs.getString("sb_key_id", "");
@@ -2771,13 +2993,19 @@ bool saveIBeaconConfig(bool enabled, uint16_t filter1_interval, const char *filt
           enabled ? 1 : 0, filter1_interval, filter1_macs ? static_cast<unsigned>(strlen(filter1_macs)) : 0,
           filter2_interval, filter2_macs ? static_cast<unsigned>(strlen(filter2_macs)) : 0);
   if (!prefs.begin("mymota32", false)) return false;
-  prefs.putUChar("ibeacon", enabled ? 1 : 0);
-  prefs.putUShort("ib_f1_int", sanitizeIBeaconFilterInterval(filter1_interval, kIBeaconFilter1DefaultSec));
-  prefs.putString("ib_f1_mac", filter1_macs ? filter1_macs : "");
-  prefs.putUShort("ib_f2_int", sanitizeIBeaconFilterInterval(filter2_interval, kIBeaconFilter2DefaultSec));
-  prefs.putString("ib_f2_mac", filter2_macs ? filter2_macs : "");
+  const bool stored =
+    persistPackedIBeaconConfig(prefs, enabled, filter1_interval,
+                               filter1_macs ? filter1_macs : "",
+                               filter2_interval, filter2_macs ? filter2_macs : "");
   prefs.end();
-  return loadConfig();
+  if (!stored || !loadConfig()) return false;
+  return config.ibeacon_enabled == (enabled ? 1 : 0) &&
+         config.ibeacon_filter1_interval_sec ==
+           sanitizeIBeaconFilterInterval(filter1_interval, kIBeaconFilter1DefaultSec) &&
+         config.ibeacon_filter2_interval_sec ==
+           sanitizeIBeaconFilterInterval(filter2_interval, kIBeaconFilter2DefaultSec) &&
+         strcmp(config.ibeacon_filter1_macs, filter1_macs ? filter1_macs : "") == 0 &&
+         strcmp(config.ibeacon_filter2_macs, filter2_macs ? filter2_macs : "") == 0;
 }
 
 bool saveSwitchbotLockConfig(bool enabled, const char *mac, const char *key_id, const char *key,
@@ -13287,11 +13515,12 @@ bool commitStoredConfig(const StoredConfig &source) {
   prefs.putUChar("lt_fade", source.light_fade ? 1 : 0);
   prefs.putUChar("lt_speed", source.light_speed);
   prefs.putUChar("lt_restore", source.light_restore_boot ? 1 : 0);
-  prefs.putUChar("ibeacon", source.ibeacon_enabled ? 1 : 0);
-  prefs.putUShort("ib_f1_int", sanitizeIBeaconFilterInterval(source.ibeacon_filter1_interval_sec, kIBeaconFilter1DefaultSec));
-  prefs.putString("ib_f1_mac", source.ibeacon_filter1_macs);
-  prefs.putUShort("ib_f2_int", sanitizeIBeaconFilterInterval(source.ibeacon_filter2_interval_sec, kIBeaconFilter2DefaultSec));
-  prefs.putString("ib_f2_mac", source.ibeacon_filter2_macs);
+  const bool ibeacon_stored =
+    persistPackedIBeaconConfig(prefs, source.ibeacon_enabled,
+                               source.ibeacon_filter1_interval_sec,
+                               source.ibeacon_filter1_macs,
+                               source.ibeacon_filter2_interval_sec,
+                               source.ibeacon_filter2_macs);
   prefs.putUChar("sb_lock", source.switchbot_lock_enabled ? 1 : 0);
   prefs.putString("sb_mac", source.switchbot_lock_mac);
   prefs.putString("sb_key_id", source.switchbot_lock_key_id);
@@ -13325,7 +13554,16 @@ bool commitStoredConfig(const StoredConfig &source) {
     config.power_saving_persist = power_saving_persist;
     config.power_saving_locked = power_saving_locked;
   }
-  return loaded;
+  return loaded && ibeacon_stored &&
+         config.ibeacon_enabled == (source.ibeacon_enabled ? 1 : 0) &&
+         config.ibeacon_filter1_interval_sec ==
+           sanitizeIBeaconFilterInterval(source.ibeacon_filter1_interval_sec,
+                                         kIBeaconFilter1DefaultSec) &&
+         config.ibeacon_filter2_interval_sec ==
+           sanitizeIBeaconFilterInterval(source.ibeacon_filter2_interval_sec,
+                                         kIBeaconFilter2DefaultSec) &&
+         strcmp(config.ibeacon_filter1_macs, source.ibeacon_filter1_macs) == 0 &&
+         strcmp(config.ibeacon_filter2_macs, source.ibeacon_filter2_macs) == 0;
 }
 
 void appendSettingsActionJson(String &out, uint8_t button, bool hold) {
