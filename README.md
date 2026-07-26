@@ -372,10 +372,16 @@ switches to seconds once values grow beyond 10 seconds.
 iBeacon capture is disabled by default. When enabled, the ESP32 scans BLE
 advertisements and publishes unique beacon observations via MQTT.
 
-Two case-insensitive MAC filter groups are available. Each group accepts either a
-single MAC or a comma-separated list. MACs can be entered with or without colons.
-Each group also has a throttle interval selectable from common values such as 1,
-5, 10, 15, 30, 60, 120, 300, and 600 seconds.
+Two case-insensitive MAC / UUID filter groups are available. Each group accepts
+either a single identifier or a comma-separated mixture of BLE MAC addresses
+and iBeacon UUIDs. MACs may be entered with or without separators, while UUIDs
+may use the standard hyphenated form or 32 compact hexadecimal characters.
+Each group also has a throttle interval selectable from common values such as
+1, 5, 10, 15, 30, 60, 120, 300, and 600 seconds.
+
+MQTT reports retain the existing `MAC`, `RSSI`, and raw `PACKET` fields. When an
+advertisement contains valid Apple iBeacon manufacturer data, its UUID is also
+included as a canonical, uppercase `UUID` field.
 
 The duplicate suppression rules are tuned for two common beacon classes:
 

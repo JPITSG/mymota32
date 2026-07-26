@@ -374,6 +374,9 @@ constexpr uint8_t kIBeaconProcessLimit = 4;
 constexpr uint8_t kIBeaconCacheSize = 32;
 constexpr size_t kIBeaconFilterListMaxLen = 255;
 constexpr size_t kIBeaconFilterInputMaxLen = 384;
+constexpr uint8_t kIBeaconUuidBytes = 16;
+constexpr uint8_t kIBeaconUuidCompactLen = kIBeaconUuidBytes * 2;
+constexpr uint8_t kIBeaconUuidTextLen = 36;
 constexpr uint32_t kIBeaconPruneIntervalMs = 60000;
 constexpr uint32_t kIBeaconKeyfobCacheTtlMs = 1800000;
 constexpr uint32_t kIBeaconClimateCacheTtlMs = 21600000;
@@ -749,12 +752,18 @@ struct TasmotaSafebootSettings {
   char password[kPasswordMaxLen + 1];
 };
 
+struct IBeaconUuidReading {
+  bool valid;
+  uint8_t value[kIBeaconUuidBytes];
+};
+
 struct IBeaconObservation {
   char mac[18];
   int8_t rssi;
   uint8_t payload[kIBeaconMaxPacketBytes];
   uint8_t payload_len;
   uint32_t seen_at;
+  IBeaconUuidReading uuid;
 };
 
 struct IBeaconClimateReading {
@@ -2069,33 +2078,33 @@ char uppercaseHexChar(char c) {
   return c;
 }
 
-bool appendNormalizedIBeaconMacToken(const char *token, size_t token_len, char *out, size_t out_size, size_t &out_len) {
-  char hex[12]{};
+bool appendNormalizedIBeaconFilterToken(const char *token, size_t token_len, char *out, size_t out_size, size_t &out_len) {
+  char hex[kIBeaconUuidCompactLen]{};
   uint8_t count = 0;
   for (size_t i = 0; i < token_len; i++) {
     const char c = token[i];
     if (c == ':' || c == '-' || c == ' ' || c == '\t' || c == '\r' || c == '\n') continue;
-    if (!isHexChar(c) || count >= 12) {
+    if (!isHexChar(c) || count >= sizeof(hex)) {
       return false;
     }
     hex[count++] = uppercaseHexChar(c);
   }
   if (count == 0) return true;
-  if (count != 12) {
+  if (count != 12 && count != kIBeaconUuidCompactLen) {
     return false;
   }
-  const size_t needed = out_len + (out_len ? 1 : 0) + 12 + 1;
+  const size_t needed = out_len + (out_len ? 1 : 0) + count + 1;
   if (needed > out_size) {
     return false;
   }
   if (out_len) out[out_len++] = ',';
-  memcpy(out + out_len, hex, sizeof(hex));
-  out_len += sizeof(hex);
+  memcpy(out + out_len, hex, count);
+  out_len += count;
   out[out_len] = '\0';
   return true;
 }
 
-bool normalizeIBeaconMacList(const String &input, char *out, size_t out_size) {
+bool normalizeIBeaconFilterList(const String &input, char *out, size_t out_size) {
   if (out_size == 0) return false;
   out[0] = '\0';
   size_t out_len = 0;
@@ -2104,7 +2113,7 @@ bool normalizeIBeaconMacList(const String &input, char *out, size_t out_size) {
   const char *raw = input.c_str();
   for (size_t i = 0; i <= input_len; i++) {
     if (i == input_len || raw[i] == ',') {
-      if (!appendNormalizedIBeaconMacToken(raw + start, i - start, out, out_size, out_len)) {
+      if (!appendNormalizedIBeaconFilterToken(raw + start, i - start, out, out_size, out_len)) {
         return false;
       }
       start = i + 1;
@@ -2549,10 +2558,10 @@ bool loadConfig() {
   config.ibeacon_enabled = ibeacon_enabled ? 1 : 0;
   config.ibeacon_filter1_interval_sec = sanitizeIBeaconFilterInterval(ibeacon_filter1_interval, kIBeaconFilter1DefaultSec);
   config.ibeacon_filter2_interval_sec = sanitizeIBeaconFilterInterval(ibeacon_filter2_interval, kIBeaconFilter2DefaultSec);
-  if (!normalizeIBeaconMacList(ibeacon_filter1_macs, config.ibeacon_filter1_macs, sizeof(config.ibeacon_filter1_macs))) {
+  if (!normalizeIBeaconFilterList(ibeacon_filter1_macs, config.ibeacon_filter1_macs, sizeof(config.ibeacon_filter1_macs))) {
     config.ibeacon_filter1_macs[0] = '\0';
   }
-  if (!normalizeIBeaconMacList(ibeacon_filter2_macs, config.ibeacon_filter2_macs, sizeof(config.ibeacon_filter2_macs))) {
+  if (!normalizeIBeaconFilterList(ibeacon_filter2_macs, config.ibeacon_filter2_macs, sizeof(config.ibeacon_filter2_macs))) {
     config.ibeacon_filter2_macs[0] = '\0';
   }
   config.switchbot_lock_enabled = switchbot_lock_enabled ? 1 : 0;
@@ -6264,6 +6273,51 @@ bool readAdStructure(const uint8_t *payload, uint8_t payload_len, size_t &offset
   return true;
 }
 
+bool parseIBeaconUuid(const uint8_t *payload, uint8_t payload_len, IBeaconUuidReading &reading) {
+  memset(&reading, 0, sizeof(reading));
+  size_t offset = 0;
+  uint8_t type = 0;
+  const uint8_t *data = nullptr;
+  uint8_t data_len = 0;
+  while (readAdStructure(payload, payload_len, offset, type, data, data_len)) {
+    if (type != 0xff || data_len < 25) continue;
+    if (data[0] != 0x4c || data[1] != 0x00 || data[2] != 0x02 || data[3] != 0x15) continue;
+    memcpy(reading.value, data + 4, sizeof(reading.value));
+    reading.valid = true;
+    return true;
+  }
+  return false;
+}
+
+void formatIBeaconUuidCompact(const IBeaconUuidReading &reading, char (&out)[kIBeaconUuidCompactLen + 1]) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  if (!reading.valid) {
+    out[0] = '\0';
+    return;
+  }
+  uint8_t pos = 0;
+  for (uint8_t i = 0; i < sizeof(reading.value); i++) {
+    out[pos++] = kHex[(reading.value[i] >> 4) & 0x0f];
+    out[pos++] = kHex[reading.value[i] & 0x0f];
+  }
+  out[pos] = '\0';
+}
+
+void formatIBeaconUuidText(const IBeaconUuidReading &reading, char (&out)[kIBeaconUuidTextLen + 1]) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  if (!reading.valid) {
+    out[0] = '\0';
+    return;
+  }
+  uint8_t pos = 0;
+  for (uint8_t i = 0; i < sizeof(reading.value); i++) {
+    if (i == 4 || i == 6 || i == 8 || i == 10) out[pos++] = '-';
+    out[pos++] = kHex[(reading.value[i] >> 4) & 0x0f];
+    out[pos++] = kHex[reading.value[i] & 0x0f];
+  }
+  out[pos] = '\0';
+}
+
 bool parseIBeaconClimate(const uint8_t *payload, uint8_t payload_len, IBeaconClimateReading &reading) {
   reading.valid = false;
   reading.hash = 0;
@@ -6389,37 +6443,62 @@ bool compactIBeaconMac(const char *mac, char (&out)[13]) {
   return count == 12;
 }
 
-bool iBeaconMacInFilterList(const char *list, const char *mac) {
-  if (!list || !mac || !list[0]) return false;
-  char compact[13]{};
-  if (!compactIBeaconMac(mac, compact)) return false;
+bool iBeaconIdentifierInFilterList(const char *list, const char *identifier, size_t identifier_len) {
+  if (!list || !identifier || !list[0] || identifier_len == 0) return false;
   const char *p = list;
   while (*p) {
     while (*p == ',' || *p == ' ' || *p == '\t') p++;
     const char *start = p;
     while (*p && *p != ',') p++;
-    if (static_cast<size_t>(p - start) == 12 && strncmp(start, compact, 12) == 0) return true;
+    if (static_cast<size_t>(p - start) == identifier_len) {
+      bool equal = true;
+      for (size_t i = 0; i < identifier_len; i++) {
+        if (uppercaseHexChar(start[i]) != uppercaseHexChar(identifier[i])) {
+          equal = false;
+          break;
+        }
+      }
+      if (equal) return true;
+    }
     if (*p == ',') p++;
   }
   return false;
+}
+
+bool iBeaconMacInFilterList(const char *list, const char *mac) {
+  if (!list || !mac || !list[0]) return false;
+  char compact[13]{};
+  if (!compactIBeaconMac(mac, compact)) return false;
+  return iBeaconIdentifierInFilterList(list, compact, sizeof(compact) - 1);
+}
+
+bool iBeaconUuidInFilterList(const char *list, const IBeaconUuidReading &uuid) {
+  if (!uuid.valid) return false;
+  char compact[kIBeaconUuidCompactLen + 1]{};
+  formatIBeaconUuidCompact(uuid, compact);
+  return iBeaconIdentifierInFilterList(list, compact, sizeof(compact) - 1);
+}
+
+bool iBeaconObservationMatchesFilterList(const char *list, const IBeaconObservation &obs) {
+  return iBeaconMacInFilterList(list, obs.mac) || iBeaconUuidInFilterList(list, obs.uuid);
 }
 
 bool iBeaconFiltersConfigured() {
   return config.ibeacon_filter1_macs[0] != '\0' || config.ibeacon_filter2_macs[0] != '\0';
 }
 
-bool iBeaconMacAllowedByFilters(const char *mac) {
+bool iBeaconObservationAllowedByFilters(const IBeaconObservation &obs) {
   if (!iBeaconFiltersConfigured()) return true;
-  return iBeaconMacInFilterList(config.ibeacon_filter1_macs, mac) ||
-         iBeaconMacInFilterList(config.ibeacon_filter2_macs, mac);
+  return iBeaconObservationMatchesFilterList(config.ibeacon_filter1_macs, obs) ||
+         iBeaconObservationMatchesFilterList(config.ibeacon_filter2_macs, obs);
 }
 
-uint16_t iBeaconThrottleIntervalSec(const char *mac) {
+uint16_t iBeaconThrottleIntervalSec(const IBeaconObservation &obs) {
   uint16_t interval = 0;
-  if (iBeaconMacInFilterList(config.ibeacon_filter1_macs, mac)) {
+  if (iBeaconObservationMatchesFilterList(config.ibeacon_filter1_macs, obs)) {
     interval = config.ibeacon_filter1_interval_sec;
   }
-  if (iBeaconMacInFilterList(config.ibeacon_filter2_macs, mac) &&
+  if (iBeaconObservationMatchesFilterList(config.ibeacon_filter2_macs, obs) &&
       config.ibeacon_filter2_interval_sec > interval) {
     interval = config.ibeacon_filter2_interval_sec;
   }
@@ -6428,13 +6507,13 @@ uint16_t iBeaconThrottleIntervalSec(const char *mac) {
 
 bool iBeaconThrottleAllows(const IBeaconObservation &obs, const IBeaconCacheEntry *entry, uint32_t now) {
   if (!entry) return true;
-  const uint16_t interval_sec = iBeaconThrottleIntervalSec(obs.mac);
+  const uint16_t interval_sec = iBeaconThrottleIntervalSec(obs);
   if (interval_sec == 0) return true;
   return now - entry->sent_at >= static_cast<uint32_t>(interval_sec) * 1000UL;
 }
 
 bool shouldPublishIBeacon(const IBeaconObservation &obs, const IBeaconClimateReading &climate, const IBeaconBthomeReading &bthome, uint32_t now) {
-  if (!iBeaconMacAllowedByFilters(obs.mac)) {
+  if (!iBeaconObservationAllowedByFilters(obs)) {
     return false;
   }
 
@@ -6497,11 +6576,18 @@ bool mqttPublishIBeacon(const IBeaconObservation &obs) {
   topic += F("/SENSOR");
 
   String payload;
-  payload.reserve(100 + strlen(packet_hex));
+  payload.reserve(100 + strlen(packet_hex) + (obs.uuid.valid ? kIBeaconUuidTextLen + 12 : 0));
   payload += F("{\"IBEACON\":{\"MAC\":\"");
   payload += obs.mac;
   payload += F("\",\"RSSI\":");
   payload += String(static_cast<int>(obs.rssi));
+  if (obs.uuid.valid) {
+    char uuid[kIBeaconUuidTextLen + 1]{};
+    formatIBeaconUuidText(obs.uuid, uuid);
+    payload += F(",\"UUID\":\"");
+    payload += uuid;
+    payload += F("\"");
+  }
   if (obs.payload_len > 0) {
     payload += F(",\"PACKET\":\"");
     payload += packet_hex;
@@ -6650,17 +6736,18 @@ void IBeaconScanCallbacks::onResult(const NimBLEAdvertisedDevice *device) {
     std::string mac = device->getAddress().toString();
     strlcpy(obs.mac, mac.c_str(), sizeof(obs.mac));
     normalizeIBeaconMac(obs.mac);
-    if (!iBeaconMacAllowedByFilters(obs.mac)) {
-#if MYMOTA32_DEBUG_LOG
-      debug_ibeacon_filtered++;
-#endif
-      return;
-    }
     obs.rssi = device->getRSSI();
     const std::vector<uint8_t> &payload = device->getPayload();
     obs.payload_len = static_cast<uint8_t>(min(payload.size(), static_cast<size_t>(kIBeaconMaxPacketBytes)));
     if (obs.payload_len > 0) {
       memcpy(obs.payload, payload.data(), obs.payload_len);
+    }
+    parseIBeaconUuid(obs.payload, obs.payload_len, obs.uuid);
+    if (!iBeaconObservationAllowedByFilters(obs)) {
+#if MYMOTA32_DEBUG_LOG
+      debug_ibeacon_filtered++;
+#endif
+      return;
     }
     obs.seen_at = millis();
     pushIBeaconObservation(obs);
@@ -10535,7 +10622,7 @@ void appendIBeaconForm(String &page) {
   page += F("<div id='ibeacon-details' class='enable-details");
   if (!config.ibeacon_enabled) page += F(" hidden");
   page += F("'>");
-    page += F("<div class='field'><label>G1 MACs<input name='f1' maxlength='");
+    page += F("<div class='field'><label>G1 MAC / UUID<input name='f1' maxlength='");
     page += String(kIBeaconFilterInputMaxLen);
     page += F("' value='");
     page += htmlEscape(config.ibeacon_filter1_macs);
@@ -10544,7 +10631,7 @@ void appendIBeaconForm(String &page) {
     page += F("></label><label>Max");
     appendIBeaconIntervalSelect(page, "i1", config.ibeacon_filter1_interval_sec, unsupported);
     page += F("</label></div>");
-    page += F("<div class='field'><label>G2 MACs<input name='f2' maxlength='");
+    page += F("<div class='field'><label>G2 MAC / UUID<input name='f2' maxlength='");
     page += String(kIBeaconFilterInputMaxLen);
     page += F("' value='");
     page += htmlEscape(config.ibeacon_filter2_macs);
@@ -12309,11 +12396,11 @@ void handleIBeaconSave() {
 
   char filter1_macs[kIBeaconFilterListMaxLen + 1]{};
   char filter2_macs[kIBeaconFilterListMaxLen + 1]{};
-  if (!normalizeIBeaconMacList(server.hasArg("f1") ? server.arg("f1") : String(config.ibeacon_filter1_macs),
-                               filter1_macs, sizeof(filter1_macs)) ||
-      !normalizeIBeaconMacList(server.hasArg("f2") ? server.arg("f2") : String(config.ibeacon_filter2_macs),
-                               filter2_macs, sizeof(filter2_macs))) {
-    sendPlain(400, F("invalid mac"));
+  if (!normalizeIBeaconFilterList(server.hasArg("f1") ? server.arg("f1") : String(config.ibeacon_filter1_macs),
+                                  filter1_macs, sizeof(filter1_macs)) ||
+      !normalizeIBeaconFilterList(server.hasArg("f2") ? server.arg("f2") : String(config.ibeacon_filter2_macs),
+                                  filter2_macs, sizeof(filter2_macs))) {
+    sendPlain(400, F("invalid MAC / UUID"));
     return;
   }
 
@@ -14013,7 +14100,7 @@ void importSettingsIBeacon(const cJSON *root, StoredConfig &target, SettingsImpo
     String macs;
     char normalized[kIBeaconFilterListMaxLen + 1]{};
     if (settingsReadString(filter1_macs, macs, kIBeaconFilterInputMaxLen) &&
-        normalizeIBeaconMacList(macs, normalized, sizeof(normalized))) {
+        normalizeIBeaconFilterList(macs, normalized, sizeof(normalized))) {
       strlcpy(target.ibeacon_filter1_macs, normalized, sizeof(target.ibeacon_filter1_macs));
       recordSettingsApplied(stats);
     } else {
@@ -14026,7 +14113,7 @@ void importSettingsIBeacon(const cJSON *root, StoredConfig &target, SettingsImpo
     String macs;
     char normalized[kIBeaconFilterListMaxLen + 1]{};
     if (settingsReadString(filter2_macs, macs, kIBeaconFilterInputMaxLen) &&
-        normalizeIBeaconMacList(macs, normalized, sizeof(normalized))) {
+        normalizeIBeaconFilterList(macs, normalized, sizeof(normalized))) {
       strlcpy(target.ibeacon_filter2_macs, normalized, sizeof(target.ibeacon_filter2_macs));
       recordSettingsApplied(stats);
     } else {
